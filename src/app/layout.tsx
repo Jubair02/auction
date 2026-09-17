@@ -1,0 +1,46 @@
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+import { Toaster } from "@/components/ui/toaster";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "NeelamGhor — Live Player Auctions for Bangladesh",
+  description: "Create tournaments, add players, build teams and run live room-code based player auctions with automatic budgets and squads. ৳ BDT, Cricket & Football.",
+  keywords: ["player auction", "cricket auction", "football auction", "Bangladesh", "tournament", "NeelamGhor"],
+  icons: {
+    icon: "/logo.svg",
+  },
+  openGraph: {
+    title: "NeelamGhor — Live Player Auctions",
+    description: "Run live player auctions for your local tournament in minutes.",
+    siteName: "NeelamGhor",
+    type: "website",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+      >
+        {children}
+        <Toaster />
+      </body>
+    </html>
+  );
+}

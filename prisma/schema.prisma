@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// NOTE: SQLite + Prisma does not support enums or scalar lists — status/role fields are strings.
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  role         String   @default("ORGANIZER") // ADMIN | ORGANIZER | MANAGER
+  status       String   @default("ACTIVE") // ACTIVE | BLOCKED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tournaments  Tournament[]
+  managedTeams Team[]
+}
+
+model Tournament {
+  id             String    @id @default(cuid())
+  name           String
+  sport          String    @default("CRICKET") // CRICKET | FOOTBALL
+  tournamentType String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
+  description    String?
+  logoUrl        String?
+  bannerUrl      String?
+  location       String?
+  startDate      DateTime?
+  auctionAt      DateTime?
+  auctionMode    String    @default("CATEGORY") // CATEGORY | NORMAL
+  basePrice      Int       @default(10000) // used in NORMAL mode
+  status         String    @default("DRAFT") // DRAFT | READY | LIVE | COMPLETED
+  organizerId    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organizer User        @relation(fields: [organizerId], references: [id])
+  players   Player[]
+  teams     Team[]
+  auction   Auction?
+}
+
+model Player {
+  id           String   @id @default(cuid())
+  tournamentId String
+  name         String
+  photoUrl     String?
+  phone        String?
+  role         String // Cricket: Batsman, Bowler, All-rounder, Wicketkeeper | Football: Goalkeeper, Defender, Midfielder, Forward
+  category     String? // A | B | C | D | E (CATEGORY mode)
+  basePrice    Int      @default(10000)
+  previousTeam String?
+  status       String   @default("AVAILABLE") // AVAILABLE | LIVE | SOLD | UNSOLD | SKIPPED
+  playerNumber Int      @default(0)
+  soldPrice    Int?
+  soldToTeamId String?
+  createdAt    DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  soldToTeam Team?      @relation("soldPlayers", fields: [soldToTeamId], references: [id])
+}
+
+model Team {
+  id            String  @id @default(cuid())
+  tournamentId  String
+  name          String
+  logoUrl       String?
+  color         String? // hex accent, e.g. #0F766E
+  captainName   String?
+  managerUserId String?
+  budget        Int     @default(1000000)
+  maxSquad      Int     @default(14)
+  minSquad      Int     @default(9)
+  spent         Int     @default(0)
+
+  tournament Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  manager    User?             @relation(fields: [managerUserId], references: [id])
+  players    Player[]          @relation("soldPlayers")
+  bids       Bid[]
+}
+
+model Auction {
+  id                   String   @id @default(cuid())
+  tournamentId         String   @unique
+  roomCode             String   @unique
+  status               String   @default("READY") // READY | LIVE | PAUSED | ENDED
+  bidTimerSeconds      Int      @default(20)
+  goingIntervalSeconds Int      @default(8)
+  minIncrement         Int      @default(5000)
+  currentCategory      String?
+  currentPlayerId      String?
+  currentBidAmount     Int?
+  currentBidTeamId     String?
+  bidCount             Int      @default(0)
+  createdAt            DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  bids       Bid[]
+}
+
+model Bid {
+  id         String   @id @default(cuid())
+  auctionId  String
+  playerId   String
+  teamId     String
+  teamName   String // denormalized for audit trail
+  playerName String // denormalized for audit trail
+  amount     Int
+  createdAt  DateTime @default(now())
+
+  auction Auction @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([auctionId, playerId])
+}
+
+model RoomParticipant {
+  id        String   @id @default(cuid())
+  auctionId String
+  teamId    String?
+  name      String
+  role      String // ORGANIZER | MANAGER | VIEWER
+  userId    String?
+  online    Boolean  @default(false)
+  lastSeen  DateTime @default(now())
+  joinedAt  DateTime @default(now())
+
+  @@unique([auctionId, role, name])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
