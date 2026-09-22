@@ -44,13 +44,14 @@ export async function PUT(req: Request) {
     validated.push({ key, value: rawValue })
   }
 
-  for (const { key, value } of validated) {
-    await db.setting.upsert({
-      where: { key },
-      update: { value },
-      create: { key, value },
-    })
-  }
+  // PUT replaces the whole set, so keys the admin removed in the UI actually go away.
+  const keptKeys = validated.map((v) => v.key)
+  await db.$transaction([
+    db.setting.deleteMany({ where: { key: { notIn: keptKeys } } }),
+    ...validated.map(({ key, value }) =>
+      db.setting.upsert({ where: { key }, update: { value }, create: { key, value } }),
+    ),
+  ])
 
   return Response.json({ settings: await getAllSettings() })
 }

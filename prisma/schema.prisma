@@ -3,11 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// NOTE: SQLite + Prisma does not support enums or scalar lists — status/role fields are strings.
+// NOTE: status/role fields are plain strings (kept from the original SQLite schema) — not DB enums.
 
 model User {
   id           String   @id @default(cuid())

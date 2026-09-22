@@ -6,6 +6,8 @@ import type { SafeUser, UserRole } from '@/lib/types'
 
 export const SESSION_COOKIE = 'ng_session'
 const SESSION_TTL = 60 * 60 * 24 * 14 // 14 days
+// Behind TLS in production the session cookie must not travel over plain HTTP.
+const SECURE_COOKIE = process.env.NODE_ENV === 'production'
 
 export interface SessionUser {
   id: string
@@ -21,7 +23,7 @@ export async function setSessionCookie(token: string) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: SECURE_COOKIE,
     maxAge: SESSION_TTL,
     path: '/',
   })
@@ -29,7 +31,7 @@ export async function setSessionCookie(token: string) {
 
 export async function clearSessionCookie() {
   const store = await cookies()
-  store.set(SESSION_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: false, maxAge: 0, path: '/' })
+  store.set(SESSION_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: SECURE_COOKIE, maxAge: 0, path: '/' })
 }
 
 export async function getSessionUser(): Promise<SafeUser | null> {

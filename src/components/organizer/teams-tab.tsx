@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Crown, Loader2, Pencil, Plus, Trash2, UserCheck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Crown, Loader2, Pencil, Plus, Trash2, UserCheck, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -28,9 +28,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { TeamAvatar } from '@/components/shared/avatars'
 import { EmptyState } from '@/components/shared/empty-state'
-import { apiDelete, apiPatch, apiPost, ApiError } from '@/lib/api'
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { TEAM_PALETTE } from '@/lib/format'
 import type { TeamDTO } from '@/lib/types'
@@ -43,6 +50,15 @@ interface TeamFormState {
   maxSquad: string
   minSquad: string
 }
+
+interface ManagerOption {
+  id: string
+  name: string
+  email: string
+}
+
+/** Sentinel for the "no manager" option — Radix Select forbids an empty value. */
+const NO_MANAGER = '__none__'
 
 export function TeamsTab({
   tournamentId,
@@ -61,6 +77,21 @@ export function TeamsTab({
   const [editForm, setEditForm] = useState<TeamFormState | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TeamDTO | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [managers, setManagers] = useState<ManagerOption[] | null>(null)
+  const [editManagerId, setEditManagerId] = useState<string>(NO_MANAGER)
+
+  const loadManagers = useCallback(async () => {
+    try {
+      const res = await apiGet<{ managers: ManagerOption[] }>('/api/users/managers')
+      setManagers(res.managers)
+    } catch {
+      setManagers([])
+    }
+  }, [])
+
+  useEffect(() => {
+    if (editTarget && managers === null) void loadManagers()
+  }, [editTarget, managers, loadManagers])
 
   // Suggest a palette color not already used by an existing team.
   const suggestedColor = useMemo(() => {
@@ -112,6 +143,7 @@ export function TeamsTab({
 
   const openEdit = (t: TeamDTO) => {
     setEditTarget(t)
+    setEditManagerId(t.managerUserId ?? NO_MANAGER)
     setEditForm({
       name: t.name,
       color: t.color ?? '#0F766E',
@@ -138,6 +170,7 @@ export function TeamsTab({
         budget: parseInt(editForm.budget, 10),
         maxSquad: parseInt(editForm.maxSquad, 10),
         minSquad: parseInt(editForm.minSquad, 10),
+        managerUserId: editManagerId === NO_MANAGER ? null : editManagerId,
       })
       toast.success('Team updated')
       setEditTarget(null)
@@ -260,8 +293,12 @@ export function TeamsTab({
                       Squad {t.squadCount} / {t.maxSquad}
                     </Badge>
                     {t.managerUserId ? (
-                      <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
-                        <UserCheck className="mr-1 h-3 w-3" aria-hidden /> Manager linked
+                      <Badge
+                        className="max-w-[60%] truncate bg-amber-100 text-amber-900 hover:bg-amber-100"
+                        title={t.managerEmail ?? undefined}
+                      >
+                        <UserCheck className="mr-1 h-3 w-3 shrink-0" aria-hidden />
+                        <span className="truncate">{t.managerName ?? 'Manager linked'}</span>
                       </Badge>
                     ) : (
                       <Badge variant="secondary" className="text-xs">
@@ -294,6 +331,31 @@ export function TeamsTab({
             <DialogDescription>Budget can be raised any time; lowering below spent is blocked.</DialogDescription>
           </DialogHeader>
           {editForm ? <TeamFormFields form={editForm} onChange={setEditForm} /> : null}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="tm-manager" className="flex items-center gap-1.5">
+              <UserPlus className="h-3.5 w-3.5 text-primary" aria-hidden /> Team manager
+            </Label>
+            <Select value={editManagerId} onValueChange={setEditManagerId} disabled={managers === null}>
+              <SelectTrigger id="tm-manager" className="h-10 w-full">
+                <SelectValue placeholder={managers === null ? 'Loading managers…' : 'No manager linked'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_MANAGER}>No manager — open to claim</SelectItem>
+                {(managers ?? []).map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name} · {m.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {managers !== null && managers.length === 0
+                ? 'No manager accounts exist yet — ask them to register as a Team Manager first.'
+                : 'Linking a manager account lets them bid from their own login and see the squad under “My team”.'}
+            </p>
+          </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>
               Cancel

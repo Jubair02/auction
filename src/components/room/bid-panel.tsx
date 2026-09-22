@@ -29,7 +29,14 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
   }, [player, state.currentBid, state.minIncrement])
 
   const squadFull = myTeam ? myTeam.squadCount >= myTeam.maxSquad : false
-  const biddingOpen = state.status === 'LIVE' && !!player && !!myTeam && !squadFull
+  // The engine caps bids so a team can still afford its minimum squad.
+  // `maxBid` is absent only while an older socket service is running.
+  const maxBid = myTeam ? (myTeam.maxBid ?? myTeam.remaining) : 0
+  const reserved = myTeam ? Math.max(0, myTeam.remaining - maxBid) : 0
+  const leadingBid = !!myTeam && state.currentBid?.teamId === myTeam.id
+  const pricedOut = !!myTeam && !!player && maxBid < minBid
+  const biddingOpen =
+    state.status === 'LIVE' && !!player && !!myTeam && !squadFull && !leadingBid && !pricedOut
 
   function reason(): string | null {
     if (state.status === 'READY') return 'Auction has not started yet'
@@ -37,6 +44,8 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
     if (state.status === 'ENDED') return 'Auction has ended'
     if (!player) return 'Waiting for the next player'
     if (squadFull) return 'Your squad is full'
+    if (leadingBid) return 'You already hold the highest bid'
+    if (pricedOut) return `Out of reach — your maximum is ${formatBDT(maxBid)}`
     return null
   }
 
@@ -46,8 +55,12 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
     if (state.status === 'PAUSED') return 'Auction is paused'
     if (state.status !== 'LIVE') return 'Bidding is not open'
     if (squadFull) return `Squad full (${myTeam.squadCount}/${myTeam.maxSquad})`
+    if (leadingBid) return 'You already hold the highest bid'
     if (amount < minBid) return `Minimum bid is ${formatBDT(minBid)}`
     if (amount > myTeam.remaining) return `Over budget — only ${formatBDT(myTeam.remaining)} left`
+    if (amount > maxBid) {
+      return `Maximum bid is ${formatBDT(maxBid)} — ${formatBDT(reserved)} is reserved for your minimum squad`
+    }
     return null
   }
 
@@ -74,14 +87,13 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
   const disabled = !biddingOpen
   const disableReason = reason()
 
-  // Quick increments: first bid anchors at base price; later bids at min next bid.
-  const base = state.currentBid ? state.currentBid.amount : player ? player.basePrice : 0
-  const quickAmounts = state.currentBid
-    ? [state.currentBid.amount + state.minIncrement, base + 10000, base + 20000]
-    : [base, base + 10000, base + 20000]
+  // Quick increments always start from the minimum legal next bid, so no quick
+  // button can produce an amount the server would reject.
+  const steps = [0, 10000, 20000].map((extra) => Math.max(state.minIncrement, extra))
+  const quickAmounts = [minBid, minBid + steps[1], minBid + steps[2]]
   const quickLabels = state.currentBid
-    ? [`+${formatNumber(state.minIncrement)}`, '+10,000', '+20,000']
-    : ['Base', '+10,000', '+20,000']
+    ? quickAmounts.map((a) => `+${formatNumber(a - state.currentBid!.amount)}`)
+    : ['Base', `+${formatNumber(steps[1])}`, `+${formatNumber(steps[2])}`]
 
   return (
     <Card className="border-primary/25 shadow-md">
@@ -113,15 +125,33 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
           </div>
         )}
 
-        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-center">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Minimum next bid</p>
-          <p className="text-2xl font-black tabular-nums text-primary">{player ? formatBDT(minBid) : '—'}</p>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-center">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Minimum bid</p>
+            <p className="text-2xl font-black tabular-nums text-primary">{player ? formatBDT(minBid) : '—'}</p>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-3 text-center">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Your maximum</p>
+            <p
+              className={cn(
+                'text-2xl font-black tabular-nums',
+                pricedOut ? 'text-rose-600' : 'text-foreground',
+              )}
+            >
+              {myTeam ? formatBDT(maxBid) : '—'}
+            </p>
+          </div>
         </div>
+        {reserved > 0 ? (
+          <p className="-mt-2 text-center text-[11px] text-muted-foreground">
+            {formatBDT(reserved)} held back so you can still reach your minimum squad of {myTeam?.minSquad}
+          </p>
+        ) : null}
 
         {/* quick increment buttons */}
         <div className="grid grid-cols-3 gap-2" role="group" aria-label="Quick bid buttons">
           {quickAmounts.map((amount, i) => {
-            const overBudget = myTeam ? amount > myTeam.remaining : true
+            const overBudget = myTeam ? amount > maxBid : true
             const btnDisabled = disabled || overBudget || squadFull
             return (
               <button
@@ -138,7 +168,7 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
                   btnDisabled && overBudget && 'line-through decoration-rose-500'
                 )}
               >
-                <span className="text-sm font-black leading-none">+{quickLabels[i]}</span>
+                <span className="text-sm font-black leading-none">{quickLabels[i]}</span>
                 <span className="mt-0.5 text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(amount)}</span>
                 {!btnDisabled || !overBudget ? null : (
                   <span className="text-[9px] font-semibold uppercase text-rose-600 no-underline">over budget</span>

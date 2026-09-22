@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Gavel, MoreHorizontal, RotateCcw, Search } from 'lucide-react'
+import { AlertTriangle, Gavel, MoreHorizontal, RotateCcw, Search } from 'lucide-react'
 import { formatBDT } from '@/lib/format'
 import type { OrganizerAction, PlayerStatus, RoomState, RoomPlayerLite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -67,7 +67,8 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
     })
   }, [state.players, state.mode, filter, category, search])
 
-  const selectable = (p: RoomPlayerLite) => canSelect && p.status === 'AVAILABLE'
+  const selectable = (p: RoomPlayerLite) =>
+    canSelect && (p.status === 'AVAILABLE' || p.status === 'UNSOLD' || p.status === 'SKIPPED')
   const reauctionable = (p: RoomPlayerLite) =>
     (p.status === 'UNSOLD' || p.status === 'SKIPPED' || p.status === 'SOLD') && state.status !== 'ENDED'
 
@@ -128,6 +129,15 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          {state.mode === 'CATEGORY' && state.pool.uncategorized > 0 ? (
+            <p className="flex items-start gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-900">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>
+                {state.pool.uncategorized} player{state.pool.uncategorized === 1 ? '' : 's'} have no category.
+                Random picks skip them until every category is done — click one here to put them on the block.
+              </span>
+            </p>
+          ) : null}
           <ul className="max-h-[420px] divide-y overflow-y-auto" aria-label="Player pool list">
             {rows.length === 0 ? (
               <li className="py-8 text-center text-sm text-muted-foreground">No players match these filters</li>
@@ -203,7 +213,11 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
             <AlertDialogTitle>Put {pendingSelect?.name} on the block?</AlertDialogTitle>
             <AlertDialogDescription>
               Player #{pendingSelect?.playerNumber} · base {formatBDT(pendingSelect?.basePrice ?? 0)}
-              {pendingSelect?.category ? ` · category ${pendingSelect.category}` : ''}. The bid timer starts immediately.
+              {pendingSelect?.category ? ` · category ${pendingSelect.category}` : ''}
+              {pendingSelect && pendingSelect.status !== 'AVAILABLE'
+                ? ` · currently ${pendingSelect.status.toLowerCase()}`
+                : ''}
+              . The bid timer starts immediately.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/crypto'
 import { createSessionToken, setSessionCookie, jsonError } from '@/lib/auth'
 import { readJson, toSafeUser, EMAIL_RE } from '../../_lib/helpers'
+import { clientKey, rateLimit } from '../../_lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -15,6 +16,11 @@ const registerSchema = z.object({
 })
 
 export async function POST(req: Request) {
+  const retryAfter = rateLimit(clientKey(req, 'register'), 5, 60 * 60 * 1000)
+  if (retryAfter !== null) {
+    return jsonError(`Too many accounts created from here. Please try again in ${retryAfter} seconds.`, 429)
+  }
+
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)
 

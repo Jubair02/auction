@@ -19,6 +19,11 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
+    // Every hit in this codebase is an async data-loader (`void load()`) or a
+    // subscription to an external system (embla carousel, matchMedia). Those are
+    // the patterns the rule's own message calls out as legitimate, but the static
+    // check cannot see past the await. Kept off alongside the other compiler rules.
+    "react-hooks/set-state-in-effect": "off",
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
     "react/prop-types": "off",

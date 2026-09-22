@@ -147,7 +147,7 @@ export async function GET(req: Request, { params }: RouteParams) {
     const teams = await db.team.findMany({
       where: { tournamentId: id },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { players: true } } },
+      include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
     })
     const csv = toCsv(
       ['Team', 'Budget', 'Spent', 'Remaining', 'Players Bought', 'Squad Max', 'Squad Min'],

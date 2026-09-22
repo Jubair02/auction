@@ -30,6 +30,15 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)
 
+  // A completed sale is priced against the base price/category that were in
+  // force at the time — re-auction the player if those need to change.
+  if (player.status === 'SOLD') {
+    const frozen = (['basePrice', 'category'] as const).filter((k) => body[k] !== undefined)
+    if (frozen.length > 0) {
+      return jsonError('Base price and category cannot be changed after a player is sold', 409)
+    }
+  }
+
   const data: {
     name?: string
     phone?: string | null

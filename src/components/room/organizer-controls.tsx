@@ -9,6 +9,7 @@ import {
   ListChecks,
   Pause,
   Play,
+  RotateCcw,
   Send,
   Shuffle,
   Square,
@@ -52,7 +53,7 @@ interface OrganizerControlsProps {
   onAction: (action: OrganizerAction, payload?: Record<string, unknown>) => void
 }
 
-type ConfirmKind = 'sell' | 'unsold' | 'end' | null
+type ConfirmKind = 'sell' | 'unsold' | 'end' | 'reopen' | null
 
 /** Organizer cockpit — start/pause/sell controls, manual bid, category chips. */
 export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
@@ -87,9 +88,14 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
           ) : null}
 
           {ended ? (
-            <p className="rounded-lg bg-muted px-3 py-3 text-center text-sm font-medium text-muted-foreground">
-              Auction ended — head to the results report for final squads.
-            </p>
+            <div className="space-y-3">
+              <p className="rounded-lg bg-muted px-3 py-3 text-center text-sm font-medium text-muted-foreground">
+                Auction ended — head to the results report for final squads.
+              </p>
+              <Button variant="outline" className="h-11 w-full" onClick={() => setConfirm('reopen')}>
+                <RotateCcw className="mr-1.5 h-4 w-4" /> Reopen auction
+              </Button>
+            </div>
           ) : null}
 
           {(live || paused) ? (
@@ -136,20 +142,6 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
                 </Button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="secondary" className="h-11" disabled={!live} onClick={() => setManualOpen(true)}>
-                  <Hand className="mr-1.5 h-4 w-4" /> Manual bid
-                </Button>
-                <Button
-                  variant="destructive"
-                  className="h-11"
-                  disabled={ended}
-                  onClick={() => setConfirm('end')}
-                >
-                  <Square className="mr-1.5 h-4 w-4" /> End auction
-                </Button>
-              </div>
-
               {!hasPlayer && live ? (
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ListChecks className="h-3.5 w-3.5" aria-hidden />
@@ -157,6 +149,19 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
                 </p>
               ) : null}
             </>
+          ) : null}
+
+          {/* Manual bid + End stay reachable in every non-ended state, so a room
+              that was opened but never started can still be closed. */}
+          {!ended ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" className="h-11" disabled={!live} onClick={() => setManualOpen(true)}>
+                <Hand className="mr-1.5 h-4 w-4" /> Manual bid
+              </Button>
+              <Button variant="destructive" className="h-11" onClick={() => setConfirm('end')}>
+                <Square className="mr-1.5 h-4 w-4" /> End auction
+              </Button>
+            </div>
           ) : null}
         </CardContent>
       </Card>
@@ -193,13 +198,25 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
       </AlertDialog>
       <AlertDialog open={confirm === 'end'} onOpenChange={(o) => !o && setConfirm(null)}>
         <ConfirmShell
-          title="End this auction permanently?"
-          description="This ends the auction permanently. Any player currently on the block returns to the pool, and the tournament is marked completed."
+          title="End this auction?"
+          description="Any player currently on the block returns to the pool, and the tournament is marked completed. Sold players keep their teams. You can reopen the auction afterwards if you need to."
           actionLabel="End auction"
           destructive
           onAction={() => {
             setConfirm(null)
             onAction('end')
+          }}
+        />
+      </AlertDialog>
+
+      <AlertDialog open={confirm === 'reopen'} onOpenChange={(o) => !o && setConfirm(null)}>
+        <ConfirmShell
+          title="Reopen the auction?"
+          description="The room goes live again so you can auction the remaining players. Sold players, squads and budgets stay exactly as they are."
+          actionLabel="Reopen auction"
+          onAction={() => {
+            setConfirm(null)
+            onAction('reopen')
           }}
         />
       </AlertDialog>
@@ -308,6 +325,7 @@ function ManualBidDialog({
   const player = state.currentPlayer
   const minBid = player ? (state.currentBid ? state.currentBid.amount + state.minIncrement : player.basePrice) : 0
   const team: RoomTeam | undefined = state.teams.find((t) => t.id === teamId)
+  const teamMax = team ? (team.maxBid ?? team.remaining) : 0
 
   function submit() {
     if (!player) {
@@ -323,12 +341,20 @@ function ManualBidDialog({
       setError('Enter a valid amount')
       return
     }
+    if (state.currentBid?.teamId === team.id) {
+      setError(`${team.name} already holds the highest bid`)
+      return
+    }
     if (n < minBid) {
       setError(`Minimum bid is ${formatBDT(minBid)}`)
       return
     }
     if (n > team.remaining) {
       setError(`${team.name} only has ${formatBDT(team.remaining)} left`)
+      return
+    }
+    if (n > teamMax) {
+      setError(`${team.name} can bid at most ${formatBDT(teamMax)} — the rest is reserved for their minimum squad`)
       return
     }
     if (team.squadCount >= team.maxSquad) {
@@ -364,12 +390,17 @@ function ManualBidDialog({
                 <SelectValue placeholder="Select team" />
               </SelectTrigger>
               <SelectContent>
-                {state.teams.map((t) => (
-                  <SelectItem key={t.id} value={t.id} disabled={t.squadCount >= t.maxSquad}>
-                    {t.name} · left {formatBDT(t.remaining)}
-                    {t.squadCount >= t.maxSquad ? ' (squad full)' : ''}
-                  </SelectItem>
-                ))}
+                {state.teams.map((t) => {
+                  const cap = t.maxBid ?? t.remaining
+                  const full = t.squadCount >= t.maxSquad
+                  const leading = state.currentBid?.teamId === t.id
+                  return (
+                    <SelectItem key={t.id} value={t.id} disabled={full || leading}>
+                      {t.name} · max {formatBDT(cap)}
+                      {full ? ' (squad full)' : leading ? ' (highest bidder)' : ''}
+                    </SelectItem>
+                  )
+                })}
               </SelectContent>
             </Select>
           </div>

@@ -122,11 +122,14 @@ export default function MyTeamView() {
         <EmptyState
           icon={Users}
           title="No team yet"
-          description="You are not managing a team in any auction yet. Ask the organizer to attach a team to your account."
+          description="You are not managing a team in any auction yet. Join a room with its code and pick an unclaimed team, or ask the organizer to attach one to your account."
           action={
-            <Button variant="outline" onClick={() => navigate('/dashboard')}>
-              Back to dashboard
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={() => navigate('/join')}>Join a room</Button>
+              <Button variant="outline" onClick={() => navigate('/dashboard')}>
+                Back to dashboard
+              </Button>
+            </div>
           }
         />
       </div>

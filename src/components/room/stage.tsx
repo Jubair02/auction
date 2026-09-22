@@ -25,7 +25,9 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
   const hasPlayer = !!state.currentPlayer
   const active = state.status === 'LIVE' && hasPlayer
   const remaining = useCountdown(state.timerEndsAt, clockOffset, active)
-  const totalMs = state.bidTimerSeconds * 1000
+  // The ring must be scaled to whichever timer is actually running: the bid timer
+  // during stage 0, the (shorter) going-once/twice interval after that.
+  const totalMs = (state.stage > 0 ? state.goingIntervalSeconds : state.bidTimerSeconds) * 1000
   const paused = state.status === 'PAUSED' && hasPlayer
   const shownRemaining = paused ? (state.pausedRemainingMs ?? 0) : remaining
 

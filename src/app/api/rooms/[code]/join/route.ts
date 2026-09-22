@@ -91,6 +91,20 @@ export async function POST(req: Request, { params }: RouteParams) {
       return jsonError('This team is registered to another manager. Please log in with that account.', 403)
     }
 
+    // An unclaimed team is claimed by the first logged-in MANAGER who takes the seat.
+    // Without this the team never gets a managerUserId, so "My teams" stays empty forever.
+    if (!team.managerUserId && sessionUser && sessionUser.role === 'MANAGER') {
+      const alreadyManaging = await db.team.findFirst({
+        where: { tournamentId: auction.tournamentId, managerUserId: sessionUser.id },
+        select: { id: true, name: true },
+      })
+      if (alreadyManaging) {
+        return jsonError(`You already manage "${alreadyManaging.name}" in this tournament`, 409)
+      }
+      await db.team.update({ where: { id: team.id }, data: { managerUserId: sessionUser.id } })
+      team.managerUserId = sessionUser.id
+    }
+
     const token = signToken(
       {
         auctionId: auction.id,

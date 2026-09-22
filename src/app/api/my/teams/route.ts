@@ -21,7 +21,7 @@ export async function GET() {
           auction: { select: { roomCode: true, status: true } },
         },
       },
-      _count: { select: { players: true } },
+      _count: { select: { players: { where: { status: 'SOLD' } } } },
     },
   })
 

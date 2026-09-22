@@ -2,7 +2,6 @@ import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import type { TeamDTO } from '@/lib/types'
 import {
-  coerceInt,
   coercePositiveInt,
   loadTournamentForOwner,
   readJson,
@@ -82,7 +81,7 @@ export async function POST(req: Request, { params }: RouteParams) {
   for (const t of valid) {
     const team = await db.team.create({
       data: { ...t, tournamentId: id, spent: 0 },
-      include: { _count: { select: { players: true } } },
+      include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
     })
     created.push(serializeTeam(team))
   }

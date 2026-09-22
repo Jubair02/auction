@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CalendarDays, DoorOpen, Gavel, LayoutGrid, Loader2, Plus, Trophy, UserCog, Users } from 'lucide-react'
+import { CalendarDays, DoorOpen, Gavel, LayoutGrid, Plus, Trophy, UserCog, Users } from 'lucide-react'
 import { apiGet } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { useAppStore } from '@/lib/store'
@@ -203,7 +203,7 @@ export default function ManagerDashboard() {
           <EmptyState
             icon={Users}
             title="No team yet"
-            description="You are not managing a team in any auction. Ask the organizer to add you as a team manager, or join a live room as a viewer to see how it works."
+            description="You are not managing a team in any auction yet. Join a room with its code and pick an unclaimed team — it is linked to your account automatically. Your organizer can also attach a team to you directly."
             action={
               <Button onClick={() => navigate('/join')}>
                 <Plus className="mr-2 h-4 w-4" /> Join room
@@ -220,11 +220,6 @@ export default function ManagerDashboard() {
         </p>
       ) : null}
 
-      {teams === null && error ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        </div>
-      ) : null}
     </div>
   )
 }

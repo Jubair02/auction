@@ -10,8 +10,13 @@ import { PlayerAvatar } from '@/components/shared/avatars'
 
 /** Manager's left-column extras — their own squad + the live bid ladder for the player on the block. */
 export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTeam | undefined }) {
+  // Match on team id; fall back to the name for a socket service that has not
+  // been restarted yet and is still sending the older payload shape.
   const squad = myTeam
-    ? state.players.filter((p) => p.teamName === myTeam.name && p.status === 'SOLD')
+    ? state.players.filter(
+        (p) =>
+          p.status === 'SOLD' && (p.teamId ? p.teamId === myTeam.id : p.teamName === myTeam.name),
+      )
     : []
 
   return (

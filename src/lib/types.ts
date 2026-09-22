@@ -87,6 +87,8 @@ export interface TeamDTO {
   color: string | null
   captainName: string | null
   managerUserId: string | null
+  managerName?: string | null
+  managerEmail?: string | null
   budget: number
   maxSquad: number
   minSquad: number
@@ -169,6 +171,10 @@ export interface RoomTeam {
   budget: number
   spent: number
   remaining: number
+  /** Highest legal bid for the player on the block: remaining purse minus the
+   *  amount that must stay back to still reach `minSquad`.
+   *  Optional: older socket-service builds omit it. */
+  maxBid?: number
   squadCount: number
   maxSquad: number
   minSquad: number
@@ -184,6 +190,8 @@ export interface RoomPlayerLite {
   basePrice: number
   status: PlayerStatus
   soldPrice: number | null
+  /** optional: older socket-service builds omit this */
+  teamId?: string | null
   teamName: string | null
 }
 
@@ -207,7 +215,15 @@ export interface RoomState {
   teams: RoomTeam[]
   participants: { name: string; role: RoomRole; teamId: string | null; online: boolean }[]
   players: RoomPlayerLite[] // full pool with statuses (for organizer selection / re-auction / pools)
-  pool: { total: number; available: number; sold: number; unsold: number; skipped: number }
+  pool: {
+    total: number
+    available: number
+    sold: number
+    unsold: number
+    skipped: number
+    /** Available players with no A–E category (CATEGORY mode only concern). */
+    uncategorized: number
+  }
   lastResult: {
     playerName: string
     playerNumber: number
@@ -243,6 +259,7 @@ export type OrganizerAction =
   | 'reauction'
   | 'manual_bid'
   | 'end'
+  | 'reopen'
 
 export interface ResultsSummary {
   totalPlayers: number

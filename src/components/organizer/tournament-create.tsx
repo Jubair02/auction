@@ -45,8 +45,9 @@ const STEPS = [
   { n: 3, label: 'Review', icon: Check },
 ]
 
-// Suggested defaults shown in the wizard — NOT sent to the API.
-// You'll use these as base-price hints when adding players later.
+// The category base prices the Players tab offers as one-tap quick picks.
+// They are platform defaults, not per-tournament settings — each player's base
+// price is still editable individually when you add or edit them.
 const SUGGESTED_CATEGORY_PRICES = { ...DEFAULT_CATEGORY_BASE_PRICES }
 
 export default function TournamentCreate() {
@@ -64,11 +65,6 @@ export default function TournamentCreate() {
   // Step 2 — auction mode
   const [auctionMode, setAuctionMode] = useState<'CATEGORY' | 'NORMAL'>('CATEGORY')
   const [basePrice, setBasePrice] = useState('10000')
-  const [categoryPrices, setCategoryPrices] = useState<Record<string, string>>(() => {
-    const rec: Record<string, string> = {}
-    for (const [k, v] of Object.entries(SUGGESTED_CATEGORY_PRICES)) rec[k] = String(v)
-    return rec
-  })
 
   const [creating, setCreating] = useState(false)
 
@@ -337,27 +333,22 @@ export default function TournamentCreate() {
                 {auctionMode === 'CATEGORY' ? (
                   <div className="rounded-xl border bg-muted/30 p-4">
                     <p className="flex items-center gap-1.5 text-sm font-semibold">
-                      <Wallet className="h-4 w-4 text-primary" aria-hidden /> Suggested base prices per category
+                      <Wallet className="h-4 w-4 text-primary" aria-hidden /> Default base prices per category
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      These are suggested defaults you&apos;ll use when adding players — they are not saved now. You
-                      can adjust each player&apos;s base price later.
+                      One tap applies these when you add a player. Every player&apos;s base price stays editable
+                      individually in the Players tab.
                     </p>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {Object.entries(SUGGESTED_CATEGORY_PRICES).map(([cat]) => (
-                        <div key={cat} className="flex items-center gap-2">
-                          <Badge className="w-9 justify-center bg-primary/10 text-primary hover:bg-primary/10">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                      {Object.entries(SUGGESTED_CATEGORY_PRICES).map(([cat, price]) => (
+                        <div
+                          key={cat}
+                          className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2"
+                        >
+                          <Badge className="w-8 justify-center bg-primary/10 text-primary hover:bg-primary/10">
                             {cat}
                           </Badge>
-                          <Input
-                            type="number"
-                            inputMode="numeric"
-                            min={0}
-                            value={categoryPrices[cat] ?? ''}
-                            onChange={(e) => setCategoryPrices((p) => ({ ...p, [cat]: e.target.value }))}
-                            aria-label={`Suggested base price for category ${cat}`}
-                            className="h-10"
-                          />
+                          <span className="text-sm font-semibold tabular-nums">{formatBDT(price)}</span>
                         </div>
                       ))}
                     </div>

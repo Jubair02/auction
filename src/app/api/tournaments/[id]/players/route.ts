@@ -28,8 +28,7 @@ function validatePlayerInput(raw: unknown, label: string): ValidatedPlayer | str
   const p = raw as Record<string, unknown>
 
   const name = typeof p.name === 'string' ? p.name.trim() : ''
-  if (name.length < 1 || name.length > 80) return `${label}: name is required (2–80 characters)`
-  if (name.length < 2) return `${label}: name must be at least 2 characters`
+  if (name.length < 2 || name.length > 80) return `${label}: name must be 2–80 characters`
 
   const role = typeof p.role === 'string' ? p.role.trim() : ''
   if (role === '') return `${label}: role is required`

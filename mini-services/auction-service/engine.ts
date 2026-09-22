@@ -207,6 +207,84 @@ export class AuctionEngine {
   }
 
   // ----------------------------------------------------------
+  // Purse maths
+  // ----------------------------------------------------------
+  /** Cheapest base price still obtainable, used to reserve purse for the minimum squad. */
+  private cheapestAvailable(room: Room, excludePlayerId?: string): number {
+    let min = Infinity
+    let count = 0
+    for (const p of room.players) {
+      if (p.id === excludePlayerId) continue
+      if (p.status !== 'AVAILABLE' && p.status !== 'UNSOLD' && p.status !== 'SKIPPED') continue
+      count++
+      if (p.basePrice < min) min = p.basePrice
+    }
+    return count === 0 || min === Infinity ? 0 : min
+  }
+
+  /** How many more players a team still needs after winning the one on the block. */
+  private slotsStillNeeded(room: Room, team: TeamCache, excludePlayerId?: string): number {
+    const needed = team.minSquad - team.squadCount - 1
+    if (needed <= 0) return 0
+    // Never reserve for players that do not exist in the pool any more.
+    let obtainable = 0
+    for (const p of room.players) {
+      if (p.id === excludePlayerId) continue
+      if (p.status === 'AVAILABLE' || p.status === 'UNSOLD' || p.status === 'SKIPPED') obtainable++
+    }
+    return Math.min(needed, obtainable)
+  }
+
+  /**
+   * The highest bid a team may legally place for the player on the block.
+   * Their remaining purse, minus the minimum they must keep back to still
+   * complete the minimum squad size — otherwise a team can spend everything on
+   * one player and end the auction with an illegal squad.
+   */
+  private maxBidFor(room: Room, team: TeamCache, excludePlayerId?: string): number {
+    const remaining = team.budget - team.spent
+    const reserve = this.slotsStillNeeded(room, team, excludePlayerId) * this.cheapestAvailable(room, excludePlayerId)
+    return Math.max(0, remaining - reserve)
+  }
+
+  /** Shared bid legality check for manager bids and organizer manual bids. */
+  private validateBid(
+    room: Room,
+    team: TeamCache,
+    player: Player,
+    amount: number,
+    opts: { manual: boolean },
+  ): string | null {
+    if (!Number.isInteger(amount) || amount <= 0) return 'Invalid bid amount'
+
+    const who = opts.manual ? `${team.name}'s` : 'your'
+    if (team.squadCount >= team.maxSquad) {
+      return opts.manual ? `${team.name}'s squad is already full` : 'Your squad is full'
+    }
+    // Bidding against yourself only inflates the price you pay.
+    if (room.currentBid && room.currentBid.teamId === team.id) {
+      return opts.manual
+        ? `${team.name} already holds the highest bid`
+        : 'You already hold the highest bid'
+    }
+    const minBid = room.currentBid ? room.currentBid.amount + room.minIncrement : player.basePrice
+    if (amount < minBid) return `Minimum bid is ${bdt(minBid)}`
+
+    const remaining = team.budget - team.spent
+    if (amount > remaining) {
+      return opts.manual
+        ? `${team.name} only has ${bdt(remaining)} left`
+        : `Bid exceeds ${who} available budget (${bdt(remaining)} left)`
+    }
+    const maxBid = this.maxBidFor(room, team, player.id)
+    if (amount > maxBid) {
+      const slots = this.slotsStillNeeded(room, team, player.id)
+      return `Maximum bid is ${bdt(maxBid)} — ${bdt(remaining - maxBid)} must stay back for ${slots} more player${slots === 1 ? '' : 's'} to reach the minimum squad of ${team.minSquad}`
+    }
+    return null
+  }
+
+  // ----------------------------------------------------------
   // Client actions
   // ----------------------------------------------------------
   async placeBid(socket: Socket, identity: SocketIdentity, rawAmount: unknown): Promise<void> {
@@ -217,13 +295,10 @@ export class AuctionEngine {
       const player = room.players.find((p) => p.id === room.currentPlayerId)
       if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
       const amount = Number(rawAmount)
-      if (!Number.isInteger(amount) || amount <= 0) return this.emitError(socket, 'Invalid bid amount')
       const team = room.teams.find((t) => t.id === identity.teamId)
       if (!team) return this.emitError(socket, 'You are not assigned to a team in this room')
-      const minBid = room.currentBid ? room.currentBid.amount + room.minIncrement : player.basePrice
-      if (amount < minBid) return this.emitError(socket, `Minimum bid is ${bdt(minBid)}`)
-      if (amount > team.budget - team.spent) return this.emitError(socket, 'Bid exceeds your available budget')
-      if (team.squadCount >= team.maxSquad) return this.emitError(socket, 'Your squad is full')
+      const invalid = this.validateBid(room, team, player, amount, { manual: false })
+      if (invalid) return this.emitError(socket, invalid)
 
       const created = await this.db.$transaction(async (tx) => {
         const bid = await tx.bid.create({
@@ -278,6 +353,7 @@ export class AuctionEngine {
         case 'reauction': return this.actionReauction(socket, room, payload)
         case 'manual_bid': return this.manualBid(socket, room, payload)
         case 'end': return this.actionEnd(socket, room)
+        case 'reopen': return this.actionReopen(socket, room)
         default: return this.emitError(socket, `Unknown action: ${String(action)}`)
       }
     })
@@ -287,6 +363,10 @@ export class AuctionEngine {
   private async actionStart(socket: Socket, room: Room): Promise<void> {
     if (room.status === 'ENDED') return this.emitError(socket, 'Auction has already ended')
     if (room.status !== 'READY') return this.emitError(socket, 'Auction already started')
+    // Pick up anything the organizer added since the room was first built.
+    await this.resyncPool(room)
+    if (room.players.length === 0) return this.emitError(socket, 'Add at least one player before starting')
+    if (room.teams.length === 0) return this.emitError(socket, 'Add at least one team before starting')
     await this.db.$transaction([
       this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
       this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }),
@@ -335,13 +415,15 @@ export class AuctionEngine {
   private async actionNextPlayer(socket: Socket, room: Room): Promise<void> {
     if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
     if (room.currentPlayerId) return this.emitError(socket, 'A player is already on the block')
-    const ok = await this.pickNextPlayer(room)
-    if (ok) this.broadcast(room)
+    await this.resyncPool(room)
+    await this.pickNextPlayer(room)
+    this.broadcast(room)
   }
 
   private async actionSelectPlayer(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
     if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
     if (room.currentPlayerId) return this.emitError(socket, 'A player is already on the block')
+    await this.resyncPool(room)
     const playerId = String(payload?.playerId ?? '')
     const player = room.players.find((p) => p.id === playerId)
     if (!player) return this.emitError(socket, 'Player not found')
@@ -410,9 +492,21 @@ export class AuctionEngine {
 
     const ops: Prisma.PrismaPromise<unknown>[] = []
     if (player.status === 'SOLD' && player.soldToTeamId) {
-      const team = room.teams.find((t) => t.id === player.soldToTeamId)
-      const refund = Math.max(0, (team?.spent ?? 0) - (player.soldPrice ?? 0))
-      ops.push(this.db.team.update({ where: { id: player.soldToTeamId }, data: { spent: refund } }))
+      // Refund from the persisted row: the in-memory cache can be stale, and an
+      // absolute write derived from it would wipe the team's whole spend.
+      const teamRow = await this.db.team.findUnique({
+        where: { id: player.soldToTeamId },
+        select: { spent: true },
+      })
+      const refund = Math.min(player.soldPrice ?? 0, teamRow?.spent ?? 0)
+      if (refund > 0) {
+        ops.push(
+          this.db.team.update({
+            where: { id: player.soldToTeamId },
+            data: { spent: { decrement: refund } },
+          }),
+        )
+      }
     }
     // If another player is currently on the block, send them back to the pool.
     if (room.currentPlayerId && room.currentPlayerId !== player.id) {
@@ -481,6 +575,29 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
+  /**
+   * Undoes an End. Sold players, budgets and squads are untouched — the room
+   * simply goes live again so the organizer can keep going. Without this an
+   * accidental End leaves the tournament permanently stuck on COMPLETED.
+   */
+  private async actionReopen(socket: Socket, room: Room): Promise<void> {
+    if (room.status !== 'ENDED') return this.emitError(socket, 'The auction is not ended')
+    await this.db.$transaction([
+      this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
+      this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }),
+    ])
+    await this.resyncPool(room)
+    room.status = 'LIVE'
+    room.currentPlayerId = null
+    room.currentBid = null
+    room.currentBidHistory = []
+    room.stage = 0
+    room.timerEndsAt = null
+    room.pausedRemainingMs = null
+    this.notify(room, 'info', 'Auction reopened — bring the next player to the block.')
+    this.broadcast(room)
+  }
+
   private async manualBid(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
     const teamId = String(payload?.teamId ?? '')
     const team = room.teams.find((t) => t.id === teamId)
@@ -489,11 +606,8 @@ export class AuctionEngine {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
     const amount = Number(payload?.amount)
-    if (!Number.isInteger(amount) || amount <= 0) return this.emitError(socket, 'Invalid bid amount')
-    const minBid = room.currentBid ? room.currentBid.amount + room.minIncrement : player.basePrice
-    if (amount < minBid) return this.emitError(socket, `Minimum bid is ${bdt(minBid)}`)
-    if (amount > team.budget - team.spent) return this.emitError(socket, 'Bid exceeds available budget of this team')
-    if (team.squadCount >= team.maxSquad) return this.emitError(socket, 'This team squad is full')
+    const invalid = this.validateBid(room, team, player, amount, { manual: true })
+    if (invalid) return this.emitError(socket, invalid)
 
     await this.db.$transaction(async (tx) => {
       await tx.bid.create({
@@ -528,17 +642,39 @@ export class AuctionEngine {
   private async pickNextPlayer(room: Room): Promise<boolean> {
     const pool = room.players.filter((p) => p.status === 'AVAILABLE')
     if (pool.length === 0) {
-      this.notify(room, 'error', 'No players available')
+      this.notify(room, 'info', 'Every player has been dealt with — you can end the auction.')
       return false
     }
+
     let candidates = pool
     if (room.tournament.auctionMode === 'CATEGORY') {
       candidates = pool.filter((p) => p.category === room.currentCategory)
+
+      // Current category is exhausted: roll on to the next one that still has
+      // players instead of stalling with an error the organizer must clear.
       if (candidates.length === 0) {
-        this.notify(room, 'error', `No available players in Category ${room.currentCategory ?? '-'} — switch category`)
-        return false
+        const nextCode = CATEGORY_CODES.find((code) => pool.some((p) => p.category === code))
+        if (nextCode) {
+          room.currentCategory = nextCode
+          await this.db.auction.update({
+            where: { id: room.auctionId },
+            data: { currentCategory: nextCode },
+          })
+          this.notify(room, 'info', `Category complete — moving on to Category ${nextCode}`)
+          candidates = pool.filter((p) => p.category === nextCode)
+        } else {
+          // Nothing categorised is left; fall back to the uncategorised players
+          // so they can never be stranded outside the A–E buckets.
+          candidates = pool.filter((p) => !p.category)
+          if (candidates.length === 0) {
+            this.notify(room, 'info', 'No categorised players left — end the auction or pick from the pool.')
+            return false
+          }
+          this.notify(room, 'warning', 'Auctioning players that have no category set')
+        }
       }
     }
+
     const player = candidates[randomInt(candidates.length)]
     await this.putOnBlock(room, player)
     return true
@@ -869,6 +1005,35 @@ export class AuctionEngine {
     return room
   }
 
+  /**
+   * Re-reads teams and players only (not the auction/tournament rows, which the
+   * engine owns while a room is live). Called at the boundaries between players
+   * so squad, budget and pool edits made through the REST API while the auction
+   * is running are picked up instead of going unnoticed.
+   */
+  private async resyncPool(room: Room): Promise<void> {
+    try {
+      const [teams, players, squadGroups] = await Promise.all([
+        this.db.team.findMany({ where: { tournamentId: room.tournament.id }, orderBy: { name: 'asc' } }),
+        this.db.player.findMany({
+          where: { tournamentId: room.tournament.id },
+          orderBy: { playerNumber: 'asc' },
+        }),
+        this.db.player.groupBy({
+          by: ['soldToTeamId'],
+          _count: { _all: true },
+          where: { tournamentId: room.tournament.id, status: 'SOLD', soldToTeamId: { not: null } },
+        }),
+      ])
+      const counts = new Map<string, number>()
+      for (const g of squadGroups) if (g.soldToTeamId) counts.set(g.soldToTeamId, g._count._all)
+      room.teams = teams.map((t) => ({ ...t, squadCount: counts.get(t.id) ?? 0 }))
+      room.players = players
+    } catch {
+      // keep the previous cache — a stale pool beats dropping the live room
+    }
+  }
+
   /** Refreshes DB-backed caches (auction/tournament rows, teams+squads, players). */
   private async refreshCache(room: Room): Promise<void> {
     const [auction, tournament, teams, players, squadGroups] = await Promise.all([
@@ -882,7 +1047,7 @@ export class AuctionEngine {
       this.db.player.groupBy({
         by: ['soldToTeamId'],
         _count: { _all: true },
-        where: { tournamentId: room.tournament.id, soldToTeamId: { not: null } },
+        where: { tournamentId: room.tournament.id, status: 'SOLD', soldToTeamId: { not: null } },
       }),
     ])
     if (!auction || !tournament) throw new Error('Auction data missing')
@@ -919,11 +1084,13 @@ export class AuctionEngine {
     let sold = 0
     let unsold = 0
     let skipped = 0
+    let uncategorized = 0
     for (const p of room.players) {
       if (p.status === 'AVAILABLE') available++
       else if (p.status === 'SOLD') sold++
       else if (p.status === 'UNSOLD') unsold++
       else if (p.status === 'SKIPPED') skipped++
+      if (!p.category && p.status !== 'SOLD') uncategorized++
     }
 
     return {
@@ -963,6 +1130,7 @@ export class AuctionEngine {
         budget: t.budget,
         spent: t.spent,
         remaining: t.budget - t.spent,
+        maxBid: this.maxBidFor(room, t, room.currentPlayerId ?? undefined),
         squadCount: t.squadCount,
         maxSquad: t.maxSquad,
         minSquad: t.minSquad,
@@ -983,9 +1151,10 @@ export class AuctionEngine {
         basePrice: p.basePrice,
         status: p.status as RoomState['players'][number]['status'],
         soldPrice: p.soldPrice,
+        teamId: p.soldToTeamId,
         teamName: p.soldToTeamId ? teamNameById.get(p.soldToTeamId) ?? null : null,
       })),
-      pool: { total: room.players.length, available, sold, unsold, skipped },
+      pool: { total: room.players.length, available, sold, unsold, skipped, uncategorized },
       lastResult: room.lastResult,
       soldFeed: room.soldFeed,
       minIncrement: room.minIncrement,

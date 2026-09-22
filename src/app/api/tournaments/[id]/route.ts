@@ -28,8 +28,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const tournament = await db.tournament.findUnique({ where: { id } })
   if (!tournament) return jsonError('Tournament not found', 404)
 
-  if (!isOwnerOrAdmin(tournament, user)) {
-    // Managers of a team inside this tournament can view the full detail (squad views)
+  const canManage = isOwnerOrAdmin(tournament, user)
+  if (!canManage) {
+    // Managers of a team inside this tournament can view the detail (squad views)
     const managesTeam = await db.team.findFirst({
       where: { tournamentId: id, managerUserId: user.id },
       select: { id: true },
@@ -46,14 +47,22 @@ export async function GET(_req: Request, { params }: RouteParams) {
     db.team.findMany({
       where: { tournamentId: id },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { players: true } } },
+      include: {
+        _count: { select: { players: { where: { status: 'SOLD' } } } },
+        manager: { select: { name: true, email: true } },
+      },
     }),
     db.auction.findUnique({ where: { tournamentId: id } }),
   ])
 
+  // Player phone numbers are organizer data — team managers get the squad, not the contacts.
+  const toPlayer = canManage
+    ? serializePlayer
+    : (p: (typeof players)[number]) => ({ ...serializePlayer(p), phone: null })
+
   return Response.json({
     tournament: serializeTournamentFull(tournament),
-    players: players.map(serializePlayer),
+    players: players.map(toPlayer),
     teams: teams.map(serializeTeam),
     auction: auction ? serializeAuction(auction) : null,
   })

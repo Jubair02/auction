@@ -286,7 +286,6 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
             html, body { background: #fff !important; }
             body { font-size: 12.5px; }
             .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
-            .print-grid-3 { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px !important; }
           }`,
         }}
       />

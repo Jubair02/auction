@@ -1,10 +1,11 @@
 'use client'
 
 // App shell + hash router. The entire SPA lives under the single Next.js route "/".
-import { useEffect } from 'react'
-import { Gavel, LayoutDashboard, Loader2, LogIn, LogOut, ShieldCheck, UserPlus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Gavel, LayoutDashboard, Loader2, LogIn, LogOut, Megaphone, ShieldCheck, UserPlus } from 'lucide-react'
 import { Toaster as SonnerToaster } from 'sonner'
 import { useAppStore } from '@/lib/store'
+import { apiGet } from '@/lib/api'
 import { navigate, useHashRoute } from '@/lib/router'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -134,9 +135,12 @@ export default function AppRoot() {
           <ManagerDashboard />
         )
       case head === 'tournaments' && segs.length === 1:
-        return <RoleGate allowed={['ORGANIZER']} user={user} authLoading={authLoading}><TournamentsList /></RoleGate>
+        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentsList /></RoleGate>
       case head === 'tournaments' && segs[1] === 'new':
-        return <RoleGate allowed={['ORGANIZER']} user={user} authLoading={authLoading}><TournamentCreate /></RoleGate>
+        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentCreate /></RoleGate>
+      // Both spellings are accepted: #/tournaments/:id/history and #/tournaments/history/:id
+      case head === 'tournaments' && segs[2] === 'history' && !!segs[1]:
+        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><AuctionHistory tournamentId={segs[1]} /></RoleGate>
       case head === 'tournaments' && segs[1] === 'history' && !!segs[2]:
         return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><AuctionHistory tournamentId={segs[2]} /></RoleGate>
       case head === 'tournaments' && !!segs[1]:
@@ -235,6 +239,8 @@ export default function AppRoot() {
         </div>
       </header>
 
+      <AnnouncementBanner />
+
       <main className="flex-1">{renderRoute()}</main>
 
       <footer className="mt-auto border-t bg-muted/40 pb-[env(safe-area-inset-bottom)] print:hidden">
@@ -248,6 +254,34 @@ export default function AppRoot() {
       </footer>
 
       <SonnerToaster richColors position="top-center" closeButton />
+    </div>
+  )
+}
+
+/** Site-wide banner driven by the admin "announcement" setting. */
+function AnnouncementBanner() {
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    apiGet<{ settings: Record<string, string> }>('/api/settings')
+      .then((res) => {
+        const text = res.settings?.announcement?.trim()
+        if (!cancelled && text) setMessage(text)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!message) return null
+  return (
+    <div className="border-b border-amber-200 bg-amber-50 print:hidden" role="status">
+      <div className="container mx-auto flex max-w-7xl items-start gap-2 px-4 py-2 text-sm text-amber-900">
+        <Megaphone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <p className="min-w-0">{message}</p>
+      </div>
     </div>
   )
 }

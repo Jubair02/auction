@@ -11,6 +11,7 @@ import {
   Info,
   Loader2,
   MoreVertical,
+  Pencil,
   Radio,
   Trash2,
   Trophy,
@@ -49,6 +50,7 @@ import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { PlayersTab } from '@/components/organizer/players-tab'
 import { TeamsTab } from '@/components/organizer/teams-tab'
 import { AuctionSetupTab } from '@/components/organizer/auction-setup-tab'
+import { TournamentEditDialog } from '@/components/organizer/tournament-edit-dialog'
 import { apiDelete, apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate } from '@/lib/format'
@@ -73,6 +75,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
   const [tab, setTab] = useState('overview')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -180,6 +183,9 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
+          <Button variant="outline" className="min-h-10" onClick={() => setEditOpen(true)}>
+            <Pencil className="mr-1.5 h-4 w-4" aria-hidden /> Edit
+          </Button>
           <Button
             variant="outline"
             className="min-h-10"
@@ -206,6 +212,9 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
                   ))}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" /> Edit details
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate(`/results/${tournamentId}`)}>
                 <Trophy className="mr-2 h-4 w-4" /> Results
               </DropdownMenuItem>
@@ -343,14 +352,25 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
             tournamentId={tournamentId}
             tournamentName={t.name}
             auction={auction}
-            playerCount={players.length}
-            teamCount={teams.length}
+            auctionMode={t.auctionMode}
+            players={players}
+            teams={teams}
             refetch={load}
           />
         </TabsContent>
       </Tabs>
 
       <Separator className="mt-8" />
+
+      {/* Edit details — remounted per open so the form always starts from fresh data */}
+      {editOpen ? (
+        <TournamentEditDialog
+          tournament={t}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          onSaved={load}
+        />
+      ) : null}
 
       {/* Delete confirmation */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>

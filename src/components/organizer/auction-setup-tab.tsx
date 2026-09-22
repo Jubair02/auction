@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ExternalLink, Gavel, History, Info, Loader2, MessageCircle, Trophy } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ExternalLink, Gavel, History, Info, Loader2, MessageCircle, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { EmptyState } from '@/components/shared/empty-state'
 import { apiPatch, apiPost, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
-import type { AuctionDTO } from '@/lib/types'
+import { formatBDT } from '@/lib/format'
+import type { AuctionDTO, AuctionMode, PlayerDTO, TeamDTO } from '@/lib/types'
 
 const BID_TIMER_OPTIONS = ['10', '15', '20', '30', '45', '60']
 const GOING_OPTIONS = ['5', '8', '10', '15']
@@ -35,17 +36,21 @@ export function AuctionSetupTab({
   tournamentId,
   tournamentName,
   auction,
-  playerCount,
-  teamCount,
+  auctionMode,
+  players,
+  teams,
   refetch,
 }: {
   tournamentId: string
   tournamentName: string
   auction: AuctionDTO | null
-  playerCount: number
-  teamCount: number
+  auctionMode: AuctionMode
+  players: PlayerDTO[]
+  teams: TeamDTO[]
   refetch: () => Promise<void>
 }) {
+  const playerCount = players.length
+  const teamCount = teams.length
   const [settings, setSettings] = useState<SettingsState>(() =>
     auction
       ? {
@@ -141,6 +146,8 @@ export function AuctionSetupTab({
           </Card>
         ) : null}
 
+        <ReadinessCheck players={players} teams={teams} auctionMode={auctionMode} />
+
         <Card>
           <CardContent className="space-y-5 p-6">
             <h3 className="font-bold">Auction settings</h3>
@@ -227,6 +234,8 @@ export function AuctionSetupTab({
         </CardContent>
       </Card>
 
+      <ReadinessCheck players={players} teams={teams} auctionMode={auctionMode} />
+
       {/* Settings */}
       <Card>
         <CardContent className="space-y-5 p-6">
@@ -255,6 +264,94 @@ export function AuctionSetupTab({
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pre-flight warnings for situations the live engine cannot resolve on its own:
+ * players that will never come up in category rotation, and teams that can
+ * never legally fill their minimum squad.
+ */
+function ReadinessCheck({
+  players,
+  teams,
+  auctionMode,
+}: {
+  players: PlayerDTO[]
+  teams: TeamDTO[]
+  auctionMode: AuctionMode
+}) {
+  const open = players.filter((p) => p.status !== 'SOLD')
+  const cheapest = open.length > 0 ? Math.min(...open.map((p) => p.basePrice)) : 0
+
+  const warnings: string[] = []
+
+  if (auctionMode === 'CATEGORY') {
+    const uncategorized = open.filter((p) => !p.category).length
+    if (uncategorized > 0) {
+      warnings.push(
+        `${uncategorized} player${uncategorized === 1 ? ' has' : 's have'} no category. Category rotation skips them — they come up last, or when you pick them from the pool by hand.`,
+      )
+    }
+  }
+
+  const totalMin = teams.reduce((n, t) => n + t.minSquad, 0)
+  if (totalMin > players.length) {
+    warnings.push(
+      `Every team's minimum squad adds up to ${totalMin} players, but the pool only has ${players.length}. Some teams cannot reach their minimum.`,
+    )
+  }
+
+  const totalMax = teams.reduce((n, t) => n + t.maxSquad, 0)
+  if (teams.length > 0 && totalMax < players.length) {
+    warnings.push(
+      `Squad limits allow ${totalMax} players in total, so at least ${players.length - totalMax} will stay unsold.`,
+    )
+  }
+
+  const shortPurse = teams.filter((t) => t.minSquad > 0 && t.budget < t.minSquad * cheapest)
+  if (shortPurse.length > 0) {
+    warnings.push(
+      `${shortPurse.map((t) => t.name).join(', ')} cannot afford ${shortPurse.length === 1 ? 'its' : 'their'} minimum squad at the cheapest base price (${formatBDT(cheapest)} each).`,
+    )
+  }
+
+  if (teams.length === 1) {
+    warnings.push('Only one team is registered — there is nobody to bid against.')
+  }
+
+  if (warnings.length === 0) {
+    return (
+      <Card className="border-emerald-200 bg-emerald-50/50">
+        <CardContent className="flex items-start gap-3 p-4 text-sm">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+          <p className="text-emerald-900">
+            Readiness check passed — {players.length} players, {teams.length} teams, every squad reachable.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card className="border-amber-300 bg-amber-50/60">
+      <CardContent className="flex items-start gap-3 p-4 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden />
+        <div className="min-w-0">
+          <p className="font-bold text-amber-900">Readiness check</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-900/90">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-amber-900/70">
+            These are warnings, not blockers — you can still run the auction.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -14,10 +14,11 @@ import { navigate } from '@/lib/router'
 import { useAppStore } from '@/lib/store'
 import type { SafeUser, UserRole } from '@/lib/types'
 
+// Demo logins shown on the sign-in page. The admin account is deliberately
+// NOT listed here — publishing platform-admin credentials is not a demo feature.
 const DEMO_ACCOUNTS = [
   { label: 'Organizer', email: 'organizer@neelamghor.bd', password: 'demo1234' },
   { label: 'Manager', email: 'manager@neelamghor.bd', password: 'demo1234' },
-  { label: 'Admin', email: 'admin@neelamghor.bd', password: 'admin1234' },
 ]
 
 export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
@@ -35,9 +36,10 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
 
   const isRegister = mode === 'register'
 
-  const applySuccess = (user: SafeUser) => {
+  const applySuccess = (user: SafeUser, created: boolean) => {
     setUser(user)
-    toast.success(`Welcome back, ${user.name.split(/\s+/)[0]}!`)
+    const firstName = user.name.split(/\s+/)[0]
+    toast.success(created ? `Welcome to NeelamGhor, ${firstName}!` : `Welcome back, ${firstName}!`)
     navigate('/dashboard')
   }
 
@@ -62,13 +64,13 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
           password,
           role,
         })
-        applySuccess(res.user)
+        applySuccess(res.user, true)
       } else {
         const res = await apiPost<{ user: SafeUser }>('/api/auth/login', {
           email: email.trim(),
           password,
         })
-        applySuccess(res.user)
+        applySuccess(res.user, false)
       }
     } catch (ex) {
       const message = ex instanceof ApiError ? ex.message : 'Something went wrong. Please try again.'
@@ -84,7 +86,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
     setPassword(acc.password)
     if (isRegister) {
       setConfirm(acc.password)
-      setRole(acc.label === 'Manager' ? 'MANAGER' : acc.label === 'Admin' ? 'ORGANIZER' : 'ORGANIZER')
+      setRole(acc.label === 'Manager' ? 'MANAGER' : 'ORGANIZER')
     }
     toast.info(`${acc.label} demo credentials filled`)
   }

@@ -1,27 +1,41 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { requireSession, serializePlayer, serializeTeam } from '../../../_lib/helpers'
+import {
+  isOwnerOrAdmin,
+  requireSession,
+  serializePlayer,
+  serializeTeam,
+} from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
 
-// GET /api/tournaments/:id/results — any authenticated user
+// GET /api/tournaments/:id/results — organizer/ADMIN, or a manager of a team in it
 export async function GET(_req: Request, { params }: RouteParams) {
   const { id } = await params
 
   const auth = await requireSession()
   if ('response' in auth) return auth.response
+  const { user } = auth
 
   const tournament = await db.tournament.findUnique({ where: { id } })
   if (!tournament) return jsonError('Tournament not found', 404)
+
+  if (!isOwnerOrAdmin(tournament, user)) {
+    const managesTeam = await db.team.findFirst({
+      where: { tournamentId: id, managerUserId: user.id },
+      select: { id: true },
+    })
+    if (!managesTeam) return jsonError('You do not have permission to view these results', 403)
+  }
 
   const [players, teams, auction] = await Promise.all([
     db.player.findMany({ where: { tournamentId: id }, orderBy: { playerNumber: 'asc' } }),
     db.team.findMany({
       where: { tournamentId: id },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { players: true } } },
+      include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
     }),
     db.auction.findUnique({ where: { tournamentId: id } }),
   ])
@@ -37,6 +51,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
         take: 50,
       })
     : []
+
+  // The results report is a squad/spending view — personal contact details stay out of it.
+  const withoutPhone = (p: (typeof players)[number]) => ({ ...serializePlayer(p), phone: null })
 
   return Response.json({
     tournament: {
@@ -62,7 +79,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       ...serializeTeam(team),
       players: players
         .filter((p) => p.status === 'SOLD' && p.soldToTeamId === team.id)
-        .map((p) => serializePlayer(p)),
+        .map(withoutPhone),
     })),
     recentBids: recentBids.map((b) => ({
       playerName: b.playerName,

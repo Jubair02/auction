@@ -187,7 +187,12 @@ export function PlayersTab({
     if (editForm.name.trim().length < 2) return toast.error('Player name is required.')
     if (!editForm.role) return toast.error('Pick a role for the player.')
     const price = parseInt(editForm.basePrice, 10)
-    if (!Number.isFinite(price) || price <= 0) return toast.error('Base price must be above ৳0.')
+    if (editTarget.status !== 'SOLD' && (!Number.isFinite(price) || price <= 0)) {
+      return toast.error('Base price must be above ৳0.')
+    }
+
+    // A sold player's price/category are locked in by the sale — re-auction to change them.
+    const sold = editTarget.status === 'SOLD'
 
     setSaving(true)
     try {
@@ -195,9 +200,13 @@ export function PlayersTab({
         name: editForm.name.trim(),
         phone: editForm.phone.trim() || null,
         role: editForm.role,
-        category: auctionMode === 'CATEGORY' ? editForm.category : null,
-        basePrice: price,
         previousTeam: editForm.previousTeam.trim() || null,
+        ...(sold
+          ? {}
+          : {
+              category: auctionMode === 'CATEGORY' ? editForm.category : null,
+              basePrice: price,
+            }),
       })
       toast.success('Player updated')
       setEditTarget(null)
@@ -494,6 +503,7 @@ export function PlayersTab({
               roles={roles}
               auctionMode={auctionMode}
               quickPicks={quickPicks}
+              pricingLocked={editTarget?.status === 'SOLD'}
             />
           ) : null}
           <DialogFooter>
@@ -554,12 +564,15 @@ function PlayerFormFields({
   roles,
   auctionMode,
   quickPicks,
+  pricingLocked = false,
 }: {
   form: PlayerFormState
   onChange: (f: PlayerFormState) => void
   roles: readonly string[]
   auctionMode: AuctionMode
   quickPicks: { label: string; value: number }[]
+  /** true for a SOLD player — base price and category are settled by the sale */
+  pricingLocked?: boolean
 }) {
   const set = (patch: Partial<PlayerFormState>) => onChange({ ...form, ...patch })
 
@@ -597,7 +610,7 @@ function PlayerFormFields({
       {auctionMode === 'CATEGORY' ? (
         <div className="space-y-1.5">
           <Label>Category</Label>
-          <Select value={form.category} onValueChange={(v) => set({ category: v })}>
+          <Select value={form.category} onValueChange={(v) => set({ category: v })} disabled={pricingLocked}>
             <SelectTrigger className="h-10 w-full" aria-label="Player category">
               <SelectValue placeholder="Category" />
             </SelectTrigger>
@@ -621,22 +634,29 @@ function PlayerFormFields({
           min={1}
           value={form.basePrice}
           onChange={(e) => set({ basePrice: e.target.value })}
+          disabled={pricingLocked}
           className="h-10"
         />
-        <div className="flex flex-wrap gap-1.5 pt-0.5">
-          {quickPicks.map((q) => (
-            <Button
-              key={q.label}
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => set({ basePrice: String(q.value) })}
-            >
-              {q.label} · {formatBDT(q.value)}
-            </Button>
-          ))}
-        </div>
+        {pricingLocked ? (
+          <p className="pt-0.5 text-xs text-muted-foreground">
+            Locked — this player is sold. Re-auction them from the room to change the price.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {quickPicks.map((q) => (
+              <Button
+                key={q.label}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => set({ basePrice: String(q.value) })}
+              >
+                {q.label} · {formatBDT(q.value)}
+              </Button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="space-y-1.5">

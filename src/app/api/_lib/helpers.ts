@@ -177,7 +177,9 @@ export function serializeAuction(a: Auction): AuctionDTO {
   }
 }
 
-export function serializeTeam(t: Team & { _count?: { players: number } }): TeamDTO {
+export function serializeTeam(
+  t: Team & { _count?: { players: number }; manager?: { name: string; email: string } | null },
+): TeamDTO {
   const squadCount = t._count?.players ?? 0
   return {
     id: t.id,
@@ -187,6 +189,8 @@ export function serializeTeam(t: Team & { _count?: { players: number } }): TeamD
     color: t.color,
     captainName: t.captainName,
     managerUserId: t.managerUserId,
+    managerName: t.manager?.name ?? null,
+    managerEmail: t.manager?.email ?? null,
     budget: t.budget,
     maxSquad: t.maxSquad,
     minSquad: t.minSquad,

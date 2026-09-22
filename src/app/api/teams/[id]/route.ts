@@ -58,6 +58,14 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   if (body.maxSquad !== undefined && !effectiveMax) {
     return jsonError('maxSquad must be a positive integer', 400)
   }
+  if (body.maxSquad !== undefined) {
+    // A squad cap below the players already bought would leave the team in a
+    // state the auction engine can never satisfy.
+    const bought = await db.player.count({ where: { soldToTeamId: id, status: 'SOLD' } })
+    if ((effectiveMax as number) < bought) {
+      return jsonError(`maxSquad cannot be lower than the ${bought} player(s) already bought`, 409)
+    }
+  }
 
   let effectiveMin = team.minSquad
   if (body.minSquad !== undefined) {
@@ -91,6 +99,19 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     } else if (typeof body.managerUserId === 'string') {
       const manager = await db.user.findUnique({ where: { id: body.managerUserId } })
       if (!manager) return jsonError('Manager user not found', 400)
+      if (manager.role !== 'MANAGER') {
+        return jsonError('Only accounts registered as a team manager can be linked to a team', 400)
+      }
+      if (manager.status !== 'ACTIVE') {
+        return jsonError('That manager account is blocked', 400)
+      }
+      const alreadyManaging = await db.team.findFirst({
+        where: { tournamentId: team.tournamentId, managerUserId: manager.id, id: { not: team.id } },
+        select: { name: true },
+      })
+      if (alreadyManaging) {
+        return jsonError(`${manager.name} already manages "${alreadyManaging.name}" in this tournament`, 409)
+      }
       data.managerUserId = manager.id
     } else {
       return jsonError('managerUserId must be a user id or null', 400)
@@ -102,7 +123,10 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   const updated = await db.team.update({
     where: { id },
     data,
-    include: { _count: { select: { players: true } } },
+    include: {
+      _count: { select: { players: { where: { status: 'SOLD' } } } },
+      manager: { select: { name: true, email: true } },
+    },
   })
   return Response.json({ team: serializeTeam(updated) })
 }

@@ -11,7 +11,7 @@ export default function JoinRoomView() {
   const [code, setCode] = useState('')
 
   const clean = code.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9)
-  const valid = clean.length >= 8
+  const valid = /^[A-Z]{2}\d{2}-[A-Z0-9]{4}$/.test(clean)
 
   return (
     <div className="container mx-auto flex min-h-[70vh] max-w-md items-center px-4 py-10">
