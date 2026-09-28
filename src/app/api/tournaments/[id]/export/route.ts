@@ -143,6 +143,29 @@ export async function GET(req: Request, { params }: RouteParams) {
     return csvResponse(`${fileBase}.csv`, csv)
   }
 
+  if (type === 'audit') {
+    const auction = await db.auction.findUnique({ where: { tournamentId: id }, select: { id: true } })
+    const events = auction
+      ? await db.auctionEvent.findMany({ where: { auctionId: auction.id }, orderBy: { createdAt: 'asc' } })
+      : []
+    const csv = toCsv(
+      ['Time', 'Event', 'Round', '#', 'Player', 'Team', 'Amount', 'Refund', 'By', 'Reason'],
+      events.map((e) => [
+        e.createdAt.toISOString(),
+        e.type,
+        e.cycle + 1,
+        e.playerNumber ?? '',
+        e.playerName ?? '',
+        e.teamName ?? '',
+        e.amount ?? '',
+        e.refundAmount ?? '',
+        e.actorName ?? 'system',
+        e.reason ?? '',
+      ]),
+    )
+    return csvResponse(`${fileBase}.csv`, csv)
+  }
+
   if (type === 'spending') {
     const teams = await db.team.findMany({
       where: { tournamentId: id },
@@ -165,7 +188,7 @@ export async function GET(req: Request, { params }: RouteParams) {
   }
 
   return jsonError(
-    'Unknown export type. Use type=players|sold|unsold|squads|bids|spending|template',
+    'Unknown export type. Use type=players|sold|unsold|squads|bids|spending|audit|template',
     400,
   )
 }

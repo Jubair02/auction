@@ -52,6 +52,7 @@ const EXPORT_TYPES: { type: string; label: string }[] = [
   { type: 'squads', label: 'Squads' },
   { type: 'bids', label: 'History' },
   { type: 'spending', label: 'Spending' },
+  { type: 'audit', label: 'Audit log' },
 ]
 
 function slugify(name: string) {

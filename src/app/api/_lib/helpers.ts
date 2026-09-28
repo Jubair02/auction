@@ -174,6 +174,7 @@ export function serializeAuction(a: Auction): AuctionDTO {
     minIncrement: a.minIncrement,
     currentCategory: a.currentCategory,
     bidCount: a.bidCount,
+    allowPreviousOwnerRebid: a.allowPreviousOwnerRebid,
   }
 }
 

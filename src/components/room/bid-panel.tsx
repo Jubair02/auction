@@ -35,8 +35,12 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
   const reserved = myTeam ? Math.max(0, myTeam.remaining - maxBid) : 0
   const leadingBid = !!myTeam && state.currentBid?.teamId === myTeam.id
   const pricedOut = !!myTeam && !!player && maxBid < minBid
+  // Organizer policy: the team that lost this player to a re-auction may be
+  // locked out of the round.
+  const lockedOut =
+    !!myTeam && state.allowPreviousOwnerRebid === false && state.previousOwnerTeamId === myTeam.id
   const biddingOpen =
-    state.status === 'LIVE' && !!player && !!myTeam && !squadFull && !leadingBid && !pricedOut
+    state.status === 'LIVE' && !!player && !!myTeam && !squadFull && !leadingBid && !pricedOut && !lockedOut
 
   function reason(): string | null {
     if (state.status === 'READY') return 'Auction has not started yet'
@@ -44,6 +48,7 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
     if (state.status === 'ENDED') return 'Auction has ended'
     if (!player) return 'Waiting for the next player'
     if (squadFull) return 'Your squad is full'
+    if (lockedOut) return 'You lost this player in the re-auction — the organizer has blocked previous owners'
     if (leadingBid) return 'You already hold the highest bid'
     if (pricedOut) return `Out of reach — your maximum is ${formatBDT(maxBid)}`
     return null
@@ -55,6 +60,7 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
     if (state.status === 'PAUSED') return 'Auction is paused'
     if (state.status !== 'LIVE') return 'Bidding is not open'
     if (squadFull) return `Squad full (${myTeam.squadCount}/${myTeam.maxSquad})`
+    if (lockedOut) return 'You are blocked from bidding for this player in this round'
     if (leadingBid) return 'You already hold the highest bid'
     if (amount < minBid) return `Minimum bid is ${formatBDT(minBid)}`
     if (amount > myTeam.remaining) return `Over budget — only ${formatBDT(myTeam.remaining)} left`

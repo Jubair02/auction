@@ -107,6 +107,8 @@ export interface AuctionDTO {
   minIncrement: number
   currentCategory: string | null
   bidCount: number
+  /** false = the team that lost a re-auctioned player may not bid for them again. */
+  allowPreviousOwnerRebid: boolean
 }
 
 export interface TournamentDetail {
@@ -153,6 +155,8 @@ export interface JoinResult {
 // ---------- Live auction room state (socket) ----------
 export interface RoomPlayer {
   id: string
+  /** 0 on the first outing; incremented by every re-auction. */
+  auctionCycle?: number
   playerNumber: number
   name: string
   role: string
@@ -190,6 +194,8 @@ export interface RoomPlayerLite {
   basePrice: number
   status: PlayerStatus
   soldPrice: number | null
+  /** 0 on the first outing; incremented by every re-auction. */
+  auctionCycle?: number
   /** optional: older socket-service builds omit this */
   teamId?: string | null
   teamName: string | null
@@ -237,6 +243,10 @@ export interface RoomState {
   minIncrement: number
   bidTimerSeconds: number
   goingIntervalSeconds: number
+  /** Team locked out of the current cycle by the re-auction policy, if any. */
+  previousOwnerTeamId?: string | null
+  /** false = the team that lost a re-auctioned player may not bid for them again. */
+  allowPreviousOwnerRebid?: boolean
 }
 
 export interface RoomNotification {
@@ -277,6 +287,40 @@ export interface ResultsData {
   summary: ResultsSummary
   teams: (TeamDTO & { players: PlayerDTO[] })[]
   recentBids: { playerName: string; teamName: string; amount: number; createdAt: string }[]
+}
+
+// ---------- Audit trail ----------
+export type AuctionEventType = 'SALE' | 'RE_AUCTION' | 'REFUND' | 'UNSOLD' | 'SKIPPED'
+
+export interface AuctionEventDTO {
+  id: string
+  type: AuctionEventType
+  /** Which auction cycle of the player this row belongs to (0 = first outing). */
+  cycle: number
+  playerId: string | null
+  playerName: string | null
+  playerNumber: number | null
+  teamId: string | null
+  teamName: string | null
+  amount: number | null
+  refundAmount: number | null
+  actorName: string | null
+  reason: string | null
+  createdAt: string
+}
+
+/** Full SALE → RE-AUCTION → REFUND → NEW SALE chain for one player. */
+export interface PlayerSaleChain {
+  playerId: string
+  playerName: string
+  playerNumber: number
+  status: string
+  reauctions: number
+  /** Current owner, read from the player row — historical sales never count. */
+  currentTeamId: string | null
+  currentTeamName: string | null
+  currentPrice: number | null
+  events: AuctionEventDTO[]
 }
 
 // ---------- Admin ----------

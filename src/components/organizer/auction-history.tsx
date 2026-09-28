@@ -8,7 +8,9 @@ import {
   Gavel,
   Loader2,
   Printer,
+  RotateCcw,
   Trophy,
+  Undo2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -25,7 +27,7 @@ import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate, formatTime } from '@/lib/format'
-import type { ResultsData } from '@/lib/types'
+import type { AuctionEventDTO, PlayerSaleChain, ResultsData } from '@/lib/types'
 
 interface BidEntry {
   playerName: string
@@ -36,14 +38,22 @@ interface BidEntry {
 
 export default function AuctionHistory({ tournamentId }: { tournamentId: string }) {
   const [data, setData] = useState<ResultsData | null>(null)
+  const [chains, setChains] = useState<PlayerSaleChain[]>([])
   const [loading, setLoading] = useState(true)
   const [openPlayers, setOpenPlayers] = useState<Record<string, boolean>>({})
+  const [openChains, setOpenChains] = useState<Record<string, boolean>>({})
   const [downloading, setDownloading] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const res = await apiGet<ResultsData>(`/api/tournaments/${tournamentId}/results`)
+      const [res, audit] = await Promise.all([
+        apiGet<ResultsData>(`/api/tournaments/${tournamentId}/results`),
+        apiGet<{ chains: PlayerSaleChain[] }>(`/api/tournaments/${tournamentId}/events`).catch(() => ({
+          chains: [] as PlayerSaleChain[],
+        })),
+      ])
       setData(res)
+      setChains(audit.chains)
     } catch (ex) {
       toast.error(ex instanceof ApiError ? ex.message : 'Could not load auction history')
     } finally {
@@ -169,6 +179,9 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
         <StatCard label="Total value" value={formatBDT(summary.totalValue)} icon={Trophy} tone="primary" />
       </div>
 
+      {/* Sale chain per player — the permanent ownership record */}
+      <SaleChains chains={chains} openChains={openChains} setOpenChains={setOpenChains} />
+
       {/* Bid ladder per player */}
       <section className="mt-8" aria-label="Bid ladder by player">
         <div className="flex items-center justify-between gap-2">
@@ -278,5 +291,170 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
         </p>
       </section>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+const EVENT_META: Record<AuctionEventDTO['type'], { label: string; dot: string; tone: string }> = {
+  SALE: { label: 'Sale', dot: 'bg-teal-500', tone: 'text-teal-900' },
+  RE_AUCTION: { label: 'Re-auction', dot: 'bg-amber-500', tone: 'text-amber-900' },
+  REFUND: { label: 'Refund', dot: 'bg-sky-500', tone: 'text-sky-900' },
+  UNSOLD: { label: 'Unsold', dot: 'bg-rose-400', tone: 'text-rose-900' },
+  SKIPPED: { label: 'Skipped', dot: 'bg-slate-400', tone: 'text-slate-700' },
+}
+
+/**
+ * The permanent ownership chain for every player that has been through a sale:
+ * SALE → RE-AUCTION → REFUND → NEW SALE. The current owner is read from the
+ * player record, never from the log, so historical sales are never counted twice.
+ */
+function SaleChains({
+  chains,
+  openChains,
+  setOpenChains,
+}: {
+  chains: PlayerSaleChain[]
+  openChains: Record<string, boolean>
+  setOpenChains: (fn: (prev: Record<string, boolean>) => Record<string, boolean>) => void
+}) {
+  if (chains.length === 0) return null
+  const reauctioned = chains.filter((c) => c.reauctions > 0).length
+
+  return (
+    <section className="mt-8" aria-label="Sale history by player">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-bold">Sale history</h2>
+        <p className="text-xs text-muted-foreground">
+          {chains.length} player{chains.length === 1 ? '' : 's'} with a record
+          {reauctioned > 0 ? ` · ${reauctioned} re-auctioned` : ''}
+        </p>
+      </div>
+
+      <div className="mt-4 max-h-[28rem] space-y-2 overflow-y-auto pr-0.5">
+        {chains.map((c) => {
+          const open = !!openChains[c.playerId]
+          const sales = c.events.filter((e) => e.type === 'SALE')
+          return (
+            <Collapsible
+              key={c.playerId}
+              open={open}
+              onOpenChange={(o) => setOpenChains((prev) => ({ ...prev, [c.playerId]: o }))}
+            >
+              <Card className="py-0">
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                    aria-expanded={open}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-bold">
+                        <span className="mr-1.5 font-mono text-xs text-muted-foreground">
+                          #{String(c.playerNumber).padStart(3, '0')}
+                        </span>
+                        {c.playerName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {sales.length} sale{sales.length === 1 ? '' : 's'}
+                        {c.reauctions > 0 ? ` · ${c.reauctions} re-auction${c.reauctions === 1 ? '' : 's'}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {c.reauctions > 0 ? (
+                        <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
+                          <RotateCcw className="mr-1 h-3 w-3" aria-hidden /> {c.reauctions}x
+                        </Badge>
+                      ) : null}
+                      {c.currentTeamName ? (
+                        <Badge className="hidden bg-teal-100 text-teal-900 hover:bg-teal-100 sm:inline-flex">
+                          <Trophy className="mr-1 h-3 w-3" aria-hidden /> {c.currentTeamName} ·{' '}
+                          {formatBDT(c.currentPrice ?? 0)}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          {c.status.toLowerCase()}
+                        </Badge>
+                      )}
+                      <ChevronDown
+                        className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+                        aria-hidden
+                      />
+                    </div>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="border-t pt-3">
+                    <ol className="relative space-y-3 border-l pl-5">
+                      {c.events.map((e) => {
+                        const meta = EVENT_META[e.type]
+                        const saleNo = e.type === 'SALE' ? sales.findIndex((x) => x.id === e.id) + 1 : null
+                        return (
+                          <li key={e.id} className="relative">
+                            <span
+                              className={`absolute -left-[1.5625rem] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-background ${meta.dot}`}
+                              aria-hidden
+                            />
+                            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                              <p className={`text-sm font-semibold ${meta.tone}`}>
+                                {e.type === 'SALE' ? `Sale #${saleNo}` : meta.label}
+                                {e.teamName ? <span className="font-normal"> · {e.teamName}</span> : null}
+                              </p>
+                              <p className="text-xs tabular-nums text-muted-foreground">
+                                {formatDate(e.createdAt)} {formatTime(e.createdAt)}
+                              </p>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {e.type === 'REFUND' ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <Undo2 className="h-3 w-3" aria-hidden />
+                                  {formatBDT(e.refundAmount ?? 0)} returned
+                                </span>
+                              ) : e.type === 'RE_AUCTION' ? (
+                                `Round ${e.cycle + 1} opened${e.actorName ? ` by ${e.actorName}` : ''}`
+                              ) : e.amount != null ? (
+                                <span className="font-semibold tabular-nums text-foreground">
+                                  {formatBDT(e.amount)}
+                                </span>
+                              ) : (
+                                `No bids${e.actorName ? ` · ${e.actorName}` : ''}`
+                              )}
+                              {e.reason ? ` — ${e.reason}` : ''}
+                            </p>
+                          </li>
+                        )
+                      })}
+                      <li className="relative">
+                        <span
+                          className="absolute -left-[1.5625rem] top-1.5 h-2.5 w-2.5 rounded-full bg-foreground ring-2 ring-background"
+                          aria-hidden
+                        />
+                        <p className="text-sm font-bold">
+                          Current owner:{' '}
+                          {c.currentTeamName ? (
+                            <>
+                              {c.currentTeamName}{' '}
+                              <span className="tabular-nums text-muted-foreground">
+                                ({formatBDT(c.currentPrice ?? 0)})
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">none — {c.status.toLowerCase()}</span>
+                          )}
+                        </p>
+                      </li>
+                    </ol>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
+          )
+        })}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Sales are never deleted. A re-auction refunds the previous team and opens a new round — only the latest
+        sale counts towards squads and purses.
+      </p>
+    </section>
   )
 }

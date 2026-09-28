@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { EmptyState } from '@/components/shared/empty-state'
 import { apiPatch, apiPost, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
@@ -30,6 +31,7 @@ interface SettingsState {
   bidTimerSeconds: string
   goingIntervalSeconds: string
   minIncrement: string
+  allowPreviousOwnerRebid: boolean
 }
 
 export function AuctionSetupTab({
@@ -57,8 +59,14 @@ export function AuctionSetupTab({
           bidTimerSeconds: String(auction.bidTimerSeconds),
           goingIntervalSeconds: String(auction.goingIntervalSeconds),
           minIncrement: String(auction.minIncrement),
+          allowPreviousOwnerRebid: auction.allowPreviousOwnerRebid !== false,
         }
-      : { bidTimerSeconds: '20', goingIntervalSeconds: '8', minIncrement: '5000' },
+      : {
+          bidTimerSeconds: '20',
+          goingIntervalSeconds: '8',
+          minIncrement: '5000',
+          allowPreviousOwnerRebid: true,
+        },
   )
   const [saving, setSaving] = useState(false)
 
@@ -71,6 +79,7 @@ export function AuctionSetupTab({
         bidTimerSeconds: parseInt(settings.bidTimerSeconds, 10),
         goingIntervalSeconds: parseInt(settings.goingIntervalSeconds, 10),
         minIncrement: parseInt(settings.minIncrement, 10),
+        allowPreviousOwnerRebid: settings.allowPreviousOwnerRebid,
       })
       toast.success('Auction room created — share the room code with your managers!')
       await refetch()
@@ -84,10 +93,16 @@ export function AuctionSetupTab({
   const saveSettings = async () => {
     setSaving(true)
     try {
+      const locked = !!auction && auction.status !== 'READY'
       await apiPatch(`/api/tournaments/${tournamentId}/auction`, {
-        bidTimerSeconds: parseInt(settings.bidTimerSeconds, 10),
-        goingIntervalSeconds: parseInt(settings.goingIntervalSeconds, 10),
-        minIncrement: parseInt(settings.minIncrement, 10),
+        allowPreviousOwnerRebid: settings.allowPreviousOwnerRebid,
+        ...(locked
+          ? {}
+          : {
+              bidTimerSeconds: parseInt(settings.bidTimerSeconds, 10),
+              goingIntervalSeconds: parseInt(settings.goingIntervalSeconds, 10),
+              minIncrement: parseInt(settings.minIncrement, 10),
+            }),
       })
       toast.success('Auction settings updated')
       await refetch()
@@ -249,14 +264,14 @@ export function AuctionSetupTab({
             <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900">
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <p>
-                Settings are locked while the auction is <strong>{auction.status}</strong>. They can only be changed
-                while the room is READY.
+                Timings are locked while the auction is <strong>{auction.status}</strong> — they can only be changed
+                while the room is READY. The re-auction rule below can still be changed at any time.
               </p>
             </div>
           ) : null}
           {form}
           <div className="flex justify-end">
-            <Button className="min-h-10" onClick={() => void saveSettings()} disabled={saving || settingsLocked}>
+            <Button className="min-h-10" onClick={() => void saveSettings()} disabled={saving}>
               {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
               Save settings
             </Button>
@@ -416,6 +431,28 @@ function SettingsForm({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">Each bid must beat the last by this</p>
+      </div>
+
+      <div className="sm:col-span-3">
+        <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 p-3">
+          <div className="min-w-0">
+            <Label htmlFor="reauction-policy" className="text-sm font-semibold">
+              Previous owner may bid again after a re-auction
+            </Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {settings.allowPreviousOwnerRebid
+                ? 'On — a team that loses a player to a re-auction can bid for them again, and would pay the new price in full.'
+                : 'Off — the team that lost the player is locked out of that round. Use this when a sale is being reversed because of their mistake.'}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Can be changed at any time, including mid-auction.</p>
+          </div>
+          <Switch
+            id="reauction-policy"
+            checked={settings.allowPreviousOwnerRebid}
+            onCheckedChange={(v) => set({ allowPreviousOwnerRebid: v })}
+            aria-label="Allow the previous owner to bid again after a re-auction"
+          />
+        </div>
       </div>
     </div>
   )

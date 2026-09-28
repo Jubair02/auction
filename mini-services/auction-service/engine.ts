@@ -22,6 +22,18 @@ import type { RoomState, RoomRole, SocketIdentity } from '../../src/lib/types'
 type EngineStatus = 'READY' | 'LIVE' | 'PAUSED' | 'ENDED'
 type NotifLevel = 'info' | 'success' | 'warning' | 'error'
 
+/** Who triggered a money- or ownership-moving event. Null actor = the timer. */
+interface Actor {
+  id?: string | null
+  name?: string | null
+}
+
+/** Append-only audit trail entry. */
+type AuditType = 'SALE' | 'RE_AUCTION' | 'REFUND' | 'UNSOLD' | 'SKIPPED'
+
+/** Thrown when a re-auction loses the compare-and-swap race. */
+class SaleAlreadyChanged extends Error {}
+
 const CATEGORY_CODES = ['A', 'B', 'C', 'D', 'E']
 const EN_IN = new Intl.NumberFormat('en-IN')
 const bdt = (n: number) => `৳${EN_IN.format(n)}`
@@ -56,6 +68,10 @@ interface Room {
   currentPlayerId: string | null
   currentBid: BidView | null
   currentBidHistory: HistoryEntry[]
+  /** Team that lost the player on the block in a re-auction; null on a first outing. */
+  previousOwnerTeamId: string | null
+  /** Auction policy: may that previous owner bid again in this cycle? */
+  allowPreviousOwnerRebid: boolean
   stage: 0 | 1 | 2
   timerEndsAt: number | null
   pausedRemainingMs: number | null
@@ -207,6 +223,46 @@ export class AuctionEngine {
   }
 
   // ----------------------------------------------------------
+  // Audit trail
+  // ----------------------------------------------------------
+  /**
+   * Builds an append-only audit row. Every sale, re-auction, refund, unsold
+   * and skip is recorded with name snapshots so the history stays readable
+   * even after a player or team is renamed or removed.
+   */
+  private auditRow(
+    room: Room,
+    e: {
+      type: AuditType
+      cycle: number
+      player: Pick<Player, 'id' | 'name' | 'playerNumber'>
+      teamId?: string | null
+      teamName?: string | null
+      amount?: number | null
+      refundAmount?: number | null
+      actor?: Actor
+      reason?: string | null
+    },
+  ) {
+    return {
+      auctionId: room.auctionId,
+      tournamentId: room.tournament.id,
+      type: e.type,
+      cycle: e.cycle,
+      playerId: e.player.id,
+      playerName: e.player.name,
+      playerNumber: e.player.playerNumber,
+      teamId: e.teamId ?? null,
+      teamName: e.teamName ?? null,
+      amount: e.amount ?? null,
+      refundAmount: e.refundAmount ?? null,
+      actorId: e.actor?.id ?? null,
+      actorName: e.actor?.name ?? null,
+      reason: e.reason ?? null,
+    }
+  }
+
+  // ----------------------------------------------------------
   // Purse maths
   // ----------------------------------------------------------
   /** Cheapest base price still obtainable, used to reserve purse for the minimum squad. */
@@ -267,6 +323,13 @@ export class AuctionEngine {
         ? `${team.name} already holds the highest bid`
         : 'You already hold the highest bid'
     }
+    // Optional policy: lock the team that just lost this player out of the
+    // round, so a re-auction cannot simply hand them back at a new price.
+    if (!room.allowPreviousOwnerRebid && room.previousOwnerTeamId === team.id) {
+      return opts.manual
+        ? `${team.name} lost this player in the re-auction and is blocked from bidding for them again`
+        : 'You lost this player in the re-auction — the organizer has blocked previous owners from bidding again'
+    }
     const minBid = room.currentBid ? room.currentBid.amount + room.minIncrement : player.basePrice
     if (amount < minBid) return `Minimum bid is ${bdt(minBid)}`
 
@@ -309,6 +372,7 @@ export class AuctionEngine {
             teamName: team.name,
             playerName: player.name,
             amount,
+            cycle: player.auctionCycle,
           },
         })
         await tx.auction.update({
@@ -339,6 +403,7 @@ export class AuctionEngine {
   ): Promise<void> {
     const room = this.rooms.get(identity.auctionId)
     if (!room) return this.emitError(socket, 'Join the room first')
+    const actor: Actor = { id: identity.userId ?? null, name: identity.name }
     await this.withLock(room.auctionId, async () => {
       switch (action) {
         case 'start': return this.actionStart(socket, room)
@@ -347,11 +412,11 @@ export class AuctionEngine {
         case 'next_player': return this.actionNextPlayer(socket, room)
         case 'select_player': return this.actionSelectPlayer(socket, room, payload)
         case 'set_category': return this.actionSetCategory(socket, room, payload)
-        case 'skip': return this.actionSkip(socket, room)
-        case 'force_sell': return this.actionForceSell(socket, room)
-        case 'force_unsold': return this.actionForceUnsold(socket, room)
-        case 'reauction': return this.actionReauction(socket, room, payload)
-        case 'manual_bid': return this.manualBid(socket, room, payload)
+        case 'skip': return this.actionSkip(socket, room, actor)
+        case 'force_sell': return this.actionForceSell(socket, room, actor)
+        case 'force_unsold': return this.actionForceUnsold(socket, room, actor)
+        case 'reauction': return this.actionReauction(socket, room, payload, actor)
+        case 'manual_bid': return this.manualBid(socket, room, payload, actor)
         case 'end': return this.actionEnd(socket, room)
         case 'reopen': return this.actionReopen(socket, room)
         default: return this.emitError(socket, `Unknown action: ${String(action)}`)
@@ -445,7 +510,7 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async actionSkip(socket: Socket, room: Room): Promise<void> {
+  private async actionSkip(socket: Socket, room: Room, actor: Actor): Promise<void> {
     if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
@@ -455,12 +520,16 @@ export class AuctionEngine {
         where: { id: room.auctionId },
         data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
       }),
+      this.db.auctionEvent.create({
+        data: this.auditRow(room, { type: 'SKIPPED', cycle: player.auctionCycle, player, actor }),
+      }),
     ])
     const i = room.players.findIndex((p) => p.id === player.id)
     if (i >= 0) room.players[i] = { ...room.players[i], status: 'SKIPPED' }
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
@@ -468,79 +537,182 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async actionForceSell(socket: Socket, room: Room): Promise<void> {
+  private async actionForceSell(socket: Socket, room: Room, actor: Actor): Promise<void> {
     if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
     if (!room.currentPlayerId) return this.emitError(socket, 'No player on the block')
     if (!room.currentBid) return this.emitError(socket, 'No bid to sell — use Force Unsold instead')
-    await this.finalizeSold(room)
+    await this.finalizeSold(room, actor)
   }
 
-  private async actionForceUnsold(socket: Socket, room: Room): Promise<void> {
+  private async actionForceUnsold(socket: Socket, room: Room, actor: Actor): Promise<void> {
     if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
     if (!room.currentPlayerId) return this.emitError(socket, 'No player on the block')
-    await this.finalizeUnsold(room)
+    await this.finalizeUnsold(room, actor)
   }
 
-  private async actionReauction(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
-    if (room.status === 'ENDED') return this.emitError(socket, 'Auction has ended')
-    const playerId = String(payload?.playerId ?? '')
-    const player = await this.db.player.findUnique({ where: { id: playerId } })
-    if (!player || player.tournamentId !== room.tournament.id) return this.emitError(socket, 'Player not found')
-    if (player.status !== 'SOLD' && player.status !== 'UNSOLD' && player.status !== 'SKIPPED') {
-      return this.emitError(socket, 'Only SOLD, UNSOLD or SKIPPED players can be re-auctioned')
+  /**
+   * Re-auction: opens a NEW auction cycle for a player who was already sold.
+   *
+   * This is deliberately not an "undo". The original sale stays in the audit
+   * trail forever; what changes is that the money and the squad slot go back
+   * to the original team and the player starts a fresh cycle from their own
+   * base price. Every guarantee the spec asks for is enforced here:
+   *
+   *  - organizer only (checked by the socket router before we are called)
+   *  - only a SOLD player, never AVAILABLE / UNSOLD / SKIPPED / on the block
+   *  - the block must be free, so one player is never swapped out mid-bid
+   *  - refund is exactly the recorded sale price, never more than was charged
+   *  - refund + ownership removal + cycle bump + audit are one transaction
+   *  - a compare-and-swap on the sale makes a double-click a no-op, so no
+   *    duplicate refund is possible on retry, refresh or a racing organizer
+   */
+  private async actionReauction(
+    socket: Socket,
+    room: Room,
+    payload: Record<string, unknown> | undefined,
+    actor: Actor,
+  ): Promise<void> {
+    // ---- when is re-auction allowed ----
+    if (room.status === 'ENDED') {
+      return this.emitError(socket, 'The auction has ended — reopen it before re-auctioning a player.')
     }
-
-    const ops: Prisma.PrismaPromise<unknown>[] = []
-    if (player.status === 'SOLD' && player.soldToTeamId) {
-      // Refund from the persisted row: the in-memory cache can be stale, and an
-      // absolute write derived from it would wipe the team's whole spend.
-      const teamRow = await this.db.team.findUnique({
-        where: { id: player.soldToTeamId },
-        select: { spent: true },
-      })
-      const refund = Math.min(player.soldPrice ?? 0, teamRow?.spent ?? 0)
-      if (refund > 0) {
-        ops.push(
-          this.db.team.update({
-            where: { id: player.soldToTeamId },
-            data: { spent: { decrement: refund } },
-          }),
-        )
-      }
+    if (room.status === 'PAUSED') {
+      return this.emitError(socket, 'Resume the auction before re-auctioning a player.')
     }
-    // If another player is currently on the block, send them back to the pool.
-    if (room.currentPlayerId && room.currentPlayerId !== player.id) {
-      ops.push(
-        this.db.player.update({
-          where: { id: room.currentPlayerId },
-          data: { status: 'AVAILABLE', soldPrice: null, soldToTeamId: null },
-        }),
+    if (room.status !== 'LIVE') {
+      return this.emitError(socket, 'Start the auction before re-auctioning a player.')
+    }
+    if (room.currentPlayerId) {
+      const onBlock = room.players.find((p) => p.id === room.currentPlayerId)
+      return this.emitError(
+        socket,
+        `${onBlock?.name ?? 'A player'} is on the block — sell, mark unsold or skip them first.`,
       )
     }
-    ops.push(
-      this.db.player.update({
-        where: { id: player.id },
-        data: { status: 'LIVE', soldPrice: null, soldToTeamId: null },
-      }),
-      this.db.auction.update({
-        where: { id: room.auctionId },
-        data: { currentPlayerId: player.id, currentBidAmount: null, currentBidTeamId: null, status: 'LIVE' },
-      }),
-    )
-    if (room.status === 'READY') {
-      ops.push(this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }))
-    }
-    await this.db.$transaction(ops)
-    await this.refreshCache(room)
 
-    room.status = 'LIVE'
+    const playerId = String(payload?.playerId ?? '')
+    if (!playerId) return this.emitError(socket, 'No player selected')
+
+    // Always read the row fresh: the cached pool can lag behind, and the
+    // freshness of `status` is what makes the swap below safe.
+    const player = await this.db.player.findUnique({ where: { id: playerId } })
+    if (!player || player.tournamentId !== room.tournament.id) {
+      return this.emitError(socket, 'Player not found in this tournament')
+    }
+    if (player.status === 'LIVE') {
+      return this.emitError(socket, 'This player is already on the auction block.')
+    }
+    if (player.status !== 'SOLD') {
+      return this.emitError(
+        socket,
+        `Only a sold player can be re-auctioned — ${player.name} is ${player.status.toLowerCase()}. Pick them from the pool to put them on the block.`,
+      )
+    }
+    if (!player.soldToTeamId || player.soldPrice == null) {
+      return this.emitError(socket, 'That sale has no recorded team or price, so it cannot be refunded.')
+    }
+
+    const soldToTeamId = player.soldToTeamId
+    const salePrice = player.soldPrice
+    const fromCycle = player.auctionCycle
+    const nextCycle = fromCycle + 1
+    const reason =
+      typeof payload?.reason === 'string' && payload.reason.trim() !== ''
+        ? payload.reason.trim().slice(0, 200)
+        : null
+
+    const team = await this.db.team.findUnique({ where: { id: soldToTeamId } })
+    // Never hand back more than the team was actually charged.
+    const refund = Math.max(0, Math.min(salePrice, team?.spent ?? 0))
+
+    // Read the lockout policy fresh — the organizer may have just changed it.
+    try {
+      const row = await this.db.auction.findUnique({
+        where: { id: room.auctionId },
+        select: { allowPreviousOwnerRebid: true },
+      })
+      if (row) room.allowPreviousOwnerRebid = row.allowPreviousOwnerRebid
+    } catch {
+      // keep the cached policy
+    }
+
+    try {
+      await this.db.$transaction(async (tx) => {
+        // Compare-and-swap on the exact sale we read. If anything about it
+        // changed in the meantime (another re-auction, a refresh-triggered
+        // retry, a second organizer) this matches zero rows and the whole
+        // transaction rolls back — the refund can only ever apply once.
+        const claimed = await tx.player.updateMany({
+          where: {
+            id: player.id,
+            status: 'SOLD',
+            soldToTeamId,
+            soldPrice: salePrice,
+            auctionCycle: fromCycle,
+          },
+          data: { status: 'LIVE', soldPrice: null, soldToTeamId: null, auctionCycle: nextCycle },
+        })
+        if (claimed.count !== 1) throw new SaleAlreadyChanged()
+
+        if (refund > 0) {
+          await tx.team.update({ where: { id: soldToTeamId }, data: { spent: { decrement: refund } } })
+        }
+        await tx.auction.update({
+          where: { id: room.auctionId },
+          data: { currentPlayerId: player.id, currentBidAmount: null, currentBidTeamId: null },
+        })
+        await tx.auctionEvent.createMany({
+          data: [
+            this.auditRow(room, {
+              type: 'REFUND',
+              cycle: fromCycle,
+              player,
+              teamId: soldToTeamId,
+              teamName: team?.name ?? null,
+              amount: salePrice,
+              refundAmount: refund,
+              actor,
+              reason,
+            }),
+            this.auditRow(room, {
+              type: 'RE_AUCTION',
+              cycle: nextCycle,
+              player,
+              teamId: soldToTeamId,
+              teamName: team?.name ?? null,
+              amount: salePrice,
+              refundAmount: refund,
+              actor,
+              reason,
+            }),
+          ],
+        })
+      })
+    } catch (err) {
+      if (err instanceof SaleAlreadyChanged) {
+        return this.emitError(socket, 'That sale has already been changed — refresh the pool and try again.')
+      }
+      throw err
+    }
+
+    // Purses and squad counts must be re-read: the new cycle's bid ceilings
+    // are computed from the state *after* the refund, never from stale values.
+    await this.resyncPool(room)
+
     room.currentPlayerId = player.id
     room.currentBid = null
-    room.currentBidHistory = []
+    room.currentBidHistory = [] // fresh ladder; the old cycle lives on in history
+    room.previousOwnerTeamId = soldToTeamId
     room.stage = 0
     room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
     room.pausedRemainingMs = null
-    this.notify(room, 'info', `${player.name} is re-auctioned!`)
+
+    this.notify(
+      room,
+      'warning',
+      `${player.name} goes back under the hammer (round ${nextCycle + 1}) — ${bdt(refund)} refunded to ${team?.name ?? 'the previous team'}. Bidding restarts at ${bdt(player.basePrice)}.` +
+        (room.allowPreviousOwnerRebid ? '' : ` ${team?.name ?? 'The previous team'} cannot bid in this round.`),
+    )
     this.broadcast(room)
   }
 
@@ -568,6 +740,7 @@ export class AuctionEngine {
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
@@ -591,6 +764,7 @@ export class AuctionEngine {
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
@@ -598,7 +772,12 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async manualBid(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
+  private async manualBid(
+    socket: Socket,
+    room: Room,
+    payload: Record<string, unknown> | undefined,
+    actor: Actor,
+  ): Promise<void> {
     const teamId = String(payload?.teamId ?? '')
     const team = room.teams.find((t) => t.id === teamId)
     if (!team) return this.emitError(socket, 'Team not found')
@@ -618,6 +797,7 @@ export class AuctionEngine {
           teamName: team.name,
           playerName: player.name,
           amount,
+          cycle: player.auctionCycle,
         },
       })
       await tx.auction.update({
@@ -634,7 +814,7 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
     room.pausedRemainingMs = null
-    this.notify(room, 'info', `Manual bid: ${team.name} → ${bdt(amount)}`)
+    this.notify(room, 'info', `Manual bid by ${actor.name ?? 'the organizer'}: ${team.name} → ${bdt(amount)}`)
     this.broadcast(room)
   }
 
@@ -693,13 +873,14 @@ export class AuctionEngine {
     room.currentPlayerId = player.id
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
     room.pausedRemainingMs = null
     this.notify(room, 'info', `Player #${player.playerNumber} — ${player.name} is on the block!`)
   }
 
-  private async finalizeSold(room: Room): Promise<void> {
+  private async finalizeSold(room: Room, actor?: Actor): Promise<void> {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     const bid = room.currentBid
     if (!player || !bid) return
@@ -712,6 +893,18 @@ export class AuctionEngine {
       this.db.auction.update({
         where: { id: room.auctionId },
         data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
+      }),
+      // Cycle 0 is the first sale; anything above is a sale from a re-auction.
+      this.db.auctionEvent.create({
+        data: this.auditRow(room, {
+          type: 'SALE',
+          cycle: player.auctionCycle,
+          player,
+          teamId: bid.teamId,
+          teamName: bid.teamName,
+          amount: bid.amount,
+          actor,
+        }),
       }),
     ])
     const pi = room.players.findIndex((p) => p.id === player.id)
@@ -740,6 +933,7 @@ export class AuctionEngine {
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
@@ -747,7 +941,7 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async finalizeUnsold(room: Room): Promise<void> {
+  private async finalizeUnsold(room: Room, actor?: Actor): Promise<void> {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     if (!player) return
     await this.db.$transaction([
@@ -755,6 +949,9 @@ export class AuctionEngine {
       this.db.auction.update({
         where: { id: room.auctionId },
         data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
+      }),
+      this.db.auctionEvent.create({
+        data: this.auditRow(room, { type: 'UNSOLD', cycle: player.auctionCycle, player, actor }),
       }),
     ])
     const pi = room.players.findIndex((p) => p.id === player.id)
@@ -771,6 +968,7 @@ export class AuctionEngine {
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
+    room.previousOwnerTeamId = null
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
@@ -918,6 +1116,8 @@ export class AuctionEngine {
       currentPlayerId: auction.currentPlayerId,
       currentBid: null,
       currentBidHistory: [],
+      previousOwnerTeamId: null,
+      allowPreviousOwnerRebid: auction.allowPreviousOwnerRebid,
       stage: 0,
       timerEndsAt: null,
       pausedRemainingMs: null,
@@ -939,8 +1139,12 @@ export class AuctionEngine {
 
     const bids = await this.db.bid.findMany({ where: { auctionId }, orderBy: { createdAt: 'asc' } })
     if (auction.currentPlayerId) {
+      // Only the live cycle belongs on the ladder. Bids from a previous cycle
+      // of a re-auctioned player stay in history and must not reappear here.
+      const onBlock = room.players.find((p) => p.id === auction.currentPlayerId)
+      const liveCycle = onBlock?.auctionCycle ?? 0
       room.currentBidHistory = bids
-        .filter((b) => b.playerId === auction.currentPlayerId)
+        .filter((b) => b.playerId === auction.currentPlayerId && b.cycle === liveCycle)
         .map((b) => ({
           teamId: b.teamId,
           teamName: b.teamName,
@@ -963,7 +1167,7 @@ export class AuctionEngine {
     const feed: RoomState['soldFeed'] = []
     for (const p of room.players) {
       if (p.status !== 'SOLD') continue
-      const lastBid = [...bids].reverse().find((b) => b.playerId === p.id)
+      const lastBid = [...bids].reverse().find((b) => b.playerId === p.id && b.cycle === p.auctionCycle)
       feed.push({
         playerName: p.name,
         teamName: (p.soldToTeamId && teamNameById.get(p.soldToTeamId)) || '',
@@ -995,6 +1199,28 @@ export class AuctionEngine {
     }
     await this.refreshParticipants(room)
 
+    // Recover the re-auction lockout: the RE_AUCTION event for the live cycle
+    // names the team that lost the player, so the policy survives a restart.
+    if (auction.currentPlayerId) {
+      const onBlock = room.players.find((p) => p.id === auction.currentPlayerId)
+      if (onBlock && onBlock.auctionCycle > 0) {
+        try {
+          const ev = await this.db.auctionEvent.findFirst({
+            where: {
+              auctionId,
+              playerId: onBlock.id,
+              cycle: onBlock.auctionCycle,
+              type: 'RE_AUCTION',
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+          room.previousOwnerTeamId = ev?.teamId ?? null
+        } catch {
+          room.previousOwnerTeamId = null
+        }
+      }
+    }
+
     // Resume timers after restart.
     if (room.status === 'LIVE' && room.currentPlayerId) {
       room.stage = 0
@@ -1013,7 +1239,8 @@ export class AuctionEngine {
    */
   private async resyncPool(room: Room): Promise<void> {
     try {
-      const [teams, players, squadGroups] = await Promise.all([
+      const [auctionRow, teams, players, squadGroups] = await Promise.all([
+        this.db.auction.findUnique({ where: { id: room.auctionId } }),
         this.db.team.findMany({ where: { tournamentId: room.tournament.id }, orderBy: { name: 'asc' } }),
         this.db.player.findMany({
           where: { tournamentId: room.tournament.id },
@@ -1029,6 +1256,11 @@ export class AuctionEngine {
       for (const g of squadGroups) if (g.soldToTeamId) counts.set(g.soldToTeamId, g._count._all)
       room.teams = teams.map((t) => ({ ...t, squadCount: counts.get(t.id) ?? 0 }))
       room.players = players
+      // Policy the organizer can flip through the REST API while the room runs.
+      if (auctionRow) {
+        room.auction = auctionRow
+        room.allowPreviousOwnerRebid = auctionRow.allowPreviousOwnerRebid
+      }
     } catch {
       // keep the previous cache — a stale pool beats dropping the live room
     }
@@ -1106,6 +1338,7 @@ export class AuctionEngine {
       currentPlayer: currentPlayerRow
         ? {
             id: currentPlayerRow.id,
+            auctionCycle: currentPlayerRow.auctionCycle,
             playerNumber: currentPlayerRow.playerNumber,
             name: currentPlayerRow.name,
             role: currentPlayerRow.role,
@@ -1151,6 +1384,7 @@ export class AuctionEngine {
         basePrice: p.basePrice,
         status: p.status as RoomState['players'][number]['status'],
         soldPrice: p.soldPrice,
+        auctionCycle: p.auctionCycle,
         teamId: p.soldToTeamId,
         teamName: p.soldToTeamId ? teamNameById.get(p.soldToTeamId) ?? null : null,
       })),
@@ -1160,6 +1394,8 @@ export class AuctionEngine {
       minIncrement: room.minIncrement,
       bidTimerSeconds: room.bidTimerSeconds,
       goingIntervalSeconds: room.goingIntervalSeconds,
+      previousOwnerTeamId: room.previousOwnerTeamId,
+      allowPreviousOwnerRebid: room.allowPreviousOwnerRebid,
     }
   }
 

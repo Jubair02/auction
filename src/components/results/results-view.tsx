@@ -31,6 +31,7 @@ const EXPORT_TYPES: { type: string; label: string }[] = [
   { type: 'squads', label: 'Final squads (CSV)' },
   { type: 'bids', label: 'Bid log (CSV)' },
   { type: 'spending', label: 'Team spending (CSV)' },
+  { type: 'audit', label: 'Audit log (CSV)' },
 ]
 
 export default function ResultsView({ tournamentId }: { tournamentId: string }) {

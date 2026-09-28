@@ -44,6 +44,7 @@ export async function POST(req: Request, { params }: RouteParams) {
   const bidTimerSeconds = clampInt(body.bidTimerSeconds, TIMER.min, TIMER.max, TIMER.fallback)
   const goingIntervalSeconds = clampInt(body.goingIntervalSeconds, GOING.min, GOING.max, GOING.fallback)
   const minIncrement = clampInt(body.minIncrement, INCREMENT.min, INCREMENT.max, INCREMENT.fallback)
+  const allowPreviousOwnerRebid = body.allowPreviousOwnerRebid === false ? false : true
 
   let auction: Prisma.AuctionGetPayload<object> | null = null
   let lastError: unknown = null
@@ -57,6 +58,7 @@ export async function POST(req: Request, { params }: RouteParams) {
           bidTimerSeconds,
           goingIntervalSeconds,
           minIncrement,
+          allowPreviousOwnerRebid,
         },
       })
       break
@@ -82,7 +84,8 @@ export async function POST(req: Request, { params }: RouteParams) {
   return Response.json({ auction: serializeAuction(auction) }, { status: 201 })
 }
 
-// PATCH /api/tournaments/:id/auction — update settings (only while auction is READY)
+// PATCH /api/tournaments/:id/auction — timings only while READY; the re-auction
+// policy can be changed at any time.
 export async function PATCH(req: Request, { params }: RouteParams) {
   const { id } = await params
 
@@ -95,14 +98,33 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   const auction = await db.auction.findUnique({ where: { tournamentId: id } })
   if (!auction) return jsonError('No auction has been created for this tournament yet', 404)
-  if (auction.status !== 'READY') {
-    return jsonError('Auction settings can only be changed while the auction is READY', 409)
-  }
 
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)
 
-  const data: { bidTimerSeconds?: number; goingIntervalSeconds?: number; minIncrement?: number } = {}
+  const data: {
+    bidTimerSeconds?: number
+    goingIntervalSeconds?: number
+    minIncrement?: number
+    allowPreviousOwnerRebid?: boolean
+  } = {}
+
+  // The re-auction lockout is a policy, not a timing knob — organizers need to
+  // be able to flip it once an auction is already running. It takes effect from
+  // the next player or re-auction.
+  if (body.allowPreviousOwnerRebid !== undefined) {
+    if (typeof body.allowPreviousOwnerRebid !== 'boolean') {
+      return jsonError('allowPreviousOwnerRebid must be true or false', 400)
+    }
+    data.allowPreviousOwnerRebid = body.allowPreviousOwnerRebid
+  }
+
+  const timingKeys = ['bidTimerSeconds', 'goingIntervalSeconds', 'minIncrement'] as const
+  const changingTimings = timingKeys.some((k) => body[k] !== undefined)
+  if (changingTimings && auction.status !== 'READY') {
+    return jsonError('Auction timings can only be changed while the auction is READY', 409)
+  }
+
   if (body.bidTimerSeconds !== undefined) {
     data.bidTimerSeconds = clampInt(body.bidTimerSeconds, TIMER.min, TIMER.max, auction.bidTimerSeconds)
   }

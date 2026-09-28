@@ -345,6 +345,10 @@ function ManualBidDialog({
       setError(`${team.name} already holds the highest bid`)
       return
     }
+    if (state.allowPreviousOwnerRebid === false && state.previousOwnerTeamId === team.id) {
+      setError(`${team.name} lost this player in the re-auction and is blocked from bidding again`)
+      return
+    }
     if (n < minBid) {
       setError(`Minimum bid is ${formatBDT(minBid)}`)
       return
@@ -394,10 +398,18 @@ function ManualBidDialog({
                   const cap = t.maxBid ?? t.remaining
                   const full = t.squadCount >= t.maxSquad
                   const leading = state.currentBid?.teamId === t.id
+                  const blocked =
+                    state.allowPreviousOwnerRebid === false && state.previousOwnerTeamId === t.id
                   return (
-                    <SelectItem key={t.id} value={t.id} disabled={full || leading}>
+                    <SelectItem key={t.id} value={t.id} disabled={full || leading || blocked}>
                       {t.name} · max {formatBDT(cap)}
-                      {full ? ' (squad full)' : leading ? ' (highest bidder)' : ''}
+                      {full
+                        ? ' (squad full)'
+                        : leading
+                          ? ' (highest bidder)'
+                          : blocked
+                            ? ' (blocked — previous owner)'
+                            : ''}
                     </SelectItem>
                   )
                 })}

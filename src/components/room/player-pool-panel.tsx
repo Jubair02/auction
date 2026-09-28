@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -56,6 +57,7 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
   const [search, setSearch] = useState('')
   const [pendingSelect, setPendingSelect] = useState<RoomPlayerLite | null>(null)
   const [pendingReauction, setPendingReauction] = useState<RoomPlayerLite | null>(null)
+  const [reauctionReason, setReauctionReason] = useState('')
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -69,8 +71,17 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
 
   const selectable = (p: RoomPlayerLite) =>
     canSelect && (p.status === 'AVAILABLE' || p.status === 'UNSOLD' || p.status === 'SKIPPED')
-  const reauctionable = (p: RoomPlayerLite) =>
-    (p.status === 'UNSOLD' || p.status === 'SKIPPED' || p.status === 'SOLD') && state.status !== 'ENDED'
+  // Re-auction opens a NEW cycle for a completed sale. Unsold/skipped players
+  // are not sales — they go straight back on the block via a normal pick.
+  const blockFree = !state.currentPlayer
+  const reauctionable = (p: RoomPlayerLite) => p.status === 'SOLD' && state.status === 'LIVE'
+  const reauctionBlockedReason = (): string | null => {
+    if (state.status === 'ENDED') return 'Reopen the auction to re-auction a sold player'
+    if (state.status === 'PAUSED') return 'Resume the auction to re-auction a sold player'
+    if (state.status !== 'LIVE') return 'Start the auction to re-auction a sold player'
+    if (!blockFree) return `Finish ${state.currentPlayer?.name ?? 'the player on the block'} first`
+    return null
+  }
 
   return (
     <>
@@ -168,6 +179,7 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
                     {p.role}
                     {p.category ? ` · Cat ${p.category}` : ''} · base {formatBDT(p.basePrice)}
                     {p.status === 'SOLD' && p.teamName ? ` · to ${p.teamName}` : ''}
+                    {p.auctionCycle ? ` · round ${p.auctionCycle + 1}` : ''}
                   </p>
                 </div>
                 {p.status === 'SOLD' && p.soldPrice !== null ? (
@@ -175,7 +187,7 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
                 ) : (
                   <PlayerStatusBadge status={p.status} className="hidden sm:inline-flex" />
                 )}
-                {reauctionable(p) ? (
+                {p.status === 'SOLD' ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -189,9 +201,15 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenuItem onClick={() => setPendingReauction(p)}>
+                      <DropdownMenuItem
+                        disabled={!reauctionable(p) || !blockFree}
+                        onClick={() => setPendingReauction(p)}
+                      >
                         <RotateCcw className="mr-2 h-4 w-4" /> Re-auction
                       </DropdownMenuItem>
+                      {reauctionBlockedReason() ? (
+                        <p className="px-2 py-1.5 text-xs text-muted-foreground">{reauctionBlockedReason()}</p>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
@@ -235,23 +253,82 @@ export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelP
       </AlertDialog>
 
       {/* re-auction confirm */}
-      <AlertDialog open={!!pendingReauction} onOpenChange={(o) => !o && setPendingReauction(null)}>
+      <AlertDialog
+        open={!!pendingReauction}
+        onOpenChange={(o) => {
+          if (!o) {
+            setPendingReauction(null)
+            setReauctionReason('')
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Re-auction {pendingReauction?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingReauction?.status === 'SOLD'
-                ? `This undoes the sale to ${pendingReauction.teamName} and refunds ${formatBDT(pendingReauction.soldPrice ?? 0)} to their budget. `
-                : 'This clears the current status and puts the player straight onto the block. '}
-              The bid timer restarts from zero.
+            <AlertDialogTitle>
+              Re-auction {pendingReauction?.name}
+              {pendingReauction ? ` — round ${(pendingReauction.auctionCycle ?? 0) + 2}` : ''}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>This starts a brand new auction cycle for this player. It is not an undo:</p>
+                <ul className="list-disc space-y-1 pl-4">
+                  <li>
+                    <span className="font-semibold text-foreground">
+                      {formatBDT(pendingReauction?.soldPrice ?? 0)}
+                    </span>{' '}
+                    is refunded to {pendingReauction?.teamName ?? 'the buying team'}, and their squad slot is freed.
+                  </li>
+                  <li>
+                    Bidding restarts from the base price of{' '}
+                    <span className="font-semibold text-foreground">
+                      {formatBDT(pendingReauction?.basePrice ?? 0)}
+                    </span>{' '}
+                    — not from the old sale price.
+                  </li>
+                  <li>
+                    {state.allowPreviousOwnerRebid === false ? (
+                      <>
+                        {pendingReauction?.teamName ?? 'The original team'} is{' '}
+                        <span className="font-semibold text-foreground">blocked from bidding</span> in this round
+                        (organizer setting).
+                      </>
+                    ) : (
+                      <>
+                        {pendingReauction?.teamName ?? 'The original team'} may bid again and would pay the new price
+                        in full.
+                      </>
+                    )}
+                  </li>
+                  <li>The original sale stays in the auction history permanently.</li>
+                </ul>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="reauction-reason" className="text-xs">
+              Reason <span className="font-normal text-muted-foreground">(optional, saved to the audit log)</span>
+            </Label>
+            <Input
+              id="reauction-reason"
+              value={reauctionReason}
+              onChange={(e) => setReauctionReason(e.target.value)}
+              placeholder="e.g. bid entered for the wrong team"
+              maxLength={200}
+              className="h-10"
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (pendingReauction) onAction('reauction', { playerId: pendingReauction.id })
+                if (pendingReauction) {
+                  onAction('reauction', {
+                    playerId: pendingReauction.id,
+                    ...(reauctionReason.trim() ? { reason: reauctionReason.trim() } : {}),
+                  })
+                }
                 setPendingReauction(null)
+                setReauctionReason('')
               }}
             >
               Re-auction

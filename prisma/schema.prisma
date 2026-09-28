@@ -62,6 +62,10 @@ model Player {
   playerNumber Int      @default(0)
   soldPrice    Int?
   soldToTeamId String?
+  // Bumped every time the organizer re-auctions this player. Cycle 0 is the
+  // first time they go under the hammer; bids and sales are tagged with the
+  // cycle they belong to so each re-auction is a separate auction cycle.
+  auctionCycle Int      @default(0)
   createdAt    DateTime @default(now())
 
   tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
@@ -100,10 +104,14 @@ model Auction {
   currentBidAmount     Int?
   currentBidTeamId     String?
   bidCount             Int      @default(0)
+  // Re-auction policy. Default: the team that lost the player in a re-auction
+  // may bid for them again. Organizers can switch this off per auction.
+  allowPreviousOwnerRebid Boolean @default(true)
   createdAt            DateTime @default(now())
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   bids       Bid[]
+  events     AuctionEvent[]
 }
 
 model Bid {
@@ -114,12 +122,41 @@ model Bid {
   teamName   String // denormalized for audit trail
   playerName String // denormalized for audit trail
   amount     Int
+  cycle      Int      @default(0) // which auction cycle of the player this bid belongs to
   createdAt  DateTime @default(now())
 
   auction Auction @relation(fields: [auctionId], references: [id], onDelete: Cascade)
   team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@index([auctionId, playerId])
+  @@index([auctionId, playerId, cycle])
+}
+
+// Append-only audit trail for money- and ownership-moving events.
+// Rows are never updated or deleted: a re-auction adds RE_AUCTION + REFUND
+// entries on top of the original SALE, so the full chain survives forever.
+model AuctionEvent {
+  id           String   @id @default(cuid())
+  auctionId    String
+  tournamentId String
+  type         String // SALE | RE_AUCTION | REFUND | UNSOLD | SKIPPED
+  cycle        Int      @default(0)
+  playerId     String?
+  playerName   String? // snapshot
+  playerNumber Int?
+  teamId       String?
+  teamName     String? // snapshot
+  amount       Int? // sale price, or the original sale price for RE_AUCTION
+  refundAmount Int? // money actually returned to the team
+  actorId      String? // organizer user id, null when the timer acted
+  actorName    String?
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  auction Auction @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@index([auctionId, createdAt])
+  @@index([auctionId, playerId, cycle])
 }
 
 model RoomParticipant {
