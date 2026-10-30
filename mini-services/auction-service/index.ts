@@ -184,8 +184,10 @@ io.on('connection', (socket) => {
   })
 })
 
-httpServer.listen(3003, () => {
-  console.log('[auction-service] live auction engine listening on http://localhost:3003 (path "/")')
+// Hosts like Render assign the port via PORT; locally it stays 3003.
+const PORT = Number(process.env.PORT) || 3003
+httpServer.listen(PORT, () => {
+  console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/")`)
 })
 
 // Graceful shutdown
