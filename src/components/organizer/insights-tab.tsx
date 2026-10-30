@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { BarChart3, Flame, Gavel, Percent, Trophy, Wallet } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState, StatCard } from '@/components/shared/empty-state'
-import { apiGet, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
+import { useCachedGet } from '@/lib/api-cache'
 import { formatBDT } from '@/lib/format'
 
 interface PlayerStat {
@@ -35,20 +35,18 @@ interface Analytics {
 
 /** Post-auction insights for the organizer (complete bid history, computed server-side). */
 export function InsightsTab({ tournamentId }: { tournamentId: string }) {
-  const [data, setData] = useState<Analytics | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Reopening the tab shows the last insights at once while fresh ones load.
+  const { data, error } = useCachedGet<Analytics>(`/api/tournaments/${tournamentId}/analytics`)
 
-  useEffect(() => {
-    let cancelled = false
-    apiGet<Analytics>(`/api/tournaments/${tournamentId}/analytics`)
-      .then((res) => !cancelled && setData(res))
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.message : 'Could not load insights'))
-    return () => {
-      cancelled = true
-    }
-  }, [tournamentId])
-
-  if (error) return <EmptyState icon={BarChart3} title="Insights unavailable" description={error} />
+  if (error && !data) {
+    return (
+      <EmptyState
+        icon={BarChart3}
+        title="Insights unavailable"
+        description={error instanceof ApiError ? error.message : 'Could not load insights'}
+      />
+    )
+  }
   if (!data) {
     return (
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

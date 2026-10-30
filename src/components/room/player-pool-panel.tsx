@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { AlertTriangle, Gavel, MoreHorizontal, RotateCcw, Search } from 'lucide-react'
 import { formatBDT } from '@/lib/format'
 import type { OrganizerAction, PlayerStatus, RoomState, RoomPlayerLite } from '@/lib/types'
@@ -50,8 +50,33 @@ const FILTERS: { key: 'ALL' | PlayerStatus; label: string }[] = [
   { key: 'SKIPPED', label: 'Skipped' },
 ]
 
+/**
+ * Every bid sends a new room state, but a bid never changes the pool. The list
+ * can hold hundreds of rows, so it only re-renders when a field it shows changes.
+ * `players` keeps its identity between broadcasts while unchanged (see mergeRoomState).
+ */
+function samePoolProps(a: PlayerPoolPanelProps, b: PlayerPoolPanelProps): boolean {
+  const s = a.state
+  const n = b.state
+  return (
+    a.canSelect === b.canSelect &&
+    a.onAction === b.onAction &&
+    s.players === n.players &&
+    s.mode === n.mode &&
+    s.status === n.status &&
+    s.allowPreviousOwnerRebid === n.allowPreviousOwnerRebid &&
+    s.currentPlayer?.id === n.currentPlayer?.id &&
+    s.currentPlayer?.name === n.currentPlayer?.name &&
+    s.pool.uncategorized === n.pool.uncategorized &&
+    JSON.stringify(s.categories) === JSON.stringify(n.categories) &&
+    JSON.stringify(s.soldFeed) === JSON.stringify(n.soldFeed)
+  )
+}
+
 /** Full player pool with filters, on-block selection and re-auction. */
-export function PlayerPoolPanel({ state, canSelect, onAction }: PlayerPoolPanelProps) {
+export const PlayerPoolPanel = memo(PlayerPoolPanelView, samePoolProps)
+
+function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProps) {
   const [filter, setFilter] = useState<'ALL' | PlayerStatus>('ALL')
   const [category, setCategory] = useState<string>('ALL')
   const [search, setSearch] = useState('')

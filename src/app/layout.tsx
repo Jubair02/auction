@@ -12,6 +12,9 @@ const notoBengali = Noto_Sans_Bengali({
   variable: "--font-bengali",
   subsets: ["bengali"],
   weight: ["400", "600", "700", "800"],
+  // Four weights are a large download; without preload the browser fetches
+  // them only when Bangla text actually appears on the page.
+  preload: false,
 });
 
 const geistMono = Geist_Mono({
@@ -24,7 +27,9 @@ export const metadata: Metadata = {
   description: "Create tournaments, add players, build teams and run live room-code based player auctions with automatic budgets and squads. ৳ BDT, Cricket & Football.",
   keywords: ["player auction", "cricket auction", "football auction", "Bangladesh", "tournament", "NeelamGhor"],
   icons: {
-    icon: "/logo.svg",
+    icon: { url: "/favicon.svg", type: "image/svg+xml" },
+    // iOS home screen / Safari don't use SVG favicons.
+    apple: "/apple-touch-icon.png",
   },
   openGraph: {
     title: "NeelamGhor — Live Player Auctions",

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -53,10 +53,12 @@ import { AuctionSetupTab } from '@/components/organizer/auction-setup-tab'
 import { RegistrationsTab } from '@/components/organizer/registrations-tab'
 import { InsightsTab } from '@/components/organizer/insights-tab'
 import { TournamentEditDialog } from '@/components/organizer/tournament-edit-dialog'
-import { apiDelete, apiDownload, apiGet, ApiError } from '@/lib/api'
+import { apiDelete, apiDownload, ApiError } from '@/lib/api'
+import { invalidateCached, peekCached, useCachedGet } from '@/lib/api-cache'
+import { TOURNAMENTS_URL, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate } from '@/lib/format'
-import type { TournamentDetail as TournamentDetailDTO } from '@/lib/types'
+import type { TournamentDetail as TournamentDetailDTO, TournamentSummary } from '@/lib/types'
 
 const EXPORT_TYPES: { type: string; label: string }[] = [
   { type: 'players', label: 'Players' },
@@ -72,28 +74,53 @@ function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'tournament'
 }
 
+/**
+ * Same shape as the loaded page (header, tabs, stat cards) so nothing jumps when
+ * data arrives. Coming from the tournaments list, the name is already known.
+ */
+function TournamentDetailSkeleton({ tournamentId }: { tournamentId: string }) {
+  const summary = peekCached<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)?.tournaments.find(
+    (t) => t.id === tournamentId
+  )
+  return (
+    <div className="container mx-auto max-w-7xl px-4 py-8" aria-busy="true" aria-label="Loading tournament">
+      <Skeleton className="h-8 w-40 rounded-lg" />
+      <div className="mt-3">
+        {summary ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-extrabold tracking-tight">{summary.name}</h1>
+            <TournamentStatusBadge status={summary.status} />
+          </div>
+        ) : (
+          <Skeleton className="h-8 w-2/3 rounded-lg" />
+        )}
+        <Skeleton className="mt-2 h-4 w-1/2 rounded-lg" />
+      </div>
+      <Skeleton className="mt-6 h-10 w-full max-w-2xl rounded-lg" />
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 rounded-xl" />
+        ))}
+      </div>
+      <Skeleton className="mt-4 h-72 rounded-xl" />
+    </div>
+  )
+}
+
 export default function TournamentDetail({ tournamentId }: { tournamentId: string }) {
-  const [data, setData] = useState<TournamentDetailDTO | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data, loading, refetch } = useCachedGet<TournamentDetailDTO>(tournamentDetailUrl(tournamentId), (ex) =>
+    toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournament')
+  )
+  // Called after every save on this page: the list's counts / name / status
+  // may have changed too, so its cached copy must not be shown again.
+  const load = useCallback(async () => {
+    invalidateCached(TOURNAMENTS_URL)
+    await refetch()
+  }, [refetch])
   const [tab, setTab] = useState('overview')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
-
-  const load = useCallback(async () => {
-    try {
-      const res = await apiGet<TournamentDetailDTO>(`/api/tournaments/${tournamentId}`)
-      setData(res)
-    } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournament')
-    } finally {
-      setLoading(false)
-    }
-  }, [tournamentId])
-
-  useEffect(() => {
-    void load()
-  }, [load])
 
   const downloadExport = async (type: string) => {
     if (!data) return
@@ -109,6 +136,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
     setDeleting(true)
     try {
       await apiDelete(`/api/tournaments/${tournamentId}`)
+      invalidateCached(TOURNAMENTS_URL, tournamentDetailUrl(tournamentId))
       toast.success('Tournament deleted')
       navigate('/tournaments')
     } catch (ex) {
@@ -117,15 +145,8 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
     }
   }
 
-  if (loading) {
-    return (
-      <div className="container mx-auto max-w-7xl space-y-4 px-4 py-8">
-        <Skeleton className="h-10 w-2/3 rounded-lg" />
-        <Skeleton className="h-5 w-1/2 rounded-lg" />
-        <Skeleton className="h-72 rounded-xl" />
-      </div>
-    )
-  }
+  if (loading) return <TournamentDetailSkeleton tournamentId={tournamentId} />
+
 
   if (!data) {
     return (

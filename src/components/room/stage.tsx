@@ -131,17 +131,46 @@ interface StageProps {
   onViewResults: () => void
 }
 
+/**
+ * The ticking ring on its own: the countdown updates 5×/s, and keeping it here
+ * means only the ring re-renders instead of the whole stage and its animations.
+ */
+function StageCountdown({
+  timerEndsAt,
+  clockOffset,
+  active,
+  paused,
+  pausedRemainingMs,
+  totalMs,
+}: {
+  timerEndsAt: number | null | undefined
+  clockOffset: number
+  active: boolean
+  paused: boolean
+  pausedRemainingMs: number
+  totalMs: number
+}) {
+  const remaining = useCountdown(timerEndsAt, clockOffset, active)
+  const shownRemaining = paused ? pausedRemainingMs : remaining
+  return (
+    <CountdownRing
+      remainingMs={shownRemaining}
+      totalMs={totalMs}
+      paused={paused}
+      className={cn(!paused && shownRemaining <= 5000 && active && 'animate-pulse')}
+    />
+  )
+}
+
 /** The auction stage — current player, countdown ring, live bid. Shared by every role. */
 export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) {
   const t = useStrings(STRINGS)
   const hasPlayer = !!state.currentPlayer
   const active = state.status === 'LIVE' && hasPlayer
-  const remaining = useCountdown(state.timerEndsAt, clockOffset, active)
   // The ring must be scaled to whichever timer is actually running: the bid timer
   // during stage 0, the (shorter) going-once/twice interval after that.
   const totalMs = (state.stage > 0 ? state.goingIntervalSeconds : state.sessionTimerSeconds) * 1000
   const paused = state.status === 'PAUSED' && hasPlayer
-  const shownRemaining = paused ? (state.pausedRemainingMs ?? 0) : remaining
 
   // Parent-controlled SOLD/UNSOLD moment: show the takeover for ~5s, then a
   // compact "between players" panel so the stage is never blank mid-auction.
@@ -296,11 +325,13 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
 
                 {/* countdown */}
                 <div className="flex flex-col items-center gap-2">
-                  <CountdownRing
-                    remainingMs={shownRemaining}
-                    totalMs={totalMs}
+                  <StageCountdown
+                    timerEndsAt={state.timerEndsAt}
+                    clockOffset={clockOffset}
+                    active={active}
                     paused={paused}
-                    className={cn(!paused && shownRemaining <= 5000 && active && 'animate-pulse')}
+                    pausedRemainingMs={state.pausedRemainingMs ?? 0}
+                    totalMs={totalMs}
                   />
                   <p className="flex items-center gap-1 text-xs text-muted-foreground" aria-hidden>
                     <Clock className="h-3 w-3" />

@@ -1,6 +1,5 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowRight,
   ClipboardList,
@@ -21,7 +20,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState, StatCard } from '@/components/shared/empty-state'
 import { TournamentCard } from '@/components/organizer/tournament-card'
-import { apiGet } from '@/lib/api'
+import { useCachedGet } from '@/lib/api-cache'
+import { TOURNAMENTS_URL, prefetchTournamentProps } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { useAppStore } from '@/lib/store'
 import type { TournamentSummary } from '@/lib/types'
@@ -37,23 +37,9 @@ const GUIDE_STEPS = [
 
 export default function OrganizerDashboard() {
   const user = useAppStore((s) => s.user)
-  const [tournaments, setTournaments] = useState<TournamentSummary[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(async () => {
-    try {
-      const res = await apiGet<{ tournaments: TournamentSummary[] }>('/api/tournaments')
-      setTournaments(res.tournaments)
-    } catch (ex) {
-      void ex
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  // Shares its cache with the tournaments page — opening either after the other is instant.
+  const { data, loading } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)
+  const tournaments = data?.tournaments ?? []
 
   const firstName = (user?.name ?? 'Organizer').split(/\s+/)[0]
   const totalPlayers = tournaments.reduce((n, t) => n + t.playerCount, 0)
@@ -129,7 +115,7 @@ export default function OrganizerDashboard() {
                 t={t}
                 actions={
                   <>
-                    <Button className="min-h-10 flex-1" onClick={() => navigate(`/tournaments/${t.id}`)}>
+                    <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
                       <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> Manage
                     </Button>
                     <Button variant="outline" className="min-h-10 flex-1" onClick={() => navigate(`/results/${t.id}`)}>

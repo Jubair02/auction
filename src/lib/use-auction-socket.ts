@@ -49,8 +49,18 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
   const [joinError, setJoinError] = useState<string | null>(null)
   const [connectFailures, setConnectFailures] = useState(0)
   const [state, setState] = useState<RoomState | null>(null)
-  const [clockOffset, setClockOffset] = useState(0)
+  const [clockOffset, setRawClockOffset] = useState(0)
   const [notifications, setNotifications] = useState<RoomNotification[]>([])
+
+  // Every 1s timer tick measures the offset again, and network jitter moves it
+  // by a few ms each time. Re-rendering the whole room for that is wasted work,
+  // so only real drift (beyond what a countdown display can show) is applied.
+  const clockOffsetRef = useRef(0)
+  const setClockOffset = useCallback((offset: number) => {
+    if (Math.abs(offset - clockOffsetRef.current) < 250) return
+    clockOffsetRef.current = offset
+    setRawClockOffset(offset)
+  }, [])
 
   const doJoin = useCallback(() => {
     const socket = socketRef.current
@@ -66,7 +76,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
         setJoinError(ack?.error || 'Failed to join room')
       }
     })
-  }, [roomCode])
+  }, [roomCode, setClockOffset])
 
   useEffect(() => {
     if (!token) return
@@ -133,7 +143,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       setState(null)
       setNotifications([])
     }
-  }, [roomCode, token, doJoin])
+  }, [roomCode, token, doJoin, setClockOffset])
 
   const placeBid = useCallback((amount: number) => {
     socketRef.current?.emit('place_bid', { amount })

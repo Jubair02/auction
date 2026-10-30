@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Download,
   FileSpreadsheet,
@@ -41,7 +41,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { TournamentCard, copyRoomCode } from '@/components/organizer/tournament-card'
-import { apiDelete, apiDownload, apiGet, ApiError } from '@/lib/api'
+import { apiDelete, apiDownload, ApiError } from '@/lib/api'
+import { invalidateCached, useCachedGet } from '@/lib/api-cache'
+import { TOURNAMENTS_URL, prefetchTournamentProps, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import type { TournamentSummary } from '@/lib/types'
 
@@ -60,8 +62,10 @@ function slugify(name: string) {
 }
 
 export default function TournamentsList() {
-  const [tournaments, setTournaments] = useState<TournamentSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  const { data, loading, refetch: load } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL, (ex) =>
+    toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournaments')
+  )
+  const tournaments = useMemo(() => data?.tournaments ?? [], [data])
 
   const [query, setQuery] = useState('')
   const [sport, setSport] = useState('ALL')
@@ -70,20 +74,6 @@ export default function TournamentsList() {
   const [deleteTarget, setDeleteTarget] = useState<TournamentSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const res = await apiGet<{ tournaments: TournamentSummary[] }>('/api/tournaments')
-      setTournaments(res.tournaments)
-    } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournaments')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
 
   const filtered = useMemo(() => {
     return tournaments.filter((t) => {
@@ -108,6 +98,7 @@ export default function TournamentsList() {
     setDeleting(true)
     try {
       await apiDelete(`/api/tournaments/${deleteTarget.id}`)
+      invalidateCached(tournamentDetailUrl(deleteTarget.id))
       toast.success(`Deleted "${deleteTarget.name}"`)
       setDeleteTarget(null)
       void load()
@@ -215,7 +206,7 @@ export default function TournamentsList() {
               t={t}
               actions={
                 <>
-                  <Button className="min-h-10 flex-1" onClick={() => navigate(`/tournaments/${t.id}`)}>
+                  <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
                     <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> Manage
                   </Button>
                   {t.roomCode ? (

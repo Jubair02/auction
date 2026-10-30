@@ -8,7 +8,6 @@ import {
   requireSession,
   requireSessionRole,
   serializeTournamentSummary,
-  soldCountsByTournament,
 } from '../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -20,16 +19,24 @@ export async function GET() {
   const { user } = auth
 
   const where = user.role === 'ADMIN' ? {} : { organizerId: user.id }
-  const tournaments = await db.tournament.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      _count: { select: { players: true, teams: true } },
-      auction: { select: { roomCode: true, status: true } },
-    },
-  })
-
-  const soldMap = await soldCountsByTournament(tournaments.map((t) => t.id))
+  // Sold counts filter by the same owner condition, so both queries run at once
+  // instead of the second waiting for the first one's ids.
+  const [tournaments, soldGroups] = await Promise.all([
+    db.tournament.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { players: true, teams: true } },
+        auction: { select: { roomCode: true, status: true } },
+      },
+    }),
+    db.player.groupBy({
+      by: ['tournamentId'],
+      where: { status: 'SOLD', tournament: where },
+      _count: { _all: true },
+    }),
+  ])
+  const soldMap = new Map(soldGroups.map((g) => [g.tournamentId, g._count._all]))
 
   return Response.json({
     tournaments: tournaments.map((t) =>

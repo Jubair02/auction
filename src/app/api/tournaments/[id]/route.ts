@@ -21,11 +21,11 @@ type RouteParams = { params: Promise<{ id: string }> }
 export async function GET(_req: Request, { params }: RouteParams) {
   const { id } = await params
 
-  const auth = await requireSession()
+  // The session check and the tournament lookup don't depend on each other —
+  // run them together. Nothing is returned before the permission check below.
+  const [auth, tournament] = await Promise.all([requireSession(), db.tournament.findUnique({ where: { id } })])
   if ('response' in auth) return auth.response
   const { user } = auth
-
-  const tournament = await db.tournament.findUnique({ where: { id } })
   if (!tournament) return jsonError('Tournament not found', 404)
 
   const canManage = isOwnerOrAdmin(tournament, user)

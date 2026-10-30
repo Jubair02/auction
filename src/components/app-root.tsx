@@ -2,6 +2,7 @@
 
 // App shell + hash router. The entire SPA lives under the single Next.js route "/".
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { Gavel, LayoutDashboard, Loader2, LogIn, LogOut, Megaphone, ShieldCheck, UserPlus } from 'lucide-react'
 import { Toaster as SonnerToaster } from 'sonner'
 import { useAppStore } from '@/lib/store'
@@ -21,22 +22,26 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import Landing from '@/components/landing'
-import AuthView from '@/components/auth-view'
-import { ForgotPasswordView, ResetPasswordView } from '@/components/password-reset'
-import OrganizerDashboard from '@/components/organizer/dashboard'
-import TournamentsList from '@/components/organizer/tournaments'
-import TournamentCreate from '@/components/organizer/tournament-create'
-import TournamentDetail from '@/components/organizer/tournament-detail'
-import AuctionHistory from '@/components/organizer/auction-history'
-import AdminView from '@/components/admin/admin-view'
-import AuctionRoom from '@/components/room/auction-room'
-import StreamOverlay from '@/components/room/stream-overlay'
-import ManagerDashboard from '@/components/manager/manager-dashboard'
-import JoinRoomView from '@/components/manager/join-room'
-import AcceptInvite from '@/components/manager/accept-invite'
-import RegisterPlayer from '@/components/register-player'
-import MyTeamView from '@/components/manager/my-team'
-import ResultsView from '@/components/results/results-view'
+
+// Every other view is code-split: a visitor downloads only the screen they open,
+// not the whole app (admin, organizer tools, the live room…) up front.
+const AuthView = dynamic(() => import('@/components/auth-view'), { loading: () => <CenterLoader /> })
+const ForgotPasswordView = dynamic(() => import('@/components/password-reset').then((m) => m.ForgotPasswordView), { loading: () => <CenterLoader /> })
+const ResetPasswordView = dynamic(() => import('@/components/password-reset').then((m) => m.ResetPasswordView), { loading: () => <CenterLoader /> })
+const OrganizerDashboard = dynamic(() => import('@/components/organizer/dashboard'), { loading: () => <CenterLoader /> })
+const TournamentsList = dynamic(() => import('@/components/organizer/tournaments'), { loading: () => <CenterLoader /> })
+const TournamentCreate = dynamic(() => import('@/components/organizer/tournament-create'), { loading: () => <CenterLoader /> })
+const TournamentDetail = dynamic(() => import('@/components/organizer/tournament-detail'), { loading: () => <CenterLoader /> })
+const AuctionHistory = dynamic(() => import('@/components/organizer/auction-history'), { loading: () => <CenterLoader /> })
+const AdminView = dynamic(() => import('@/components/admin/admin-view'), { loading: () => <CenterLoader /> })
+const AuctionRoom = dynamic(() => import('@/components/room/auction-room'), { loading: () => <CenterLoader /> })
+const StreamOverlay = dynamic(() => import('@/components/room/stream-overlay'), { loading: () => <CenterLoader /> })
+const ManagerDashboard = dynamic(() => import('@/components/manager/manager-dashboard'), { loading: () => <CenterLoader /> })
+const JoinRoomView = dynamic(() => import('@/components/manager/join-room'), { loading: () => <CenterLoader /> })
+const AcceptInvite = dynamic(() => import('@/components/manager/accept-invite'), { loading: () => <CenterLoader /> })
+const RegisterPlayer = dynamic(() => import('@/components/register-player'), { loading: () => <CenterLoader /> })
+const MyTeamView = dynamic(() => import('@/components/manager/my-team'), { loading: () => <CenterLoader /> })
+const ResultsView = dynamic(() => import('@/components/results/results-view'), { loading: () => <CenterLoader /> })
 
 function RoleGate({
   allowed,
@@ -123,10 +128,11 @@ export default function AppRoot() {
   const head = segs[0] ?? ''
 
   const renderRoute = () => {
+    // The landing page doesn't depend on who is logged in — show it without
+    // waiting for the session check.
+    if (head === '') return <Landing />
     if (!authChecked) return <CenterLoader />
     switch (true) {
-      case head === '':
-        return <Landing />
       case head === 'login' && segs.length === 1:
         return authLoading ? <CenterLoader /> : user ? <RedirectDashboard /> : <AuthView mode="login" />
       case head === 'register' && segs.length === 1:

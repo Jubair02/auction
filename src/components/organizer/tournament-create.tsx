@@ -25,6 +25,8 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiPost, ApiError } from '@/lib/api'
+import { invalidateCached } from '@/lib/api-cache'
+import { TOURNAMENTS_URL } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { formatBDT } from '@/lib/format'
 import { DEFAULT_CATEGORY_BASE_PRICES, type Sport } from '@/lib/types'
@@ -105,6 +107,7 @@ export default function TournamentCreate() {
         auctionMode,
         basePrice: auctionMode === 'NORMAL' ? parsedBasePrice : undefined,
       })
+      invalidateCached(TOURNAMENTS_URL)
       toast.success('Tournament created — now add players and teams!')
       navigate(`/tournaments/${res.tournament.id}`)
     } catch (ex) {

@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { Activity, Crown, Eye, UserCog } from 'lucide-react'
 import type { RoomNotification, RoomRole, RoomState } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -51,8 +52,16 @@ const ROLE_META: Record<RoomRole, { icon: typeof Crown; className: string }> = {
   VIEWER: { icon: Eye, className: 'bg-slate-200 text-slate-700' },
 }
 
-/** Who is in the room right now. */
-export function ParticipantsPanel({ state }: { state: RoomState }) {
+/** Who is in the room right now. Skips re-rendering on bids, which change none of this. */
+export const ParticipantsPanel = memo(
+  ParticipantsPanelView,
+  ({ state: s }, { state: n }) =>
+    s.participants === n.participants &&
+    s.viewersOnline === n.viewersOnline &&
+    s.teams.map((t) => t.id + t.name).join() === n.teams.map((t) => t.id + t.name).join()
+)
+
+function ParticipantsPanelView({ state }: { state: RoomState }) {
   const t = useStrings(STRINGS)
   const onlineCount = state.participants.filter((p) => p.online).length + state.viewersOnline
   return (
