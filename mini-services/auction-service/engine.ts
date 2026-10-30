@@ -6,7 +6,7 @@
 // first touch after a service restart, and self-heal on join if the
 // DB state diverges from memory (e.g. external reset).
 // ============================================================
-import { randomInt, randomUUID } from 'node:crypto'
+import { createHash, randomInt, randomUUID } from 'node:crypto'
 import type { Server, Socket } from 'socket.io'
 import type {
   Prisma,
@@ -17,7 +17,8 @@ import type {
   Player,
   RoomParticipant,
 } from '@prisma/client'
-import type { RoomState, RoomRole, SocketIdentity } from '../../src/lib/types'
+import type { RoomState, RoomStateWire, RoomRole, SocketIdentity } from '../../src/lib/types'
+import { bdt, maxBidFor, validateBid } from './rules'
 
 type EngineStatus = 'READY' | 'LIVE' | 'PAUSED' | 'ENDED'
 type NotifLevel = 'info' | 'success' | 'warning' | 'error'
@@ -35,8 +36,6 @@ type AuditType = 'SALE' | 'RE_AUCTION' | 'REFUND' | 'UNSOLD' | 'SKIPPED'
 class SaleAlreadyChanged extends Error {}
 
 const CATEGORY_CODES = ['A', 'B', 'C', 'D', 'E']
-const EN_IN = new Intl.NumberFormat('en-IN')
-const bdt = (n: number) => `৳${EN_IN.format(n)}`
 
 interface BidView {
   amount: number
@@ -88,7 +87,13 @@ interface Room {
   sockets: Map<string, SocketPresence>
   ticking: boolean
   presenceTimer: ReturnType<typeof setTimeout> | null
+  /** Fingerprints of the pool / participant list in the last broadcast (delta sends). */
+  lastPlayersHash: string | null
+  lastParticipantsHash: string | null
 }
+
+/** Short content fingerprint used to skip re-sending unchanged lists. */
+const fingerprint = (value: unknown) => createHash('sha1').update(JSON.stringify(value)).digest('base64url').slice(0, 16)
 
 export class AuctionEngine {
   private rooms = new Map<string, Room>()
@@ -129,12 +134,19 @@ export class AuctionEngine {
       }
     }
 
-    let room = this.rooms.get(auctionId)
-    if (room) room = await this.syncIfStale(room)
-    else room = await this.getOrBuild(auctionId)
+    // Under the room lock: a heal/rebuild must never swap the room object out
+    // from under a bid, organizer action or timer tick that is mid-flight.
+    const room = await this.withLock(auctionId, async () => {
+      const existing = this.rooms.get(auctionId)
+      return existing ? this.syncIfStale(existing) : this.getOrBuild(auctionId)
+    })
 
     room.sockets.set(socket.id, { role: identity.role, name: identity.name, teamId: identity.teamId })
     this.socketRooms.set(socket.id, { auctionId, identity })
+    // Join the broadcast room BEFORE building the snapshot we hand back, so no
+    // broadcast can fall in the gap between the two (the client ignores delta
+    // broadcasts until its full snapshot arrives).
+    await socket.join(`auction:${auctionId}`)
 
     await this.upsertParticipant(room, identity)
     await this.refreshParticipants(room)
@@ -265,42 +277,20 @@ export class AuctionEngine {
   // ----------------------------------------------------------
   // Purse maths
   // ----------------------------------------------------------
-  /** Cheapest base price still obtainable, used to reserve purse for the minimum squad. */
-  private cheapestAvailable(room: Room, excludePlayerId?: string): number {
-    let min = Infinity
-    let count = 0
-    for (const p of room.players) {
-      if (p.id === excludePlayerId) continue
-      if (p.status !== 'AVAILABLE' && p.status !== 'UNSOLD' && p.status !== 'SKIPPED') continue
-      count++
-      if (p.basePrice < min) min = p.basePrice
-    }
-    return count === 0 || min === Infinity ? 0 : min
-  }
-
-  /** How many more players a team still needs after winning the one on the block. */
-  private slotsStillNeeded(room: Room, team: TeamCache, excludePlayerId?: string): number {
-    const needed = team.minSquad - team.squadCount - 1
-    if (needed <= 0) return 0
-    // Never reserve for players that do not exist in the pool any more.
-    let obtainable = 0
-    for (const p of room.players) {
-      if (p.id === excludePlayerId) continue
-      if (p.status === 'AVAILABLE' || p.status === 'UNSOLD' || p.status === 'SKIPPED') obtainable++
-    }
-    return Math.min(needed, obtainable)
-  }
+  // The rules themselves live in rules.ts (pure, unit-tested).
 
   /**
-   * The highest bid a team may legally place for the player on the block.
-   * Their remaining purse, minus the minimum they must keep back to still
-   * complete the minimum squad size — otherwise a team can spend everything on
-   * one player and end the auction with an illegal squad.
+   * Is this user still the team's registered manager? The cached team row is
+   * trusted when it agrees; otherwise the DB is re-read, because seats are
+   * claimed (and reassigned by the organizer) through the REST API after the
+   * room cache was built.
    */
-  private maxBidFor(room: Room, team: TeamCache, excludePlayerId?: string): number {
-    const remaining = team.budget - team.spent
-    const reserve = this.slotsStillNeeded(room, team, excludePlayerId) * this.cheapestAvailable(room, excludePlayerId)
-    return Math.max(0, remaining - reserve)
+  private async holdsSeat(team: TeamCache, userId: string | undefined): Promise<boolean> {
+    if (!userId) return false
+    if (team.managerUserId === userId) return true
+    const fresh = await this.db.team.findUnique({ where: { id: team.id }, select: { managerUserId: true } })
+    team.managerUserId = fresh?.managerUserId ?? null
+    return team.managerUserId === userId
   }
 
   /** Shared bid legality check for manager bids and organizer manual bids. */
@@ -311,55 +301,26 @@ export class AuctionEngine {
     amount: number,
     opts: { manual: boolean },
   ): string | null {
-    if (!Number.isInteger(amount) || amount <= 0) return 'Invalid bid amount'
-
-    const who = opts.manual ? `${team.name}'s` : 'your'
-    if (team.squadCount >= team.maxSquad) {
-      return opts.manual ? `${team.name}'s squad is already full` : 'Your squad is full'
-    }
-    // Bidding against yourself only inflates the price you pay.
-    if (room.currentBid && room.currentBid.teamId === team.id) {
-      return opts.manual
-        ? `${team.name} already holds the highest bid`
-        : 'You already hold the highest bid'
-    }
-    // Optional policy: lock the team that just lost this player out of the
-    // round, so a re-auction cannot simply hand them back at a new price.
-    if (!room.allowPreviousOwnerRebid && room.previousOwnerTeamId === team.id) {
-      return opts.manual
-        ? `${team.name} lost this player in the re-auction and is blocked from bidding for them again`
-        : 'You lost this player in the re-auction — the organizer has blocked previous owners from bidding again'
-    }
-    const minBid = room.currentBid ? room.currentBid.amount + room.minIncrement : player.basePrice
-    if (amount < minBid) return `Minimum bid is ${bdt(minBid)}`
-
-    const remaining = team.budget - team.spent
-    if (amount > remaining) {
-      return opts.manual
-        ? `${team.name} only has ${bdt(remaining)} left`
-        : `Bid exceeds ${who} available budget (${bdt(remaining)} left)`
-    }
-    const maxBid = this.maxBidFor(room, team, player.id)
-    if (amount > maxBid) {
-      const slots = this.slotsStillNeeded(room, team, player.id)
-      return `Maximum bid is ${bdt(maxBid)} — ${bdt(remaining - maxBid)} must stay back for ${slots} more player${slots === 1 ? '' : 's'} to reach the minimum squad of ${team.minSquad}`
-    }
-    return null
+    return validateBid(room, team, player, amount, opts)
   }
 
   // ----------------------------------------------------------
   // Client actions
   // ----------------------------------------------------------
   async placeBid(socket: Socket, identity: SocketIdentity, rawAmount: unknown): Promise<void> {
-    const room = this.rooms.get(identity.auctionId)
-    if (!room) return this.emitError(socket, 'Join the room first')
-    await this.withLock(room.auctionId, async () => {
+    await this.withLock(identity.auctionId, async () => {
+      // Resolved inside the lock — a join may have rebuilt the room meanwhile.
+      const room = this.rooms.get(identity.auctionId)
+      if (!room) return this.emitError(socket, 'Join the room first')
       if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
       const player = room.players.find((p) => p.id === room.currentPlayerId)
       if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
       const amount = Number(rawAmount)
       const team = room.teams.find((t) => t.id === identity.teamId)
       if (!team) return this.emitError(socket, 'You are not assigned to a team in this room')
+      if (!(await this.holdsSeat(team, identity.userId))) {
+        return this.emitError(socket, "You are no longer this team's manager — log in with the team's account and rejoin")
+      }
       const invalid = this.validateBid(room, team, player, amount, { manual: false })
       if (invalid) return this.emitError(socket, invalid)
 
@@ -401,10 +362,11 @@ export class AuctionEngine {
     action: string | undefined,
     payload: Record<string, unknown> | undefined,
   ): Promise<void> {
-    const room = this.rooms.get(identity.auctionId)
-    if (!room) return this.emitError(socket, 'Join the room first')
     const actor: Actor = { id: identity.userId ?? null, name: identity.name }
-    await this.withLock(room.auctionId, async () => {
+    await this.withLock(identity.auctionId, async () => {
+      // Resolved inside the lock — a join may have rebuilt the room meanwhile.
+      const room = this.rooms.get(identity.auctionId)
+      if (!room) return this.emitError(socket, 'Join the room first')
       switch (action) {
         case 'start': return this.actionStart(socket, room)
         case 'pause': return this.actionPause(socket, room)
@@ -986,7 +948,11 @@ export class AuctionEngine {
       if (room.ticking || now < room.timerEndsAt) continue
       room.ticking = true
       try {
-        await this.withLock(room.auctionId, () => this.advanceTimer(room))
+        await this.withLock(room.auctionId, async () => {
+          // The snapshot may be stale if a join rebuilt the room; act on the live one.
+          const live = this.rooms.get(room.auctionId)
+          if (live) await this.advanceTimer(live)
+        })
       } catch (err) {
         console.error('[engine] tick error', err)
       } finally {
@@ -1044,12 +1010,24 @@ export class AuctionEngine {
     socket.emit('error', { message })
   }
 
+  /**
+   * Sends the room state to everyone in it. The player pool and participant
+   * list — by far the largest parts — are left out when unchanged since the
+   * previous broadcast; clients keep their copy and use the fingerprints to
+   * detect a gap (then they re-join for a full snapshot).
+   */
   private broadcast(room: Room): void {
     if (room.presenceTimer) {
       clearTimeout(room.presenceTimer)
       room.presenceTimer = null
     }
-    this.io.to(`auction:${room.auctionId}`).emit('room_state', this.buildState(room))
+    const state = this.buildState(room)
+    const payload: RoomStateWire = { ...state }
+    if (state.playersHash === room.lastPlayersHash) delete payload.players
+    else room.lastPlayersHash = state.playersHash
+    if (state.participantsHash === room.lastParticipantsHash) delete payload.participants
+    else room.lastParticipantsHash = state.participantsHash
+    this.io.to(`auction:${room.auctionId}`).emit('room_state', payload)
   }
 
   private schedulePresenceBroadcast(room: Room): void {
@@ -1088,7 +1066,10 @@ export class AuctionEngine {
         row.currentPlayerId !== room.currentPlayerId ||
         row.currentCategory !== room.currentCategory ||
         row.currentBidAmount !== (room.currentBid?.amount ?? null)
-      if (!stale) return room
+      if (!stale) {
+        this.applySettings(room, row)
+        return room
+      }
       if (room.presenceTimer) {
         clearTimeout(room.presenceTimer)
         room.presenceTimer = null
@@ -1134,6 +1115,8 @@ export class AuctionEngine {
       sockets: new Map(),
       ticking: false,
       presenceTimer: null,
+      lastPlayersHash: null,
+      lastParticipantsHash: null,
     }
     await this.refreshCache(room)
 
@@ -1256,14 +1239,23 @@ export class AuctionEngine {
       for (const g of squadGroups) if (g.soldToTeamId) counts.set(g.soldToTeamId, g._count._all)
       room.teams = teams.map((t) => ({ ...t, squadCount: counts.get(t.id) ?? 0 }))
       room.players = players
-      // Policy the organizer can flip through the REST API while the room runs.
-      if (auctionRow) {
-        room.auction = auctionRow
-        room.allowPreviousOwnerRebid = auctionRow.allowPreviousOwnerRebid
-      }
+      if (auctionRow) this.applySettings(room, auctionRow)
     } catch {
       // keep the previous cache — a stale pool beats dropping the live room
     }
+  }
+
+  /**
+   * Copies the organizer-editable settings from the auction row. Timings can be
+   * changed through the REST API while the auction is READY — possibly after
+   * someone already opened the room — and the re-auction policy at any time.
+   */
+  private applySettings(room: Room, row: Auction): void {
+    room.auction = row
+    room.bidTimerSeconds = row.bidTimerSeconds
+    room.goingIntervalSeconds = row.goingIntervalSeconds
+    room.minIncrement = row.minIncrement
+    room.allowPreviousOwnerRebid = row.allowPreviousOwnerRebid
   }
 
   /** Refreshes DB-backed caches (auction/tournament rows, teams+squads, players). */
@@ -1325,6 +1317,34 @@ export class AuctionEngine {
       if (!p.category && p.status !== 'SOLD') uncategorized++
     }
 
+    const players: RoomState['players'] = room.players.map((p) => ({
+      id: p.id,
+      playerNumber: p.playerNumber,
+      name: p.name,
+      role: p.role,
+      category: p.category,
+      basePrice: p.basePrice,
+      status: p.status as RoomState['players'][number]['status'],
+      soldPrice: p.soldPrice,
+      auctionCycle: p.auctionCycle,
+      teamId: p.soldToTeamId,
+      teamName: p.soldToTeamId ? teamNameById.get(p.soldToTeamId) ?? null : null,
+    }))
+
+    // Seats only (organizer + managers). Viewers are a live count — a streamed
+    // auction can have hundreds, and every past viewer row used to ride along
+    // on every single bid broadcast.
+    const participants: RoomState['participants'] = room.participants
+      .filter((p) => p.role !== 'VIEWER')
+      .map((p) => ({
+        name: p.name,
+        role: p.role as RoomRole,
+        teamId: p.teamId,
+        online: this.identityOnline(room, p.role as RoomRole, p.name),
+      }))
+    let viewersOnline = 0
+    for (const s of room.sockets.values()) if (s.role === 'VIEWER') viewersOnline++
+
     return {
       auctionId: room.auctionId,
       roomCode: room.roomCode,
@@ -1346,7 +1366,7 @@ export class AuctionEngine {
             basePrice: currentPlayerRow.basePrice,
             photoUrl: currentPlayerRow.photoUrl,
             previousTeam: currentPlayerRow.previousTeam,
-            phone: currentPlayerRow.phone,
+            // phone deliberately omitted — this state reaches anonymous viewers
           }
         : null,
       currentBid: room.currentBid,
@@ -1363,31 +1383,17 @@ export class AuctionEngine {
         budget: t.budget,
         spent: t.spent,
         remaining: t.budget - t.spent,
-        maxBid: this.maxBidFor(room, t, room.currentPlayerId ?? undefined),
+        maxBid: maxBidFor(room.players, t, room.currentPlayerId ?? undefined),
         squadCount: t.squadCount,
         maxSquad: t.maxSquad,
         minSquad: t.minSquad,
         online: this.teamOnline(room, t.id),
       })),
-      participants: room.participants.map((p) => ({
-        name: p.name,
-        role: p.role as RoomRole,
-        teamId: p.teamId,
-        online: this.identityOnline(room, p.role as RoomRole, p.name),
-      })),
-      players: room.players.map((p) => ({
-        id: p.id,
-        playerNumber: p.playerNumber,
-        name: p.name,
-        role: p.role,
-        category: p.category,
-        basePrice: p.basePrice,
-        status: p.status as RoomState['players'][number]['status'],
-        soldPrice: p.soldPrice,
-        auctionCycle: p.auctionCycle,
-        teamId: p.soldToTeamId,
-        teamName: p.soldToTeamId ? teamNameById.get(p.soldToTeamId) ?? null : null,
-      })),
+      participants,
+      participantsHash: fingerprint(participants),
+      viewersOnline,
+      players,
+      playersHash: fingerprint(players),
       pool: { total: room.players.length, available, sold, unsold, skipped, uncategorized },
       lastResult: room.lastResult,
       soldFeed: room.soldFeed,

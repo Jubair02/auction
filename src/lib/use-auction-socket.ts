@@ -5,7 +5,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
-import type { OrganizerAction, RoomNotification, RoomState } from '@/lib/types'
+import { mergeRoomState } from '@/lib/room-state'
+import type { OrganizerAction, RoomNotification, RoomState, RoomStateWire } from '@/lib/types'
 
 export interface AuctionSocketApi {
   connected: boolean
@@ -72,9 +73,15 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       setJoined(false)
     })
 
-    socket.on('room_state', (next: RoomState) => {
-      setState(next)
+    // Broadcasts may omit the (large) player pool / participant list when
+    // unchanged; merge into our copy, or re-join for a full snapshot on a gap.
+    socket.on('room_state', (next: RoomStateWire) => {
       setClockOffset(next.serverTime - Date.now())
+      setState((prev) => {
+        const merged = mergeRoomState(prev, next)
+        if (merged.needsResync) queueMicrotask(() => doJoin())
+        return merged.state
+      })
     })
 
     socket.on('timer', (t: { serverTime: number }) => {

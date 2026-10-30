@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ImageUpload } from '@/components/shared/image-upload'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -226,29 +227,15 @@ export function TournamentEditDialog({
             <p className="text-xs text-muted-foreground">Used as the default in normal mode.</p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="te-logo">Logo URL</Label>
-            <Input
-              id="te-logo"
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              maxLength={500}
-              placeholder="https://…"
-              className="h-10"
-            />
-          </div>
+          <ImageUpload label="Logo" kind="LOGO" value={logoUrl || null} onChange={(url) => setLogoUrl(url ?? '')} />
 
-          <div className="space-y-1.5">
-            <Label htmlFor="te-banner">Banner URL</Label>
-            <Input
-              id="te-banner"
-              value={bannerUrl}
-              onChange={(e) => setBannerUrl(e.target.value)}
-              maxLength={500}
-              placeholder="https://…"
-              className="h-10"
-            />
-          </div>
+          <ImageUpload
+            className="sm:col-span-2"
+            label="Banner"
+            kind="BANNER"
+            value={bannerUrl || null}
+            onChange={(url) => setBannerUrl(url ?? '')}
+          />
 
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="te-desc">Description</Label>

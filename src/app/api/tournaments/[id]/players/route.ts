@@ -1,7 +1,8 @@
-import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import {
   coercePositiveInt,
+  insertPlayersNumbered,
+  PLAYER_NUMBER_CONFLICT,
   loadTournamentForOwner,
   normalizeCategory,
   readJson,
@@ -84,21 +85,9 @@ export async function POST(req: Request, { params }: RouteParams) {
     validated.push(result)
   }
 
-  const maxAgg = await db.player.aggregate({
-    where: { tournamentId: id },
-    _max: { playerNumber: true },
-  })
-  let nextNumber = (maxAgg._max.playerNumber ?? 0) + 1
+  const inserted = await insertPlayersNumbered(id, validated)
+  if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)
 
-  const created: Awaited<ReturnType<typeof serializePlayer>>[] = []
-  for (const p of validated) {
-    const player = await db.player.create({
-      data: { ...p, tournamentId: id, playerNumber: nextNumber, status: 'AVAILABLE' },
-      include: { soldToTeam: { select: { name: true } } },
-    })
-    created.push(serializePlayer(player))
-    nextNumber++
-  }
-
+  const created = inserted.map((p) => serializePlayer(p))
   return Response.json({ created: created.length, players: created }, { status: 201 })
 }

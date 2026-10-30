@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import { apiGet, apiPost } from '@/lib/api'
+import { navigate } from '@/lib/router'
 import type { SafeUser } from '@/lib/types'
 
 interface AppState {
@@ -39,6 +40,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       // ignore
     }
     set({ user: null })
-    if (typeof window !== 'undefined') window.location.hash = '#/'
+    if (typeof window !== 'undefined') navigate('/')
   },
 }))

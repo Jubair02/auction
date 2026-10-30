@@ -1,6 +1,7 @@
 {
   "name": "auction-service",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "bun --hot index.ts"
   },

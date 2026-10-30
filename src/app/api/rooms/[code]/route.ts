@@ -1,13 +1,32 @@
 import { db } from '@/lib/db'
 import { getSessionUser } from '@/lib/auth'
+import { clientKey, rateLimit, rateLimitBlocked } from '@/lib/rate-limit'
 import type { RoomInfo, RoomTeamInfo } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ code: string }> }
 
+// Limits are per IP and generous on purpose: a stadium or campus full of
+// viewers can share one address (mobile carrier NAT). Wrong codes get a much
+// tighter budget so the ~1M code space cannot be walked.
+const LOOKUPS_PER_MINUTE = 300
+const MISSES_PER_WINDOW = 30
+const MISS_WINDOW_MS = 15 * 60 * 1000
+
+const tooMany = (seconds: number) =>
+  Response.json(
+    { error: `Too many room lookups. Please try again in ${seconds} seconds.` },
+    { status: 429, headers: { 'Retry-After': String(seconds) } },
+  )
+
 // GET /api/rooms/:code — public room info (no auth required)
-export async function GET(_req: Request, { params }: RouteParams) {
+export async function GET(req: Request, { params }: RouteParams) {
+  const missKey = clientKey(req, 'room-miss')
+  const blocked =
+    rateLimitBlocked(missKey, MISSES_PER_WINDOW) ?? rateLimit(clientKey(req, 'room-lookup'), LOOKUPS_PER_MINUTE, 60 * 1000)
+  if (blocked !== null) return tooMany(blocked)
+
   const { code } = await params
   const roomCode = code.trim().toUpperCase()
 
@@ -18,6 +37,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
     },
   })
   if (!auction) {
+    rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
     return Response.json({ error: 'Room not found. Check the code and try again.' }, { status: 404 })
   }
 
@@ -54,6 +74,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       managerUserId: t.managerUserId,
     })),
     myRole,
+    allowOpenClaim: auction.allowOpenClaim,
   }
 
   return Response.json(body)

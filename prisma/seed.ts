@@ -119,6 +119,7 @@ async function main() {
     data: {
       tournamentId: cricket.id,
       roomCode: 'BD26-DEMO',
+      allowOpenClaim: true, // demo rooms: any logged-in manager can claim a free team
       status: 'READY',
       bidTimerSeconds: 20,
       goingIntervalSeconds: 8,
@@ -179,6 +180,7 @@ async function main() {
     data: {
       tournamentId: football.id,
       roomCode: 'BD26-FB01',
+      allowOpenClaim: true,
       status: 'READY',
       bidTimerSeconds: 15,
       goingIntervalSeconds: 6,

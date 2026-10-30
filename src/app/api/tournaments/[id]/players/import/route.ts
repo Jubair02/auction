@@ -1,10 +1,11 @@
-import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { parseCsvObjects } from '@/lib/csv'
 import { DEFAULT_CATEGORY_BASE_PRICES } from '@/lib/types'
 import {
   coercePositiveInt,
+  insertPlayersNumbered,
   loadTournamentForOwner,
+  PLAYER_NUMBER_CONFLICT,
   normalizeCategory,
   readJson,
   requireSession,
@@ -118,17 +119,10 @@ export async function POST(req: Request, { params }: RouteParams) {
     })
   })
 
-  const maxAgg = await db.player.aggregate({
-    where: { tournamentId: id },
-    _max: { playerNumber: true },
-  })
-  let nextNumber = (maxAgg._max.playerNumber ?? 0) + 1
-
-  for (const p of valid) {
-    await db.player.create({
-      data: { ...p, tournamentId: id, playerNumber: nextNumber, status: 'AVAILABLE' },
-    })
-    nextNumber++
+  if (valid.length > 0) {
+    // All valid rows land together or not at all — no half-imported sheet.
+    const inserted = await insertPlayersNumbered(id, valid)
+    if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)
   }
 
   return Response.json({ created: valid.length, errors })

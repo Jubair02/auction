@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import {
+  auctionInProgress,
   coerceInt,
   coercePositiveInt,
   loadTeamForOwner,
@@ -27,6 +28,20 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)
+
+  // Mid-auction the engine has already validated bids against the current
+  // purse and squad limits: only loosening them (more budget, more slots) is safe.
+  if (await auctionInProgress(team.tournamentId)) {
+    const lowersBudget = body.budget !== undefined && (coercePositiveInt(body.budget) ?? 0) < team.budget
+    const lowersMax = body.maxSquad !== undefined && (coercePositiveInt(body.maxSquad) ?? 0) < team.maxSquad
+    const changesMin = body.minSquad !== undefined && coerceInt(body.minSquad) !== team.minSquad
+    if (lowersBudget || lowersMax || changesMin) {
+      return jsonError(
+        'While the auction is live or paused, budgets and squad caps can only be raised, and the minimum squad cannot change',
+        409,
+      )
+    }
+  }
 
   const data: {
     name?: string
@@ -131,7 +146,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   return Response.json({ team: serializeTeam(updated) })
 }
 
-// DELETE /api/teams/:id — blocked when the team has sold players
+// DELETE /api/teams/:id — blocked mid-auction, or when the team has bought players or bid
 export async function DELETE(_req: Request, { params }: RouteParams) {
   const { id } = await params
 
@@ -142,9 +157,19 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
   const loaded = await loadTeamForOwner(id, user)
   if ('response' in loaded) return loaded.response
 
+  if (await auctionInProgress(loaded.team.tournamentId)) {
+    return jsonError('Teams cannot be deleted while the auction is live or paused', 409)
+  }
+
   const soldCount = await db.player.count({ where: { soldToTeamId: id, status: 'SOLD' } })
   if (soldCount > 0) {
     return jsonError('Cannot delete a team that has bought players', 409)
+  }
+
+  // Bids cascade with the team — deleting it would erase part of the bid audit trail.
+  const bidCount = await db.bid.count({ where: { teamId: id } })
+  if (bidCount > 0) {
+    return jsonError('Cannot delete a team that has placed bids — its bid history is part of the auction record', 409)
   }
 
   await db.team.delete({ where: { id } })

@@ -10,42 +10,69 @@ datasource db {
 // NOTE: status/role fields are plain strings (kept from the original SQLite schema) — not DB enums.
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  phone        String?
-  passwordHash String
-  role         String   @default("ORGANIZER") // ADMIN | ORGANIZER | MANAGER
-  status       String   @default("ACTIVE") // ACTIVE | BLOCKED
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  phone          String?
+  passwordHash   String
+  role           String   @default("ORGANIZER") // ADMIN | ORGANIZER | MANAGER
+  status         String   @default("ACTIVE") // ACTIVE | BLOCKED
+  // Embedded in every session cookie; bumping it (e.g. on password reset)
+  // invalidates all of the user's existing sessions at once.
+  sessionVersion Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  tournaments  Tournament[]
-  managedTeams Team[]
+  tournaments         Tournament[]
+  managedTeams        Team[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+// Single-use password reset links. Only the SHA-256 of the token is stored,
+// so a database leak cannot be turned into account takeovers.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Tournament {
-  id             String    @id @default(cuid())
-  name           String
-  sport          String    @default("CRICKET") // CRICKET | FOOTBALL
-  tournamentType String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
-  description    String?
-  logoUrl        String?
-  bannerUrl      String?
-  location       String?
-  startDate      DateTime?
-  auctionAt      DateTime?
-  auctionMode    String    @default("CATEGORY") // CATEGORY | NORMAL
-  basePrice      Int       @default(10000) // used in NORMAL mode
-  status         String    @default("DRAFT") // DRAFT | READY | LIVE | COMPLETED
-  organizerId    String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  name             String
+  sport            String    @default("CRICKET") // CRICKET | FOOTBALL
+  tournamentType   String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
+  description      String?
+  logoUrl          String?
+  bannerUrl        String?
+  location         String?
+  startDate        DateTime?
+  auctionAt        DateTime?
+  auctionMode      String    @default("CATEGORY") // CATEGORY | NORMAL
+  basePrice        Int       @default(10000) // used in NORMAL mode
+  status           String    @default("DRAFT") // DRAFT | READY | LIVE | COMPLETED
+  // Public self-registration link (#/register-player/<code>). The code is
+  // random, not the tournament id, so it can be rotated if it leaks.
+  registrationCode String?   @unique
+  registrationOpen Boolean   @default(false)
+  organizerId      String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  organizer User        @relation(fields: [organizerId], references: [id])
-  players   Player[]
-  teams     Team[]
-  auction   Auction?
+  organizer     User                 @relation(fields: [organizerId], references: [id])
+  players       Player[]
+  teams         Team[]
+  auction       Auction?
+  registrations PlayerRegistration[]
+
+  // Postgres does not index foreign keys on its own.
+  @@index([organizerId])
 }
 
 model Player {
@@ -70,44 +97,58 @@ model Player {
 
   tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   soldToTeam Team?      @relation("soldPlayers", fields: [soldToTeamId], references: [id])
+
+  // Two imports racing for the next number must collide, not duplicate "#12".
+  @@unique([tournamentId, playerNumber])
+  @@index([tournamentId, status])
+  @@index([soldToTeamId])
 }
 
 model Team {
-  id            String  @id @default(cuid())
-  tournamentId  String
-  name          String
-  logoUrl       String?
-  color         String? // hex accent, e.g. #0F766E
-  captainName   String?
-  managerUserId String?
-  budget        Int     @default(1000000)
-  maxSquad      Int     @default(14)
-  minSquad      Int     @default(9)
-  spent         Int     @default(0)
+  id              String    @id @default(cuid())
+  tournamentId    String
+  name            String
+  logoUrl         String?
+  color           String? // hex accent, e.g. #0F766E
+  captainName     String?
+  managerUserId   String?
+  budget          Int       @default(1000000)
+  maxSquad        Int       @default(14)
+  // Manager invite link (#/invite/<token>): SHA-256 of the token only.
+  inviteTokenHash String?   @unique
+  inviteExpiresAt DateTime?
+  minSquad        Int       @default(9)
+  spent           Int       @default(0)
 
-  tournament Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  manager    User?             @relation(fields: [managerUserId], references: [id])
-  players    Player[]          @relation("soldPlayers")
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  manager    User?      @relation(fields: [managerUserId], references: [id])
+  players    Player[]   @relation("soldPlayers")
   bids       Bid[]
+
+  @@index([tournamentId])
+  @@index([managerUserId])
 }
 
 model Auction {
-  id                   String   @id @default(cuid())
-  tournamentId         String   @unique
-  roomCode             String   @unique
-  status               String   @default("READY") // READY | LIVE | PAUSED | ENDED
-  bidTimerSeconds      Int      @default(20)
-  goingIntervalSeconds Int      @default(8)
-  minIncrement         Int      @default(5000)
-  currentCategory      String?
-  currentPlayerId      String?
-  currentBidAmount     Int?
-  currentBidTeamId     String?
-  bidCount             Int      @default(0)
+  id                      String   @id @default(cuid())
+  tournamentId            String   @unique
+  roomCode                String   @unique
+  status                  String   @default("READY") // READY | LIVE | PAUSED | ENDED
+  bidTimerSeconds         Int      @default(20)
+  goingIntervalSeconds    Int      @default(8)
+  minIncrement            Int      @default(5000)
+  currentCategory         String?
+  currentPlayerId         String?
+  currentBidAmount        Int?
+  currentBidTeamId        String?
+  bidCount                Int      @default(0)
   // Re-auction policy. Default: the team that lost the player in a re-auction
   // may bid for them again. Organizers can switch this off per auction.
-  allowPreviousOwnerRebid Boolean @default(true)
-  createdAt            DateTime @default(now())
+  allowPreviousOwnerRebid Boolean  @default(true)
+  // false = a team can only be bid for by the manager the organizer linked or
+  // invited; true = any logged-in manager may claim an unassigned team in the room.
+  allowOpenClaim          Boolean  @default(false)
+  createdAt               DateTime @default(now())
 
   tournament Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   bids       Bid[]
@@ -130,6 +171,7 @@ model Bid {
 
   @@index([auctionId, playerId])
   @@index([auctionId, playerId, cycle])
+  @@index([teamId])
 }
 
 // Append-only audit trail for money- and ownership-moving events.
@@ -176,4 +218,41 @@ model RoomParticipant {
 model Setting {
   key   String @id
   value String
+}
+
+// A player's self-registration through the public link. Kept apart from
+// Player so nothing pending can ever reach the live auction pool; approving
+// one creates the real Player row.
+model PlayerRegistration {
+  id           String   @id @default(cuid())
+  tournamentId String
+  name         String
+  phone        String
+  role         String
+  previousTeam String?
+  photoUrl     String?
+  status       String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  playerId     String? // set on approval
+  createdAt    DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId, status])
+}
+
+// Uploaded images (player photos, team/tournament logos, banners), re-encoded
+// to WebP by sharp. Stored in Postgres so they are covered by the same
+// backups as everything else — fine at this scale (tens of KB each).
+model Upload {
+  id         String   @id @default(cuid())
+  uploaderId String? // null for anonymous self-registration photos
+  kind       String // PHOTO | LOGO | BANNER
+  mime       String
+  data       Bytes
+  width      Int
+  height     Int
+  size       Int
+  createdAt  DateTime @default(now())
+
+  @@index([uploaderId])
 }

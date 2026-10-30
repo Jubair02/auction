@@ -26,6 +26,84 @@ import { ActivityFeed, ParticipantsPanel } from './participants-panel'
 import { PlayerPoolPanel, SoldFeed } from './player-pool-panel'
 import { SquadPanel } from './squad-panel'
 import { JoinCard } from './join-card'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    unreachable: 'Could not reach the room. Check your connection and try again.',
+    roomNotFound: 'Room not found',
+    checkCode: 'Check the code and try again.',
+    anotherCode: 'Enter another code',
+    home: 'Home',
+    couldNotJoin: 'Could not join the live room',
+    retry: 'Retry',
+    refreshSeat: 'Refresh seat',
+    switchSeat: 'Switch seat',
+    connectingFloor: 'Connecting to the auction floor…',
+    watchingNote: 'You’re watching — only team managers can bid.',
+    goBack: 'Go back',
+    cricket: 'Cricket',
+    football: 'Football',
+    category: 'Category',
+    normal: 'Normal',
+    status: { READY: 'Ready', LIVE: 'Live', PAUSED: 'Paused', ENDED: 'Ended' },
+    role: { ORGANIZER: 'organizer', MANAGER: 'manager', VIEWER: 'viewer' },
+    leave: 'Leave',
+    live: 'Live',
+    joining: 'Joining…',
+    connecting: 'Connecting…',
+  },
+  bn: {
+    unreachable: 'রুমে পৌঁছানো যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।',
+    roomNotFound: 'রুম পাওয়া যায়নি',
+    checkCode: 'কোডটি দেখে আবার চেষ্টা করুন।',
+    anotherCode: 'অন্য কোড দিন',
+    home: 'হোম',
+    couldNotJoin: 'লাইভ রুমে যোগ দেওয়া যায়নি',
+    retry: 'আবার চেষ্টা করুন',
+    refreshSeat: 'আসন রিফ্রেশ করুন',
+    switchSeat: 'আসন বদলান',
+    connectingFloor: 'নিলামে সংযোগ হচ্ছে…',
+    watchingNote: 'আপনি দেখছেন — শুধু টিম ম্যানেজাররা বিড করতে পারবেন।',
+    goBack: 'ফিরে যান',
+    cricket: 'ক্রিকেট',
+    football: 'ফুটবল',
+    category: 'ক্যাটাগরি',
+    normal: 'সাধারণ',
+    status: { READY: 'প্রস্তুত', LIVE: 'লাইভ', PAUSED: 'বিরতি', ENDED: 'শেষ' },
+    role: { ORGANIZER: 'আয়োজক', MANAGER: 'ম্যানেজার', VIEWER: 'দর্শক' },
+    leave: 'বের হন',
+    live: 'লাইভ',
+    joining: 'যোগ দিচ্ছে…',
+    connecting: 'সংযোগ হচ্ছে…',
+  },
+} satisfies Strings<{
+  unreachable: string
+  roomNotFound: string
+  checkCode: string
+  anotherCode: string
+  home: string
+  couldNotJoin: string
+  retry: string
+  refreshSeat: string
+  switchSeat: string
+  connectingFloor: string
+  watchingNote: string
+  goBack: string
+  cricket: string
+  football: string
+  category: string
+  normal: string
+  status: Record<AuctionStatus, string>
+  role: Record<'ORGANIZER' | 'MANAGER' | 'VIEWER', string>
+  leave: string
+  live: string
+  joining: string
+  connecting: string
+}>
+
+/** fatalError marker for a network failure — rendered in the viewer's language. */
+const UNREACHABLE = '__unreachable__'
 
 type Phase = 'loading' | 'notfound' | 'join' | 'live'
 
@@ -38,6 +116,7 @@ const STATUS_CHIP: Record<AuctionStatus, string> = {
 
 /** The live auction room — resolves identity, joins the socket, renders the role layout. */
 export default function AuctionRoom({ roomCode }: { roomCode: string }) {
+  const t = useStrings(STRINGS)
   const [info, setInfo] = useState<RoomInfo | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [fatalError, setFatalError] = useState<string | null>(null)
@@ -96,10 +175,10 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         setPhase('join')
       } catch (e) {
         if (cancelled) return
-        if (e instanceof ApiError && e.status === 404) {
+        if (e instanceof ApiError && (e.status === 404 || e.status === 429)) {
           setFatalError(e.message)
         } else {
-          setFatalError('Could not reach the room. Check your connection and try again.')
+          setFatalError(UNREACHABLE)
         }
         setPhase('notfound')
       }
@@ -165,14 +244,14 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
             <ShieldAlert className="h-10 w-10 text-muted-foreground" aria-hidden />
-            <h1 className="text-lg font-bold">Room not found</h1>
-            <p className="text-sm text-muted-foreground">{fatalError ?? 'Check the code and try again.'}</p>
+            <h1 className="text-lg font-bold">{t.roomNotFound}</h1>
+            <p className="text-sm text-muted-foreground">{fatalError === UNREACHABLE ? t.unreachable : (fatalError ?? t.checkCode)}</p>
             <div className="mt-2 flex gap-2">
               <Button variant="outline" onClick={() => navigate('/join')}>
-                Enter another code
+                {t.anotherCode}
               </Button>
               <Button variant="ghost" onClick={() => navigate('/')}>
-                <ArrowLeft className="mr-1.5 h-4 w-4" /> Home
+                <ArrowLeft className="mr-1.5 h-4 w-4" /> {t.home}
               </Button>
             </div>
           </CardContent>
@@ -214,7 +293,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
   const state = sock.state
   const role = identity?.role ?? 'VIEWER'
   const myTeam: RoomTeam | undefined =
-    state && identity?.teamId ? state.teams.find((t) => t.id === identity.teamId) : undefined
+    state && identity?.teamId ? state.teams.find((team) => team.id === identity.teamId) : undefined
 
   return (
     <div className="container mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-6">
@@ -232,19 +311,19 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         <Card className="mt-4 border-rose-200">
           <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
             <WifiOff className="h-8 w-8 text-rose-500" aria-hidden />
-            <p className="font-bold">Could not join the live room</p>
+            <p className="font-bold">{t.couldNotJoin}</p>
             <p className="max-w-md text-sm text-muted-foreground">{sock.joinError}</p>
             <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
               <Button onClick={sock.rejoin}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                <RefreshCw className="mr-2 h-4 w-4" /> {t.retry}
               </Button>
               {role === 'ORGANIZER' ? (
                 <Button variant="outline" onClick={() => void refreshOrganizerSeat()}>
-                  Refresh seat
+                  {t.refreshSeat}
                 </Button>
               ) : null}
               <Button variant="outline" onClick={leaveRoom}>
-                Switch seat
+                {t.switchSeat}
               </Button>
             </div>
           </CardContent>
@@ -252,7 +331,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
       ) : !state ? (
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="h-7 w-7 animate-spin" aria-hidden />
-          <p className="text-sm font-medium">Connecting to the auction floor…</p>
+          <p className="text-sm font-medium">{t.connectingFloor}</p>
         </div>
       ) : role === 'ORGANIZER' ? (
         <OrganizerLayout state={state} sock={sock} />
@@ -330,6 +409,7 @@ function ManagerLayout({
 }
 
 function ViewerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
+  const t = useStrings(STRINGS)
   return (
     <div className="mt-4 space-y-5">
       <AuctionStage
@@ -339,7 +419,7 @@ function ViewerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
       />
       <p className="flex items-center justify-center gap-1.5 rounded-full border border-dashed bg-muted/40 px-4 py-2 text-center text-sm text-muted-foreground">
         <Eye className="h-4 w-4" aria-hidden />
-        You’re watching — only team managers can bid.
+        {t.watchingNote}
       </p>
       <div className="grid items-start gap-5 lg:grid-cols-2">
         <TeamsPanel state={state} compact />
@@ -392,6 +472,7 @@ function RoomHeader({
   joined: boolean
   onLeave?: () => void
 }) {
+  const t = useStrings(STRINGS)
   const status = liveStatus ?? info.status
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4">
@@ -401,7 +482,7 @@ function RoomHeader({
           size="icon"
           className="h-9 w-9 shrink-0"
           onClick={() => navigate(role === 'VIEWER' ? '/' : '/dashboard')}
-          aria-label="Go back"
+          aria-label={t.goBack}
         >
           <ArrowLeft className="h-4.5 w-4.5" />
         </Button>
@@ -410,15 +491,15 @@ function RoomHeader({
             <Badge variant="outline" className="font-mono text-xs font-bold tracking-[0.18em]">
               {info.roomCode}
             </Badge>
-            <Badge variant="secondary" className="text-xs">{info.sport === 'CRICKET' ? 'Cricket' : 'Football'}</Badge>
-            <Badge variant="outline" className="text-xs">{info.mode === 'CATEGORY' ? 'Category' : 'Normal'}</Badge>
+            <Badge variant="secondary" className="text-xs">{info.sport === 'CRICKET' ? t.cricket : t.football}</Badge>
+            <Badge variant="outline" className="text-xs">{info.mode === 'CATEGORY' ? t.category : t.normal}</Badge>
             <span
               className={cn(
                 'rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-widest',
                 STATUS_CHIP[status]
               )}
             >
-              {status === 'LIVE' ? 'Live' : status.charAt(0) + status.slice(1).toLowerCase()}
+              {t.status[status]}
             </span>
             {status === 'LIVE' ? (
               <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" aria-hidden />
@@ -432,12 +513,12 @@ function RoomHeader({
         <ConnectionChip connected={connected} joined={joined} />
         {identityName && role !== 'ORGANIZER' ? (
           <span className="hidden text-xs font-medium text-muted-foreground md:inline">
-            {identityName} · {role.toLowerCase()}
+            {identityName} · {t.role[role]}
           </span>
         ) : null}
         {onLeave ? (
           <Button variant="ghost" size="sm" className="h-9 text-muted-foreground hover:text-foreground" onClick={onLeave}>
-            <LogOut className="mr-1.5 h-3.5 w-3.5" /> Leave
+            <LogOut className="mr-1.5 h-3.5 w-3.5" /> {t.leave}
           </Button>
         ) : (
           <span className="hidden items-center gap-1 text-xs font-semibold text-muted-foreground md:flex">
@@ -450,6 +531,7 @@ function RoomHeader({
 }
 
 function ConnectionChip({ connected, joined }: { connected: boolean; joined: boolean }) {
+  const t = useStrings(STRINGS)
   const ok = connected && joined
   return (
     <span
@@ -460,7 +542,7 @@ function ConnectionChip({ connected, joined }: { connected: boolean; joined: boo
       role="status"
     >
       {ok ? <Wifi className="h-3 w-3" aria-hidden /> : <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
-      {ok ? 'Live' : connected ? 'Joining…' : 'Connecting…'}
+      {ok ? t.live : connected ? t.joining : t.connecting}
     </span>
   )
 }

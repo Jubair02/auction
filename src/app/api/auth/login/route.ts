@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { verifyPassword } from '@/lib/crypto'
 import { createSessionToken, setSessionCookie, jsonError } from '@/lib/auth'
 import { readJson, toSafeUser } from '../../_lib/helpers'
-import { clientKey, rateLimit, rateLimitReset } from '../../_lib/rate-limit'
+import { clientKey, rateLimit, rateLimitReset } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +37,6 @@ export async function POST(req: Request) {
   }
 
   rateLimitReset(key)
-  await setSessionCookie(createSessionToken(user.id, user.role as 'ADMIN' | 'ORGANIZER' | 'MANAGER'))
+  await setSessionCookie(createSessionToken(user.id, user.role as 'ADMIN' | 'ORGANIZER' | 'MANAGER', user.sessionVersion))
   return Response.json({ user: toSafeUser(user) })
 }

@@ -81,13 +81,30 @@ async function waitFor<T>(desc: string, fn: () => T | null | undefined, timeoutM
 async function main() {
   console.log('— resetting BD26-DEMO demo room —')
   const auction = await resetDemoRoom()
-  const team = await db.team.findFirst({ where: { tournamentId: auction.tournamentId }, orderBy: { name: 'asc' } })
-  assert(team, 'seeded team exists')
+  // Bidding seats belong to a manager account, so use the seeded manager's team.
+  const team = await db.team.findFirst({
+    where: { tournamentId: auction.tournamentId, managerUserId: { not: null } },
+    orderBy: { name: 'asc' },
+  })
+  assert(team, 'seeded team with a manager exists')
 
   // Fabricate socket tokens with the same HMAC secret the join API uses.
-  const orgToken = signToken({ auctionId: auction.id, roomCode: ROOM, role: 'ORGANIZER', name: 'Smoke Organizer' }, 600)
+  // Organizer seats are re-checked against the tournament owner on join.
+  const tournament = await db.tournament.findUnique({ where: { id: auction.tournamentId }, select: { organizerId: true } })
+  const orgToken = signToken(
+    { auctionId: auction.id, roomCode: ROOM, role: 'ORGANIZER', name: 'Smoke Organizer', userId: tournament!.organizerId },
+    600,
+  )
   const mgrToken = signToken(
-    { auctionId: auction.id, roomCode: ROOM, role: 'MANAGER', name: 'Smoke Manager', teamId: team!.id, teamName: team!.name },
+    {
+      auctionId: auction.id,
+      roomCode: ROOM,
+      role: 'MANAGER',
+      name: 'Smoke Manager',
+      teamId: team!.id,
+      teamName: team!.name,
+      userId: team!.managerUserId!,
+    },
     600,
   )
 

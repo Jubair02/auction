@@ -1,7 +1,8 @@
 // ============================================================
-// Minimal in-memory rate limiter for the auth endpoints.
-// Single-process only (the app runs as one standalone server) — it is a
-// brute-force speed bump, not a distributed quota.
+// Minimal in-memory rate limiter (auth endpoints, room lookups/joins and the
+// socket mini-service — each process keeps its own buckets). Single-process
+// only — it is a brute-force speed bump, not a distributed quota.
+// No Next.js imports: shared with the socket mini-service.
 // ============================================================
 
 interface Bucket {
@@ -13,9 +14,26 @@ const buckets = new Map<string, Bucket>()
 
 /** Best-effort client identity: the first proxy-forwarded address, else the peer. */
 export function clientKey(req: Request, scope: string): string {
-  const forwarded = req.headers.get('x-forwarded-for') ?? ''
-  const ip = forwarded.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown'
+  return headerClientKey((name) => req.headers.get(name) ?? undefined, scope)
+}
+
+/** Same as clientKey, for callers holding raw headers (socket.io handshakes). */
+export function headerClientKey(
+  getHeader: (name: string) => string | string[] | undefined,
+  scope: string,
+  peer?: string,
+): string {
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
+  const forwarded = first(getHeader('x-forwarded-for')) ?? ''
+  const ip = forwarded.split(',')[0]?.trim() || first(getHeader('x-real-ip')) || peer || 'unknown'
   return `${scope}:${ip}`
+}
+
+/** Seconds to wait if the bucket is already exhausted — without counting this call. */
+export function rateLimitBlocked(key: string, limit: number): number | null {
+  const bucket = buckets.get(key)
+  if (!bucket || bucket.resetAt <= Date.now() || bucket.count < limit) return null
+  return Math.ceil((bucket.resetAt - Date.now()) / 1000)
 }
 
 /**

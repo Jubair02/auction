@@ -6,6 +6,30 @@ import { Gavel, UserX } from 'lucide-react'
 import type { RoomState } from '@/lib/types'
 import { formatBDT } from '@/lib/format'
 import { TeamAvatar } from '@/components/shared/avatars'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    sold: 'SOLD!',
+    unsold: 'UNSOLD',
+    boughtByPre: 'bought by ',
+    boughtByPost: '',
+    noBids: (n: number) => `No bids for Player #${n} — the house moves on`,
+  },
+  bn: {
+    sold: 'বিক্রি!',
+    unsold: 'অবিক্রিত',
+    boughtByPre: '',
+    boughtByPost: ' কিনে নিয়েছে',
+    noBids: (n: number) => `খেলোয়াড় #${n}-এর জন্য কোনো বিড আসেনি — নিলাম এগিয়ে চলছে`,
+  },
+} satisfies Strings<{
+  sold: string
+  unsold: string
+  boughtByPre: string
+  boughtByPost: string
+  noBids: (n: number) => string
+}>
 
 interface ResultOverlayProps {
   lastResult: RoomState['lastResult']
@@ -16,14 +40,15 @@ interface ResultOverlayProps {
 
 /** SOLD / UNSOLD moment — shows for ~5s or until the next player steps onto the block. */
 export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible = false }: ResultOverlayProps) {
+  const t = useStrings(STRINGS)
   const [dismissedKey, setDismissedKey] = useState<string | null>(null)
   const resultKey = lastResult?.at ?? null
 
   // Auto-dismiss after 5s (only when the parent does not control visibility).
   useEffect(() => {
     if (forceVisible || !resultKey) return
-    const t = setTimeout(() => setDismissedKey(resultKey), 5000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setDismissedKey(resultKey), 5000)
+    return () => clearTimeout(timer)
   }, [resultKey, forceVisible])
 
   const visible = !!lastResult && !currentPlayerOnBlock && (forceVisible || dismissedKey !== resultKey)
@@ -57,7 +82,7 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
               }
             >
               {sold ? <Gavel className="h-5 w-5" aria-hidden /> : <UserX className="h-5 w-5" aria-hidden />}
-              {sold ? 'SOLD!' : 'UNSOLD'}
+              {sold ? t.sold : t.unsold}
             </div>
             {sold ? (
               <>
@@ -70,7 +95,7 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
                   <div className="text-left">
                     <p className="text-xl font-extrabold sm:text-2xl">{lastResult.playerName}</p>
                     <p className="text-sm text-muted-foreground">
-                      bought by <span className="font-semibold text-foreground">{lastResult.teamName}</span>
+                      {t.boughtByPre}<span className="font-semibold text-foreground">{lastResult.teamName}</span>{t.boughtByPost}
                     </p>
                   </div>
                 </div>
@@ -82,7 +107,7 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
               <>
                 <p className="text-xl font-extrabold sm:text-2xl">{lastResult.playerName}</p>
                 <p className="text-sm text-muted-foreground">
-                  No bids for Player #{lastResult.playerNumber} — the house moves on
+                  {t.noBids(lastResult.playerNumber)}
                 </p>
               </>
             )}

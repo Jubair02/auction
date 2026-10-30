@@ -46,6 +46,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { ImageUpload } from '@/components/shared/image-upload'
 import { PlayerAvatar } from '@/components/shared/avatars'
 import { PlayerStatusBadge } from '@/components/shared/status-badges'
 import { apiDelete, apiDownload, apiPatch, apiPost, ApiError } from '@/lib/api'
@@ -74,6 +75,7 @@ interface PlayerFormState {
   category: string
   basePrice: string
   previousTeam: string
+  photoUrl: string | null
 }
 
 function emptyForm(mode: AuctionMode, basePrice: number): PlayerFormState {
@@ -84,6 +86,7 @@ function emptyForm(mode: AuctionMode, basePrice: number): PlayerFormState {
     category: mode === 'CATEGORY' ? 'A' : '',
     basePrice: String(mode === 'CATEGORY' ? DEFAULT_CATEGORY_BASE_PRICES.A : basePrice || 5000),
     previousTeam: '',
+    photoUrl: null,
   }
 }
 
@@ -156,6 +159,7 @@ export function PlayersTab({
             category: auctionMode === 'CATEGORY' ? form.category : undefined,
             basePrice: price,
             previousTeam: form.previousTeam.trim() || undefined,
+            photoUrl: form.photoUrl ?? undefined,
           },
         ],
       })
@@ -179,6 +183,7 @@ export function PlayersTab({
       category: p.category ?? '',
       basePrice: String(p.basePrice),
       previousTeam: p.previousTeam ?? '',
+      photoUrl: p.photoUrl,
     })
   }
 
@@ -201,6 +206,7 @@ export function PlayersTab({
         phone: editForm.phone.trim() || null,
         role: editForm.role,
         previousTeam: editForm.previousTeam.trim() || null,
+        photoUrl: editForm.photoUrl,
         ...(sold
           ? {}
           : {
@@ -578,6 +584,14 @@ function PlayerFormFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
+      <ImageUpload
+        className="sm:col-span-2"
+        label="Photo (optional)"
+        kind="PHOTO"
+        value={form.photoUrl}
+        onChange={(url) => set({ photoUrl: url })}
+      />
+
       <div className="space-y-1.5 sm:col-span-2">
         <Label htmlFor="p-name">
           Name <span className="text-rose-600">*</span>

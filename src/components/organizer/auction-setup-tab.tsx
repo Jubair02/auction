@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertTriangle, CheckCircle2, ExternalLink, Gavel, History, Info, Loader2, MessageCircle, Trophy } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ExternalLink, Gavel, History, Info, Loader2, MessageCircle, MonitorPlay, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -32,6 +33,7 @@ interface SettingsState {
   goingIntervalSeconds: string
   minIncrement: string
   allowPreviousOwnerRebid: boolean
+  allowOpenClaim: boolean
 }
 
 export function AuctionSetupTab({
@@ -60,12 +62,14 @@ export function AuctionSetupTab({
           goingIntervalSeconds: String(auction.goingIntervalSeconds),
           minIncrement: String(auction.minIncrement),
           allowPreviousOwnerRebid: auction.allowPreviousOwnerRebid !== false,
+          allowOpenClaim: auction.allowOpenClaim === true,
         }
       : {
           bidTimerSeconds: '20',
           goingIntervalSeconds: '8',
           minIncrement: '5000',
           allowPreviousOwnerRebid: true,
+          allowOpenClaim: false,
         },
   )
   const [saving, setSaving] = useState(false)
@@ -80,6 +84,7 @@ export function AuctionSetupTab({
         goingIntervalSeconds: parseInt(settings.goingIntervalSeconds, 10),
         minIncrement: parseInt(settings.minIncrement, 10),
         allowPreviousOwnerRebid: settings.allowPreviousOwnerRebid,
+        allowOpenClaim: settings.allowOpenClaim,
       })
       toast.success('Auction room created — share the room code with your managers!')
       await refetch()
@@ -96,6 +101,7 @@ export function AuctionSetupTab({
       const locked = !!auction && auction.status !== 'READY'
       await apiPatch(`/api/tournaments/${tournamentId}/auction`, {
         allowPreviousOwnerRebid: settings.allowPreviousOwnerRebid,
+        allowOpenClaim: settings.allowOpenClaim,
         ...(locked
           ? {}
           : {
@@ -115,7 +121,7 @@ export function AuctionSetupTab({
 
   const copyInvite = () => {
     if (!auction) return
-    const joinUrl = `${window.location.origin}/#/room/${auction.roomCode}`
+    const joinUrl = `${window.location.origin}/room/${auction.roomCode}`
     const msg = `NeelamGhor Live Auction — ${tournamentName}. Room Code: ${auction.roomCode}. Join: ${joinUrl}`
     void navigator.clipboard
       .writeText(msg)
@@ -188,7 +194,7 @@ export function AuctionSetupTab({
   }
 
   /* ---------------- Auction exists ---------------- */
-  const joinUrl = `${window.location.origin}/#/room/${auction.roomCode}`
+  const joinUrl = `${window.location.origin}/room/${auction.roomCode}`
   const waHref = `https://wa.me/?text=${encodeURIComponent(
     `NeelamGhor Live Auction — ${tournamentName}. Room Code: ${auction.roomCode}. Join: ${joinUrl}`,
   )}`
@@ -251,6 +257,8 @@ export function AuctionSetupTab({
 
       <ReadinessCheck players={players} teams={teams} auctionMode={auctionMode} />
 
+      <StreamOverlayCard roomCode={auction.roomCode} />
+
       {/* Settings */}
       <Card>
         <CardContent className="space-y-5 p-6">
@@ -265,7 +273,7 @@ export function AuctionSetupTab({
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <p>
                 Timings are locked while the auction is <strong>{auction.status}</strong> — they can only be changed
-                while the room is READY. The re-auction rule below can still be changed at any time.
+                while the room is READY. The re-auction and team-claiming rules below can still be changed at any time.
               </p>
             </div>
           ) : null}
@@ -454,6 +462,72 @@ function SettingsForm({
           />
         </div>
       </div>
+
+      <div className="sm:col-span-3">
+        <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 p-3">
+          <div className="min-w-0">
+            <Label htmlFor="open-claim-policy" className="text-sm font-semibold">
+              Let any manager claim an unassigned team
+            </Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {settings.allowOpenClaim
+                ? 'On — any logged-in team manager with the room code can pick a team nobody manages yet. Convenient for casual events, but a stranger could take a team.'
+                : 'Off (recommended) — only the manager you linked by email or who accepted that team’s invite link can bid for it.'}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Can be changed at any time, including mid-auction.</p>
+          </div>
+          <Switch
+            id="open-claim-policy"
+            checked={settings.allowOpenClaim}
+            onCheckedChange={(v) => set({ allowOpenClaim: v })}
+            aria-label="Let any team manager claim an unassigned team"
+          />
+        </div>
+      </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/** Links for the OBS browser-source overlay used on Facebook / YouTube Live. */
+function StreamOverlayCard({ roomCode }: { roomCode: string }) {
+  const base = `${window.location.origin}/overlay/${roomCode}`
+  const variants = [
+    { label: 'Transparent (OBS browser source)', url: base },
+    { label: 'Green screen (chroma key)', url: `${base}/green` },
+  ]
+  const copy = (url: string) =>
+    void navigator.clipboard
+      .writeText(url)
+      .then(() => toast.success('Overlay link copied'))
+      .catch(() => toast.error('Could not copy — please copy manually'))
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-6">
+        <div>
+          <h3 className="flex items-center gap-1.5 font-bold">
+            <MonitorPlay className="h-4 w-4 text-primary" aria-hidden /> Live stream overlay
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Streaming the auction on Facebook or YouTube Live? In OBS add a <strong>Browser</strong> source at 1920×1080
+            with one of these links. It shows the player on the block, the live bid, the countdown and every SOLD call —
+            no login needed, and it updates by itself.
+          </p>
+        </div>
+        {variants.map((v) => (
+          <div key={v.url} className="space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground">{v.label}</p>
+            <div className="flex gap-2">
+              <Input readOnly value={v.url} onFocus={(e) => e.currentTarget.select()} className="h-10 font-mono text-xs" />
+              <Button variant="outline" className="h-10 shrink-0" onClick={() => copy(v.url)}>
+                Copy
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }

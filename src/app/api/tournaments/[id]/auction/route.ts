@@ -45,6 +45,8 @@ export async function POST(req: Request, { params }: RouteParams) {
   const goingIntervalSeconds = clampInt(body.goingIntervalSeconds, GOING.min, GOING.max, GOING.fallback)
   const minIncrement = clampInt(body.minIncrement, INCREMENT.min, INCREMENT.max, INCREMENT.fallback)
   const allowPreviousOwnerRebid = body.allowPreviousOwnerRebid === false ? false : true
+  // Secure default: teams go to linked/invited managers only.
+  const allowOpenClaim = body.allowOpenClaim === true
 
   let auction: Prisma.AuctionGetPayload<object> | null = null
   let lastError: unknown = null
@@ -59,6 +61,7 @@ export async function POST(req: Request, { params }: RouteParams) {
           goingIntervalSeconds,
           minIncrement,
           allowPreviousOwnerRebid,
+          allowOpenClaim,
         },
       })
       break
@@ -107,7 +110,16 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     goingIntervalSeconds?: number
     minIncrement?: number
     allowPreviousOwnerRebid?: boolean
+    allowOpenClaim?: boolean
   } = {}
+
+  // Who may claim an unassigned team — a seating policy, changeable any time.
+  if (body.allowOpenClaim !== undefined) {
+    if (typeof body.allowOpenClaim !== 'boolean') {
+      return jsonError('allowOpenClaim must be true or false', 400)
+    }
+    data.allowOpenClaim = body.allowOpenClaim
+  }
 
   // The re-auction lockout is a policy, not a timing knob — organizers need to
   // be able to flip it once an auction is already running. It takes effect from

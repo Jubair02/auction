@@ -6,7 +6,8 @@ import { Gavel, LayoutDashboard, Loader2, LogIn, LogOut, Megaphone, ShieldCheck,
 import { Toaster as SonnerToaster } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { apiGet } from '@/lib/api'
-import { navigate, useHashRoute } from '@/lib/router'
+import { navigate, useRoute } from '@/lib/router'
+import { type Strings, useLang, useLangBootstrap, useLangStore, useStrings } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -21,6 +22,7 @@ import {
 
 import Landing from '@/components/landing'
 import AuthView from '@/components/auth-view'
+import { ForgotPasswordView, ResetPasswordView } from '@/components/password-reset'
 import OrganizerDashboard from '@/components/organizer/dashboard'
 import TournamentsList from '@/components/organizer/tournaments'
 import TournamentCreate from '@/components/organizer/tournament-create'
@@ -28,8 +30,11 @@ import TournamentDetail from '@/components/organizer/tournament-detail'
 import AuctionHistory from '@/components/organizer/auction-history'
 import AdminView from '@/components/admin/admin-view'
 import AuctionRoom from '@/components/room/auction-room'
+import StreamOverlay from '@/components/room/stream-overlay'
 import ManagerDashboard from '@/components/manager/manager-dashboard'
 import JoinRoomView from '@/components/manager/join-room'
+import AcceptInvite from '@/components/manager/accept-invite'
+import RegisterPlayer from '@/components/register-player'
 import MyTeamView from '@/components/manager/my-team'
 import ResultsView from '@/components/results/results-view'
 
@@ -102,12 +107,14 @@ function NotFound() {
 }
 
 export default function AppRoot() {
-  const { segs } = useHashRoute()
+  const { segs, fragment } = useRoute()
   const user = useAppStore((s) => s.user)
   const authLoading = useAppStore((s) => s.authLoading)
   const authChecked = useAppStore((s) => s.authChecked)
   const fetchMe = useAppStore((s) => s.fetchMe)
   const logout = useAppStore((s) => s.logout)
+  useLangBootstrap()
+  const t = useStrings(SHELL_STRINGS)
 
   useEffect(() => {
     void fetchMe()
@@ -124,6 +131,12 @@ export default function AppRoot() {
         return authLoading ? <CenterLoader /> : user ? <RedirectDashboard /> : <AuthView mode="login" />
       case head === 'register' && segs.length === 1:
         return authLoading ? <CenterLoader /> : user ? <RedirectDashboard /> : <AuthView mode="register" />
+      case head === 'forgot-password' && segs.length === 1:
+        return <ForgotPasswordView />
+      // Works signed in or out — the link must always be usable.
+      // Token in the fragment (/reset-password#<token>); the path form is kept for old links.
+      case head === 'reset-password' && !!(segs[1] || fragment):
+        return <ResetPasswordView token={segs[1] ?? fragment} />
       case head === 'dashboard' && segs.length === 1:
         return authLoading ? <CenterLoader /> : !user ? (
           <AccessPanel title="Login required" description="Please log in to open your dashboard." action={<Button onClick={() => navigate('/login')}><LogIn className="mr-2 h-4 w-4" /> Login</Button>} />
@@ -138,7 +151,7 @@ export default function AppRoot() {
         return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentsList /></RoleGate>
       case head === 'tournaments' && segs[1] === 'new':
         return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentCreate /></RoleGate>
-      // Both spellings are accepted: #/tournaments/:id/history and #/tournaments/history/:id
+      // Both spellings are accepted: /tournaments/:id/history and /tournaments/history/:id
       case head === 'tournaments' && segs[2] === 'history' && !!segs[1]:
         return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><AuctionHistory tournamentId={segs[1]} /></RoleGate>
       case head === 'tournaments' && segs[1] === 'history' && !!segs[2]:
@@ -153,6 +166,10 @@ export default function AppRoot() {
         )
       case head === 'room' && !!segs[1]:
         return <AuctionRoom roomCode={(segs[1] || '').toUpperCase()} />
+      case head === 'register-player' && segs.length === 2:
+        return <RegisterPlayer code={segs[1]} />
+      case head === 'invite' && !!(segs[1] || fragment):
+        return <AcceptInvite token={segs[1] ?? fragment} />
       case head === 'join' && segs.length === 1:
         return <JoinRoomView />
       case head === 'my-team' && segs.length === 1:
@@ -162,6 +179,11 @@ export default function AppRoot() {
       default:
         return <NotFound />
     }
+  }
+
+  // Broadcast overlay: no header, footer, toasts or auth — just the overlay.
+  if (head === 'overlay' && segs[1]) {
+    return <StreamOverlay roomCode={segs[1].toUpperCase()} green={segs[2] === 'green'} />
   }
 
   return (
@@ -183,10 +205,11 @@ export default function AppRoot() {
           </button>
 
           <nav className="flex items-center gap-1.5" aria-label="Main navigation">
+            <LangToggle />
             {user ? (
               <>
                 <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => navigate('/dashboard')}>
-                  <LayoutDashboard className="mr-1.5 h-4 w-4" /> Dashboard
+                  <LayoutDashboard className="mr-1.5 h-4 w-4" /> {t.dashboard}
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -210,17 +233,17 @@ export default function AppRoot() {
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => navigate('/dashboard')}>
-                      <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
+                      <LayoutDashboard className="mr-2 h-4 w-4" /> {t.dashboard}
                     </DropdownMenuItem>
                     {user.role === 'MANAGER' && (
                       <>
-                        <DropdownMenuItem onClick={() => navigate('/join')}>Join auction room</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => navigate('/my-team')}>My team</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate('/join')}>{t.joinRoom}</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate('/my-team')}>{t.myTeam}</DropdownMenuItem>
                       </>
                     )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => void logout()} variant="destructive">
-                      <LogOut className="mr-2 h-4 w-4" /> Log out
+                      <LogOut className="mr-2 h-4 w-4" /> {t.logout}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -228,10 +251,10 @@ export default function AppRoot() {
             ) : (
               <>
                 <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
-                  <LogIn className="mr-1.5 h-4 w-4" /> Login
+                  <LogIn className="mr-1.5 h-4 w-4" /> {t.login}
                 </Button>
                 <Button size="sm" onClick={() => navigate('/register')}>
-                  <UserPlus className="mr-1.5 h-4 w-4" /> Register
+                  <UserPlus className="mr-1.5 h-4 w-4" /> {t.register}
                 </Button>
               </>
             )}
@@ -247,13 +270,59 @@ export default function AppRoot() {
         <div className="container mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-sm text-muted-foreground sm:flex-row">
           <p className="flex items-center gap-1.5">
             <Gavel className="h-3.5 w-3.5" aria-hidden />
-            <span className="font-semibold text-foreground">NeelamGhor</span> — Live player auctions for Bangladesh
+            <span className="font-semibold text-foreground">NeelamGhor</span> — {t.tagline}
           </p>
-          <p>৳ BDT · Cricket &amp; Football · Room-code joining</p>
+          <p>{t.footerFacts}</p>
         </div>
       </footer>
 
       <SonnerToaster richColors position="top-center" closeButton />
+    </div>
+  )
+}
+
+const SHELL_STRINGS = {
+  en: {
+    dashboard: 'Dashboard',
+    joinRoom: 'Join auction room',
+    myTeam: 'My team',
+    logout: 'Log out',
+    login: 'Login',
+    register: 'Register',
+    tagline: 'Live player auctions for Bangladesh',
+    footerFacts: '৳ BDT · Cricket & Football · Room-code joining',
+  },
+  bn: {
+    dashboard: 'ড্যাশবোর্ড',
+    joinRoom: 'নিলাম রুমে যোগ দিন',
+    myTeam: 'আমার দল',
+    logout: 'লগ আউট',
+    login: 'লগইন',
+    register: 'রেজিস্টার',
+    tagline: 'বাংলাদেশের লাইভ প্লেয়ার নিলাম',
+    footerFacts: '৳ টাকা · ক্রিকেট ও ফুটবল · রুম কোড দিয়ে যোগদান',
+  },
+} satisfies Strings<Record<'dashboard' | 'joinRoom' | 'myTeam' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts', string>>
+
+/** EN / বাংলা switch in the header. */
+function LangToggle() {
+  const lang = useLang()
+  const setLang = useLangStore((s) => s.setLang)
+  return (
+    <div className="flex items-center rounded-full border p-0.5 text-xs font-bold" role="group" aria-label="Language / ভাষা">
+      {(['en', 'bn'] as const).map((l) => (
+        <button
+          key={l}
+          type="button"
+          aria-pressed={lang === l}
+          onClick={() => setLang(l)}
+          className={`min-h-7 rounded-full px-2.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+            lang === l ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {l === 'en' ? 'EN' : 'বাং'}
+        </button>
+      ))}
     </div>
   )
 }

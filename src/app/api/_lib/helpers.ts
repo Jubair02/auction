@@ -16,6 +16,7 @@ import type {
   TournamentStatus,
   TournamentSummary,
 } from '@/lib/types'
+import { Prisma } from '@prisma/client'
 import type { Auction, Player, Team, Tournament } from '@prisma/client'
 
 // ---------- Body parsing ----------
@@ -93,6 +94,42 @@ export async function loadTeamForOwner(
   }
   return { team }
 }
+
+/**
+ * True while the live engine owns this tournament's data (auction LIVE or
+ * PAUSED). Destructive REST edits then race the engine's in-memory state —
+ * e.g. deleting the team that holds the current bid wedges the sale.
+ */
+export async function auctionInProgress(tournamentId: string): Promise<boolean> {
+  const auction = await db.auction.findUnique({ where: { tournamentId }, select: { status: true } })
+  return auction?.status === 'LIVE' || auction?.status === 'PAUSED'
+}
+
+export type NewPlayerInput = Omit<Prisma.PlayerCreateManyInput, 'tournamentId' | 'playerNumber' | 'status'>
+
+/**
+ * Inserts players with sequential player numbers in ONE transaction: all or
+ * nothing, one round trip instead of one per row. Returns null when a
+ * concurrent insert took the same numbers (the unique index on
+ * tournamentId+playerNumber rejects it) — the caller should ask for a retry.
+ */
+export async function insertPlayersNumbered(tournamentId: string, rows: NewPlayerInput[]): Promise<Player[] | null> {
+  try {
+    return await db.$transaction(async (tx) => {
+      const maxAgg = await tx.player.aggregate({ where: { tournamentId }, _max: { playerNumber: true } })
+      let nextNumber = (maxAgg._max.playerNumber ?? 0) + 1
+      const created = await tx.player.createManyAndReturn({
+        data: rows.map((p) => ({ ...p, tournamentId, playerNumber: nextNumber++, status: 'AVAILABLE' })),
+      })
+      return created.sort((a, b) => a.playerNumber - b.playerNumber)
+    })
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return null
+    throw e
+  }
+}
+
+export const PLAYER_NUMBER_CONFLICT = 'Another player upload for this tournament finished at the same moment. Please try again.'
 
 // ---------- Coercion / validation ----------
 /** Strict integer coercion (number or numeric string). Returns null when not an integer. */
@@ -175,6 +212,7 @@ export function serializeAuction(a: Auction): AuctionDTO {
     currentCategory: a.currentCategory,
     bidCount: a.bidCount,
     allowPreviousOwnerRebid: a.allowPreviousOwnerRebid,
+    allowOpenClaim: a.allowOpenClaim,
   }
 }
 

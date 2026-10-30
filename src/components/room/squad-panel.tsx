@@ -7,9 +7,40 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PlayerAvatar } from '@/components/shared/avatars'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    yourSquad: 'Your squad',
+    noPlayers: 'No players yet — get bidding when the auction goes live',
+    cat: (c: string) => ` · Cat ${c}`,
+    bidLadder: 'Bid ladder',
+    currentPlayer: 'current player',
+    historyAria: 'Bid history for the current player',
+    noBids: 'No bids yet for this player',
+  },
+  bn: {
+    yourSquad: 'আপনার স্কোয়াড',
+    noPlayers: 'এখনো কোনো খেলোয়াড় নেই — নিলাম লাইভ হলেই বিড শুরু করুন',
+    cat: (c: string) => ` · ক্যাটাগরি ${c}`,
+    bidLadder: 'বিডের তালিকা',
+    currentPlayer: 'বর্তমান খেলোয়াড়',
+    historyAria: 'বর্তমান খেলোয়াড়ের বিডের ইতিহাস',
+    noBids: 'এই খেলোয়াড়ের জন্য এখনো কোনো বিড নেই',
+  },
+} satisfies Strings<{
+  yourSquad: string
+  noPlayers: string
+  cat: (c: string) => string
+  bidLadder: string
+  currentPlayer: string
+  historyAria: string
+  noBids: string
+}>
 
 /** Manager's left-column extras — their own squad + the live bid ladder for the player on the block. */
 export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTeam | undefined }) {
+  const t = useStrings(STRINGS)
   // Match on team id; fall back to the name for a socket service that has not
   // been restarted yet and is still sending the older payload shape.
   const squad = myTeam
@@ -26,7 +57,7 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
           <CardTitle className="flex items-center justify-between text-base">
             <span className="flex items-center gap-1.5">
               <Trophy className="h-4 w-4 text-amber-500" aria-hidden />
-              Your squad
+              {t.yourSquad}
             </span>
             <Badge variant="secondary" className="tabular-nums">
               {squad.length}/{myTeam?.maxSquad ?? '—'}
@@ -34,10 +65,10 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="max-h-56 space-y-1.5 overflow-y-auto pr-1" aria-label="Your squad">
+          <ul className="max-h-56 space-y-1.5 overflow-y-auto pr-1" aria-label={t.yourSquad}>
             {squad.length === 0 ? (
               <li className="py-6 text-center text-sm text-muted-foreground">
-                No players yet — get bidding when the auction goes live
+                {t.noPlayers}
               </li>
             ) : null}
             {squad.map((p) => (
@@ -47,7 +78,7 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
                   <p className="truncate text-sm font-semibold">{p.name}</p>
                   <p className="truncate text-xs text-muted-foreground">
                     {p.role}
-                    {p.category ? ` · Cat ${p.category}` : ''}
+                    {p.category ? t.cat(p.category) : ''}
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular-nums text-teal-700">{formatBDT(p.soldPrice ?? p.basePrice)}</span>
@@ -60,14 +91,14 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between text-base">
-            <span>Bid ladder</span>
-            <span className="text-xs font-normal text-muted-foreground">current player</span>
+            <span>{t.bidLadder}</span>
+            <span className="text-xs font-normal text-muted-foreground">{t.currentPlayer}</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="max-h-56 space-y-1 overflow-y-auto pr-1" aria-label="Bid history for the current player">
+          <ul className="max-h-56 space-y-1 overflow-y-auto pr-1" aria-label={t.historyAria}>
             {state.currentBidHistory.length === 0 ? (
-              <li className="py-6 text-center text-sm text-muted-foreground">No bids yet for this player</li>
+              <li className="py-6 text-center text-sm text-muted-foreground">{t.noBids}</li>
             ) : null}
             {[...state.currentBidHistory].reverse().map((b, i) => (
               <li

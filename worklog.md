@@ -6,7 +6,7 @@ Single visible Next.js route `/` (SPA with hash routing). Socket.io mini service
 ## Tech Stack
 - Next.js 16 App Router + TypeScript, Tailwind 4, shadcn/ui (New York), lucide-react, framer-motion, sonner (toasts), zustand, Prisma + SQLite
 - Live auction: socket.io mini-service `mini-services/auction-service` port 3003. Client connects with `io('/?XTransformPort=3003', { path: '/', transports: ['websocket','polling'] })`
-- Auth: httpOnly cookie `ng_session` (HMAC-signed token), passwords scrypt-hashed. Socket tokens HMAC-signed with same secret (AUCTION_SECRET, fallback `bd-auction-dev-secret-2026`).
+- Auth: httpOnly cookie `ng_session` (HMAC-signed token), passwords scrypt-hashed. Socket tokens HMAC-signed with same secret (AUCTION_SECRET — required, ≥32 chars, no fallback; see .env.example). Manager (bidding) seats require a logged-in MANAGER account that owns or claims the team.
 
 ## Canonical Contract (source of truth: `src/lib/types.ts` + this doc)
 
@@ -29,6 +29,7 @@ Single visible Next.js route `/` (SPA with hash routing). Socket.io mini service
 ### REST API (all under /api, JSON; auth via cookie; ownership checks: organizerId or ADMIN)
 - `POST /api/auth/register` {name,email,phone?,password,role: ORGANIZER|MANAGER} → {user}; sets cookie
 - `POST /api/auth/login` {email,password} → {user}; `POST /api/auth/logout`; `GET /api/auth/me` → {user|null}
+- `POST /api/auth/forgot-password` {email} → generic {message} (emails a 30-min single-use link `#/reset-password/<token>` via Resend; token stored as SHA-256); `POST /api/auth/reset-password` {token,password} → {ok} (bumps User.sessionVersion → signs out all sessions)
 - `GET /api/tournaments` → {tournaments:[{...t, playerCount, soldCount, teamCount, roomCode?, auctionStatus?}]} (own, or all if ADMIN)
 - `POST /api/tournaments` {name,sport,tournamentType?,location?,startDate?,auctionAt?,auctionMode,basePrice?,description?} → {tournament}
 - `GET /api/tournaments/:id` → {tournament: {...t, players:[], teams:[], auction?}} (owner/ADMIN; also MANAGER of a team in it may GET minimal)
@@ -254,3 +255,35 @@ Work Log:
 
 Stage Summary:
 - MVP COMPLETE and browser-verified: organizer creates tournament → players (CSV/manual) → teams → room code → live randomized auction w/ timers, bids, budgets, sold/unsold → results + CSV/print. Demo accounts: admin@neelamghor.bd/admin1234, organizer@neelamghor.bd/demo1234, manager@neelamghor.bd/demo1234. Rooms: BD26-DEMO (cricket/category), BD26-FB01 (football/normal).
+
+---
+Phase 2 (growth) — invites, overlay, uploads, self-registration, Bangla
+
+New hash routes: `#/invite/<token>` (manager accepts team invite), `#/overlay/<CODE>[/green]` (OBS overlay, no app chrome),
+`#/register-player/<code>` (public player sign-up), `#/forgot-password`, `#/reset-password/<token>`.
+
+New REST:
+- `POST /api/teams/:id/invite` (owner/ADMIN) → {token, expiresAt} — 7-day single-use link, SHA-256 stored on Team.inviteTokenHash
+- `GET /api/invites/:token` → team/tournament summary; `POST /api/invites/:token` (MANAGER session) → links team.managerUserId (replaces any previous manager)
+- `Auction.allowOpenClaim` (default false): when false, unassigned teams cannot be self-claimed from the join card — managers come via invite or organizer email link. Seeded demo rooms set it true.
+- `POST /api/uploads` multipart {file, kind: PHOTO|LOGO|BANNER[, registrationCode]} → {id, url}; images re-encoded to WebP by sharp (PHOTO 512² cover, LOGO 256² transparent contain, BANNER 1600×600), stored in Postgres `Upload`; `GET /api/uploads/:id` immutable cache
+- `GET|POST|PATCH /api/tournaments/:id/registrations` (owner/ADMIN): list / open-close-rotate link / approve|reject (approve → Player rows via insertPlayersNumbered)
+- `GET|POST /api/register/:code` (public): sign-up page info / submit (PlayerRegistration PENDING; phone de-duplicated per tournament)
+
+i18n: `src/lib/i18n.ts` — per-component typed string tables (`useStrings`), language persisted in localStorage `ng_lang`, EN/বাং toggle in header. Bangla covers shell, auth, public pages and the live room for managers/viewers; organizer console and server-generated socket messages are still English.
+
+---
+Phase 3 (scale) — delta broadcasts, real URLs, insights
+
+- Delta broadcasts: `room_state` omits `players` / `participants` when unchanged since the previous broadcast; every payload carries
+  `playersHash` / `participantsHash`; clients merge via `src/lib/room-state.ts` and re-join for a full snapshot on a fingerprint gap.
+  The join ack is always a full RoomState, and the socket joins the broadcast room before the snapshot is built.
+  `participants` now lists seats only (organizer + managers); viewers are `viewersOnline` (count of live viewer sockets).
+- Real URL paths: `src/app/[[...slug]]/page.tsx` serves the client app for every path and sets per-path link-preview metadata
+  (room code → tournament name; registration code → "Register for …"); private pages are noindex. Client router (`src/lib/router.ts`)
+  uses history.pushState; legacy `/#/…` links are rewritten on load. Reset and invite tokens travel in the fragment:
+  `/reset-password#<token>`, `/invite#<token>`.
+- Insights tab (organizer): `GET /api/tournaments/:id/analytics` — spend vs budget per team, avg price per category,
+  most contested players (full bid history), biggest premiums over base price, sell-through.
+- Not done on purpose: multi-instance auction engine (needs room ownership/forwarding across instances via Redis) and Redis-backed
+  rate limits — deferred until a single instance is measured to be the bottleneck.

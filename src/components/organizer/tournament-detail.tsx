@@ -50,6 +50,8 @@ import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { PlayersTab } from '@/components/organizer/players-tab'
 import { TeamsTab } from '@/components/organizer/teams-tab'
 import { AuctionSetupTab } from '@/components/organizer/auction-setup-tab'
+import { RegistrationsTab } from '@/components/organizer/registrations-tab'
+import { InsightsTab } from '@/components/organizer/insights-tab'
 import { TournamentEditDialog } from '@/components/organizer/tournament-edit-dialog'
 import { apiDelete, apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
@@ -241,6 +243,8 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
           <TabsTrigger value="teams" className="min-h-11">
             Teams <span className="ml-1 text-xs text-muted-foreground">({teams.length})</span>
           </TabsTrigger>
+          <TabsTrigger value="registrations" className="min-h-11">Registrations</TabsTrigger>
+          <TabsTrigger value="insights" className="min-h-11">Insights</TabsTrigger>
           <TabsTrigger value="auction" className="min-h-11">
             Auction Setup
             {auction ? (
@@ -344,6 +348,22 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
         {/* ---------------- TEAMS ---------------- */}
         <TabsContent value="teams" className="mt-4">
           <TeamsTab tournamentId={tournamentId} teams={teams} refetch={load} loading={loading} />
+        </TabsContent>
+
+        {/* ---------------- REGISTRATIONS ---------------- */}
+        <TabsContent value="registrations" className="mt-4">
+          <RegistrationsTab
+            tournamentId={tournamentId}
+            tournamentName={t.name}
+            auctionMode={t.auctionMode}
+            basePrice={t.basePrice}
+            onPlayersChanged={load}
+          />
+        </TabsContent>
+
+        {/* ---------------- INSIGHTS ---------------- */}
+        <TabsContent value="insights" className="mt-4">
+          {tab === 'insights' ? <InsightsTab tournamentId={tournamentId} /> : null}
         </TabsContent>
 
         {/* ---------------- AUCTION SETUP ---------------- */}

@@ -109,6 +109,8 @@ export interface AuctionDTO {
   bidCount: number
   /** false = the team that lost a re-auctioned player may not bid for them again. */
   allowPreviousOwnerRebid: boolean
+  /** true = any logged-in manager may claim an unassigned team in the room. */
+  allowOpenClaim: boolean
 }
 
 export interface TournamentDetail {
@@ -145,6 +147,8 @@ export interface RoomInfo {
   status: AuctionStatus
   teams: RoomTeamInfo[]
   myRole: 'organizer' | null
+  /** true = any logged-in manager may claim an unassigned team from the join card. */
+  allowOpenClaim: boolean
 }
 
 export interface JoinResult {
@@ -164,7 +168,7 @@ export interface RoomPlayer {
   basePrice: number
   photoUrl: string | null
   previousTeam: string | null
-  phone: string | null
+  // No phone: room state is broadcast to anonymous viewers.
 }
 
 export interface RoomTeam {
@@ -219,8 +223,14 @@ export interface RoomState {
   serverTime: number
   pausedRemainingMs: number | null
   teams: RoomTeam[]
+  /** Seats only — organizer and managers. Viewers are counted in viewersOnline. */
   participants: { name: string; role: RoomRole; teamId: string | null; online: boolean }[]
+  /** Fingerprint of `participants`; broadcasts omit the list when it is unchanged. */
+  participantsHash: string
+  viewersOnline: number
   players: RoomPlayerLite[] // full pool with statuses (for organizer selection / re-auction / pools)
+  /** Fingerprint of `players`; broadcasts omit the pool when it is unchanged. */
+  playersHash: string
   pool: {
     total: number
     available: number
@@ -248,6 +258,14 @@ export interface RoomState {
   /** false = the team that lost a re-auctioned player may not bid for them again. */
   allowPreviousOwnerRebid?: boolean
 }
+
+/**
+ * What `room_state` broadcasts carry: the full state, except that `players`
+ * and `participants` are left out when unchanged (see the *Hash fields).
+ * The join ack always carries the full RoomState.
+ */
+export type RoomStateWire = Omit<RoomState, 'players' | 'participants'> &
+  Partial<Pick<RoomState, 'players' | 'participants'>>
 
 export interface RoomNotification {
   id: string

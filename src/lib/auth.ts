@@ -1,7 +1,7 @@
 // Session auth for Next.js API routes (httpOnly HMAC cookie)
 import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
-import { signToken, verifyToken } from '@/lib/crypto'
+import { getAuctionSecret, signToken, verifyToken } from '@/lib/crypto'
 import type { SafeUser, UserRole } from '@/lib/types'
 
 export const SESSION_COOKIE = 'ng_session'
@@ -14,8 +14,9 @@ export interface SessionUser {
   role: UserRole
 }
 
-export function createSessionToken(userId: string, role: UserRole): string {
-  return signToken({ sub: userId, role }, SESSION_TTL)
+/** `sessionVersion` is the user's current value — bumping it in the DB revokes this token. */
+export function createSessionToken(userId: string, role: UserRole, sessionVersion: number): string {
+  return signToken({ sub: userId, role, sv: sessionVersion }, SESSION_TTL)
 }
 
 export async function setSessionCookie(token: string) {
@@ -35,14 +36,19 @@ export async function clearSessionCookie() {
 }
 
 export async function getSessionUser(): Promise<SafeUser | null> {
+  // A missing AUCTION_SECRET must surface as a server error, not be swallowed
+  // below and silently log everyone out.
+  getAuctionSecret()
   try {
     const store = await cookies()
     const token = store.get(SESSION_COOKIE)?.value
     if (!token) return null
-    const payload = verifyToken<{ sub: string; role: UserRole }>(token)
+    const payload = verifyToken<{ sub: string; role: UserRole; sv?: number }>(token)
     if (!payload?.sub) return null
     const user = await db.user.findUnique({ where: { id: payload.sub } })
     if (!user || user.status === 'BLOCKED') return null
+    // Cookies issued before session versioning carry no `sv` and count as 0.
+    if ((payload.sv ?? 0) !== user.sessionVersion) return null
     return {
       id: user.id,
       name: user.name,

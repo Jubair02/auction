@@ -13,6 +13,109 @@ import { Card, CardContent } from '@/components/ui/card'
 import { PlayerAvatar, TeamAvatar } from '@/components/shared/avatars'
 import { CountdownRing } from './countdown-ring'
 import { ResultOverlay } from './result-overlay'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    auctionComplete: 'Auction complete',
+    completeBody: 'The gavel has fallen for the last time. See the final squads and spending in the results report.',
+    viewResults: 'View results',
+    waitingNext: 'Waiting for the organizer to bring the next player to the block…',
+    lastSold: (player: string, team: string | null | undefined, price: string) => `Last: ${player} sold to ${team} for ${price}`,
+    lastUnsold: (player: string) => `Last: ${player} went unsold`,
+    paused: 'Paused',
+    onTheBlock: 'On the block',
+    playerNo: (n: string) => `PLAYER #${n}`,
+    cat: (c: string) => `Cat ${c}`,
+    base: (price: string) => `Base ${price}`,
+    ex: (team: string) => `ex ${team}`,
+    timerFrozen: 'Timer frozen by the organizer',
+    stage1: 'Going once — final call for new bids',
+    stage2: 'Going twice — last chance',
+    biddingOpen: 'Bidding open',
+    goingOnce: 'Going once',
+    goingTwice: 'Going twice',
+    currentBid: 'Current bid',
+    highestBidder: 'highest bidder',
+    awaitingFirst: 'Awaiting first bid',
+    firstBidAt: (price: string) => `First bid at ${price} or more`,
+    roomOpen: 'Auction room is open',
+    waitingOrganizer: (name: string) => `${name} — waiting for the organizer to open the bidding.`,
+    sellingCategory: (c: string) => `Selling category ${c} first.`,
+    allInPool: 'All available players are in the pool.',
+    readyStats: (online: number, teams: number, players: number) =>
+      `${online} online · ${teams} teams · ${players} players`,
+    categoryMode: 'Category mode',
+    normalMode: 'Normal mode',
+    minIncrement: (amount: string) => `min increment ${amount}`,
+  },
+  bn: {
+    auctionComplete: 'নিলাম শেষ',
+    completeBody: 'শেষবারের মতো হাতুড়ি পড়েছে। ফলাফল রিপোর্টে চূড়ান্ত স্কোয়াড আর খরচ দেখুন।',
+    viewResults: 'ফলাফল দেখুন',
+    waitingNext: 'আয়োজক পরের খেলোয়াড়কে নিলামে তুলবেন, অপেক্ষা করুন…',
+    lastSold: (player: string, team: string | null | undefined, price: string) => `শেষ: ${player}, ${price}-এ ${team}-এর কাছে বিক্রি`,
+    lastUnsold: (player: string) => `শেষ: ${player} অবিক্রিত`,
+    paused: 'বিরতি',
+    onTheBlock: 'নিলামে উঠেছে',
+    playerNo: (n: string) => `খেলোয়াড় #${n}`,
+    cat: (c: string) => `ক্যাটাগরি ${c}`,
+    base: (price: string) => `বেস ${price}`,
+    ex: (team: string) => `সাবেক ${team}`,
+    timerFrozen: 'আয়োজক টাইমার থামিয়ে রেখেছেন',
+    stage1: 'এক বার… — নতুন বিডের শেষ ডাক',
+    stage2: 'দুই বার… — শেষ সুযোগ',
+    biddingOpen: 'বিড চলছে',
+    goingOnce: 'এক বার…',
+    goingTwice: 'দুই বার…',
+    currentBid: 'বর্তমান বিড',
+    highestBidder: 'সর্বোচ্চ বিডার',
+    awaitingFirst: 'প্রথম বিডের অপেক্ষায়',
+    firstBidAt: (price: string) => `প্রথম বিড ${price} বা তার বেশি`,
+    roomOpen: 'নিলাম রুম খোলা হয়েছে',
+    waitingOrganizer: (name: string) => `${name} — আয়োজক বিড শুরু করার অপেক্ষায়।`,
+    sellingCategory: (c: string) => `প্রথমে ক্যাটাগরি ${c}-এর খেলোয়াড়দের নিলাম হবে।`,
+    allInPool: 'সব খেলোয়াড় পুলে আছেন।',
+    readyStats: (online: number, teams: number, players: number) =>
+      `${online} জন অনলাইন · ${teams}টি দল · ${players} জন খেলোয়াড়`,
+    categoryMode: 'ক্যাটাগরি মোড',
+    normalMode: 'সাধারণ মোড',
+    minIncrement: (amount: string) => `প্রতি বিডে কমপক্ষে ${amount} বাড়াতে হবে`,
+  },
+} satisfies Strings<{
+  auctionComplete: string
+  completeBody: string
+  viewResults: string
+  waitingNext: string
+  lastSold: (player: string, team: string | null | undefined, price: string) => string
+  lastUnsold: (player: string) => string
+  paused: string
+  onTheBlock: string
+  playerNo: (n: string) => string
+  cat: (c: string) => string
+  base: (price: string) => string
+  ex: (team: string) => string
+  timerFrozen: string
+  stage1: string
+  stage2: string
+  biddingOpen: string
+  goingOnce: string
+  goingTwice: string
+  currentBid: string
+  highestBidder: string
+  awaitingFirst: string
+  firstBidAt: (price: string) => string
+  roomOpen: string
+  waitingOrganizer: (name: string) => string
+  sellingCategory: (c: string) => string
+  allInPool: string
+  readyStats: (online: number, teams: number, players: number) => string
+  categoryMode: string
+  normalMode: string
+  minIncrement: (amount: string) => string
+}>
+
+type StageStrings = (typeof STRINGS)['en']
 
 interface StageProps {
   state: RoomState
@@ -22,6 +125,7 @@ interface StageProps {
 
 /** The auction stage — current player, countdown ring, live bid. Shared by every role. */
 export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) {
+  const t = useStrings(STRINGS)
   const hasPlayer = !!state.currentPlayer
   const active = state.status === 'LIVE' && hasPlayer
   const remaining = useCountdown(state.timerEndsAt, clockOffset, active)
@@ -38,14 +142,14 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
   const resultKey = state.lastResult?.at ?? null
   useEffect(() => {
     if (!betweenPlayers || !resultKey) {
-      const t = setTimeout(() => setResultDismissed(true), 0)
-      return () => clearTimeout(t)
+      const t1 = setTimeout(() => setResultDismissed(true), 0)
+      return () => clearTimeout(t1)
     }
     const t0 = setTimeout(() => setResultDismissed(false), 0)
-    const t = setTimeout(() => setResultDismissed(true), 5000)
+    const t1 = setTimeout(() => setResultDismissed(true), 5000)
     return () => {
       clearTimeout(t0)
-      clearTimeout(t)
+      clearTimeout(t1)
     }
   }, [betweenPlayers, resultKey])
 
@@ -74,13 +178,13 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
               <Trophy className="h-10 w-10 text-teal-700" />
             </div>
             <div>
-              <h2 className="text-2xl font-black">Auction complete</h2>
+              <h2 className="text-2xl font-black">{t.auctionComplete}</h2>
               <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                The gavel has fallen for the last time. See the final squads and spending in the results report.
+                {t.completeBody}
               </p>
             </div>
             <Button onClick={onViewResults} className="h-11">
-              <Flag className="mr-2 h-4 w-4" /> View results
+              <Flag className="mr-2 h-4 w-4" /> {t.viewResults}
             </Button>
           </div>
         ) : null}
@@ -93,12 +197,12 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
             ) : (
               <div className="flex min-h-44 flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/30 px-4 text-center text-muted-foreground">
                 <Loader />
-                <p className="text-sm font-medium">Waiting for the organizer to bring the next player to the block…</p>
+                <p className="text-sm font-medium">{t.waitingNext}</p>
                 {state.lastResult ? (
                   <p className="text-xs">
-                    Last: {state.lastResult.type === 'SOLD'
-                      ? `${state.lastResult.playerName} sold to ${state.lastResult.teamName} for ${formatBDT(state.lastResult.price ?? 0)}`
-                      : `${state.lastResult.playerName} went unsold`}
+                    {state.lastResult.type === 'SOLD'
+                      ? t.lastSold(state.lastResult.playerName, state.lastResult.teamName, formatBDT(state.lastResult.price ?? 0))
+                      : t.lastUnsold(state.lastResult.playerName)}
                   </p>
                 ) : null}
               </div>
@@ -135,10 +239,10 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                         )}
                         aria-hidden
                       />
-                      {state.status === 'PAUSED' ? 'Paused' : 'On the block'}
+                      {state.status === 'PAUSED' ? t.paused : t.onTheBlock}
                     </motion.span>
                     <span className="font-mono text-sm font-bold tabular-nums text-muted-foreground">
-                      PLAYER #{String(state.currentPlayer.playerNumber).padStart(3, '0')}
+                      {t.playerNo(String(state.currentPlayer.playerNumber).padStart(3, '0'))}
                     </span>
                   </div>
 
@@ -157,15 +261,15 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                         <Badge variant="secondary" className="font-semibold">{state.currentPlayer.role}</Badge>
                         {state.currentPlayer.category ? (
                           <Badge variant="outline" className="border-amber-300 bg-amber-50 font-bold text-amber-900">
-                            Cat {state.currentPlayer.category}
+                            {t.cat(state.currentPlayer.category)}
                           </Badge>
                         ) : null}
                         <Badge variant="outline" className="tabular-nums">
-                          Base {formatBDT(state.currentPlayer.basePrice)}
+                          {t.base(formatBDT(state.currentPlayer.basePrice))}
                         </Badge>
                         {state.currentPlayer.previousTeam ? (
                           <Badge variant="outline" className="text-muted-foreground">
-                            ex {state.currentPlayer.previousTeam}
+                            {t.ex(state.currentPlayer.previousTeam)}
                           </Badge>
                         ) : null}
                       </div>
@@ -184,8 +288,8 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                   <p className="flex items-center gap-1 text-xs text-muted-foreground" aria-hidden>
                     <Clock className="h-3 w-3" />
                     {state.status === 'PAUSED'
-                      ? 'Timer frozen by the organizer'
-                      : stageLabel(state.stage)}
+                      ? t.timerFrozen
+                      : stageLabel(state.stage, t)}
                   </p>
                 </div>
               </div>
@@ -214,7 +318,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                         animate={{ opacity: [1, 0.4, 1] }}
                         transition={{ duration: state.stage === 2 ? 0.55 : 0.9, repeat: Infinity }}
                       >
-                        {state.stage === 2 ? 'Going twice' : 'Going once'}
+                        {state.stage === 2 ? t.goingTwice : t.goingOnce}
                       </motion.span>
                       <Gavel
                         className={cn('h-5 w-5', state.stage === 2 ? 'text-rose-700' : 'text-amber-700')}
@@ -231,7 +335,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                   <>
                     <div>
                       <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                        Current bid
+                        {t.currentBid}
                       </p>
                       <p className="text-3xl font-black tabular-nums text-primary sm:text-4xl">
                         {formatBDT(state.currentBid.amount)}
@@ -245,7 +349,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                       />
                       <div>
                         <p className="text-sm font-bold leading-tight">{state.currentBid.teamName}</p>
-                        <p className="text-xs text-muted-foreground">highest bidder</p>
+                        <p className="text-xs text-muted-foreground">{t.highestBidder}</p>
                       </div>
                     </div>
                   </>
@@ -253,15 +357,15 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                   <>
                     <div>
                       <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                        Awaiting first bid
+                        {t.awaitingFirst}
                       </p>
                       <p className="text-2xl font-black tabular-nums text-muted-foreground sm:text-3xl">
-                        Base {formatBDT(state.currentPlayer.basePrice)}
+                        {t.base(formatBDT(state.currentPlayer.basePrice))}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
                       <CircleDollarSign className="h-4 w-4" aria-hidden />
-                      First bid at {formatBDT(state.currentPlayer.basePrice)} or more
+                      {t.firstBidAt(formatBDT(state.currentPlayer.basePrice))}
                     </div>
                   </>
                 )}
@@ -287,35 +391,36 @@ function Loader() {
   )
 }
 
-function stageLabel(stage: 0 | 1 | 2): string {
-  if (stage === 1) return 'Going once — final call for new bids'
-  if (stage === 2) return 'Going twice — last chance'
-  return 'Bidding open'
+function stageLabel(stage: 0 | 1 | 2, t: StageStrings): string {
+  if (stage === 1) return t.stage1
+  if (stage === 2) return t.stage2
+  return t.biddingOpen
 }
 
 function ReadyHero({ state }: { state: RoomState }) {
-  const online = state.participants.filter((p) => p.online).length
+  const t = useStrings(STRINGS)
+  const online = state.participants.filter((p) => p.online).length + state.viewersOnline
   return (
     <div className="flex flex-col items-center gap-4 py-8 text-center">
       <div className="rounded-full bg-amber-100 p-5" aria-hidden>
         <PartyPopper className="h-10 w-10 text-amber-700" />
       </div>
       <div>
-        <h2 className="text-2xl font-black">Auction room is open</h2>
+        <h2 className="text-2xl font-black">{t.roomOpen}</h2>
         <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          {state.tournamentName} — waiting for the organizer to open the bidding.{' '}
+          {t.waitingOrganizer(state.tournamentName)}{' '}
           {state.mode === 'CATEGORY' && state.currentCategory
-            ? `Selling category ${state.currentCategory} first.`
-            : 'All available players are in the pool.'}
+            ? t.sellingCategory(state.currentCategory)
+            : t.allInPool}
         </p>
       </div>
       <p className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
         <Users className="h-4 w-4" aria-hidden />
-        {online} online · {state.teams.length} teams · {state.pool.total} players
+        {t.readyStats(online, state.teams.length, state.pool.total)}
       </p>
       <p className="flex items-center gap-1.5 rounded-full border border-dashed px-3 py-1.5 text-xs text-muted-foreground">
         <Gavel className="h-3 w-3" aria-hidden />
-        {state.mode === 'CATEGORY' ? 'Category mode' : 'Normal mode'} · min increment {formatBDT(state.minIncrement)}
+        {state.mode === 'CATEGORY' ? t.categoryMode : t.normalMode} · {t.minIncrement(formatBDT(state.minIncrement))}
       </p>
     </div>
   )

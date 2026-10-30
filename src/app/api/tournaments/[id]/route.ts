@@ -60,10 +60,15 @@ export async function GET(_req: Request, { params }: RouteParams) {
     ? serializePlayer
     : (p: (typeof players)[number]) => ({ ...serializePlayer(p), phone: null })
 
+  // Likewise other managers' login emails are organizer data.
+  const toTeam = canManage
+    ? serializeTeam
+    : (t: (typeof teams)[number]) => ({ ...serializeTeam(t), managerEmail: null })
+
   return Response.json({
     tournament: serializeTournamentFull(tournament),
     players: players.map(toPlayer),
-    teams: teams.map(serializeTeam),
+    teams: teams.map(toTeam),
     auction: auction ? serializeAuction(auction) : null,
   })
 }
@@ -88,6 +93,10 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   const isLocked = tournament.status === 'LIVE' || tournament.status === 'COMPLETED'
   if (isLocked && body.auctionMode !== undefined && body.auctionMode !== tournament.auctionMode) {
     return jsonError('Auction mode cannot be changed once the tournament is live or completed', 409)
+  }
+  // Player roles are sport-specific; switching sport mid-auction orphans them.
+  if (isLocked && body.sport !== undefined && body.sport !== tournament.sport) {
+    return jsonError('Sport cannot be changed once the tournament is live or completed', 409)
   }
 
   const data: Partial<Prisma.TournamentUpdateInput> = {}
@@ -154,7 +163,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   }
 }
 
-// DELETE /api/tournaments/:id — owner/ADMIN; blocked while the auction is LIVE
+// DELETE /api/tournaments/:id — owner/ADMIN; blocked while the auction is LIVE or PAUSED
 export async function DELETE(_req: Request, { params }: RouteParams) {
   const { id } = await params
 
@@ -168,8 +177,8 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
     return jsonError('You do not have permission to delete this tournament', 403)
   }
 
-  if (tournament.auction?.status === 'LIVE') {
-    return jsonError('Cannot delete a tournament while its auction is live', 409)
+  if (tournament.auction?.status === 'LIVE' || tournament.auction?.status === 'PAUSED') {
+    return jsonError('Cannot delete a tournament while its auction is live or paused — end the auction first', 409)
   }
 
   // RoomParticipant has no FK relation in the schema — clean up manually.

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Crown, Loader2, Pencil, Plus, Trash2, UserCheck, UserPlus } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Copy, Crown, Link2, Loader2, Pencil, Plus, Search, Trash2, UserCheck, UserPlus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -28,14 +28,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { TeamAvatar } from '@/components/shared/avatars'
+import { ImageUpload } from '@/components/shared/image-upload'
 import { EmptyState } from '@/components/shared/empty-state'
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
@@ -46,6 +40,7 @@ interface TeamFormState {
   name: string
   color: string
   captainName: string
+  logoUrl: string | null
   budget: string
   maxSquad: string
   minSquad: string
@@ -56,9 +51,6 @@ interface ManagerOption {
   name: string
   email: string
 }
-
-/** Sentinel for the "no manager" option — Radix Select forbids an empty value. */
-const NO_MANAGER = '__none__'
 
 export function TeamsTab({
   tournamentId,
@@ -77,21 +69,51 @@ export function TeamsTab({
   const [editForm, setEditForm] = useState<TeamFormState | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TeamDTO | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [managers, setManagers] = useState<ManagerOption[] | null>(null)
-  const [editManagerId, setEditManagerId] = useState<string>(NO_MANAGER)
+  // Linking is by exact login email — organizers are never shown a directory of managers.
+  const [editManager, setEditManager] = useState<ManagerOption | null>(null)
+  const [managerEmail, setManagerEmail] = useState('')
+  const [findingManager, setFindingManager] = useState(false)
 
-  const loadManagers = useCallback(async () => {
+  const findManager = async () => {
+    const email = managerEmail.trim()
+    if (!email) return
+    setFindingManager(true)
     try {
-      const res = await apiGet<{ managers: ManagerOption[] }>('/api/users/managers')
-      setManagers(res.managers)
-    } catch {
-      setManagers([])
+      const res = await apiGet<{ manager: ManagerOption }>(`/api/users/managers?email=${encodeURIComponent(email)}`)
+      setEditManager(res.manager)
+      setManagerEmail('')
+    } catch (ex) {
+      toast.error(ex instanceof ApiError ? ex.message : 'Could not look up that manager')
+    } finally {
+      setFindingManager(false)
     }
-  }, [])
+  }
 
-  useEffect(() => {
-    if (editTarget && managers === null) void loadManagers()
-  }, [editTarget, managers, loadManagers])
+  // Manager invite links: single use, 7 days. Shown in a dialog to copy or share.
+  const [invitingId, setInvitingId] = useState<string | null>(null)
+  const [invite, setInvite] = useState<{ team: TeamDTO; url: string; expiresAt: string } | null>(null)
+
+  const createInvite = async (t: TeamDTO) => {
+    setInvitingId(t.id)
+    try {
+      const res = await apiPost<{ token: string; expiresAt: string }>(`/api/teams/${t.id}/invite`, {})
+      setInvite({ team: t, url: `${window.location.origin}/invite#${res.token}`, expiresAt: res.expiresAt })
+    } catch (ex) {
+      toast.error(ex instanceof ApiError ? ex.message : 'Could not create the invite link')
+    } finally {
+      setInvitingId(null)
+    }
+  }
+
+  const copyInvite = async () => {
+    if (!invite) return
+    try {
+      await navigator.clipboard.writeText(invite.url)
+      toast.success('Invite link copied')
+    } catch {
+      toast.error('Copy failed — select the link and copy it manually')
+    }
+  }
 
   // Suggest a palette color not already used by an existing team.
   const suggestedColor = useMemo(() => {
@@ -125,6 +147,7 @@ export function TeamsTab({
             name: f.name.trim(),
             color: f.color || undefined,
             captainName: f.captainName.trim() || undefined,
+            logoUrl: f.logoUrl ?? undefined,
             budget: parseInt(f.budget, 10),
             maxSquad: parseInt(f.maxSquad, 10),
             minSquad: parseInt(f.minSquad, 10),
@@ -143,11 +166,15 @@ export function TeamsTab({
 
   const openEdit = (t: TeamDTO) => {
     setEditTarget(t)
-    setEditManagerId(t.managerUserId ?? NO_MANAGER)
+    setEditManager(
+      t.managerUserId ? { id: t.managerUserId, name: t.managerName ?? 'Linked manager', email: t.managerEmail ?? '' } : null,
+    )
+    setManagerEmail('')
     setEditForm({
       name: t.name,
       color: t.color ?? '#0F766E',
       captainName: t.captainName ?? '',
+      logoUrl: t.logoUrl,
       budget: String(t.budget),
       maxSquad: String(t.maxSquad),
       minSquad: String(t.minSquad),
@@ -167,10 +194,11 @@ export function TeamsTab({
         name: editForm.name.trim(),
         color: editForm.color,
         captainName: editForm.captainName.trim() || null,
+        logoUrl: editForm.logoUrl,
         budget: parseInt(editForm.budget, 10),
         maxSquad: parseInt(editForm.maxSquad, 10),
         minSquad: parseInt(editForm.minSquad, 10),
-        managerUserId: editManagerId === NO_MANAGER ? null : editManagerId,
+        managerUserId: editManager?.id ?? null,
       })
       toast.success('Team updated')
       setEditTarget(null)
@@ -302,16 +330,63 @@ export function TeamsTab({
                       </Badge>
                     ) : (
                       <Badge variant="secondary" className="text-xs">
-                        Open to claim
+                        No manager yet
                       </Badge>
                     )}
                   </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-full"
+                    disabled={invitingId === t.id}
+                    onClick={() => void createInvite(t)}
+                  >
+                    {invitingId === t.id ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <Link2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {t.managerUserId ? 'New manager invite link' : 'Invite manager'}
+                  </Button>
                 </CardContent>
               </Card>
             )
           })}
         </div>
       )}
+
+      {/* Invite link dialog */}
+      <Dialog open={!!invite} onOpenChange={(open) => !open && setInvite(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Invite a manager for {invite?.team.name}</DialogTitle>
+            <DialogDescription>
+              Send this link to the team&apos;s manager. They log in (or sign up) as a team manager and the team is
+              linked to their account. It works once and expires in 7 days; making a new link cancels this one.
+              {invite?.team.managerUserId
+                ? ' Accepting it replaces the current manager.'
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <Input readOnly value={invite?.url ?? ''} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" asChild>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(
+                  `You're invited to manage ${invite?.team.name ?? 'a team'} on NeelamGhor. Accept here: ${invite?.url ?? ''}`,
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Share on WhatsApp
+              </a>
+            </Button>
+            <Button onClick={() => void copyInvite()}>
+              <Copy className="mr-1.5 h-4 w-4" aria-hidden /> Copy link
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add dialog — mounted only while open so the form starts fresh each time */}
       {addOpen ? (
@@ -328,7 +403,10 @@ export function TeamsTab({
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit {editTarget?.name}</DialogTitle>
-            <DialogDescription>Budget can be raised any time; lowering below spent is blocked.</DialogDescription>
+            <DialogDescription>
+              Budget can be raised any time; lowering below spent is blocked. While the auction is running, budgets
+              and squad caps can only go up.
+            </DialogDescription>
           </DialogHeader>
           {editForm ? <TeamFormFields form={editForm} onChange={setEditForm} /> : null}
 
@@ -336,23 +414,59 @@ export function TeamsTab({
             <Label htmlFor="tm-manager" className="flex items-center gap-1.5">
               <UserPlus className="h-3.5 w-3.5 text-primary" aria-hidden /> Team manager
             </Label>
-            <Select value={editManagerId} onValueChange={setEditManagerId} disabled={managers === null}>
-              <SelectTrigger id="tm-manager" className="h-10 w-full">
-                <SelectValue placeholder={managers === null ? 'Loading managers…' : 'No manager linked'} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_MANAGER}>No manager — open to claim</SelectItem>
-                {(managers ?? []).map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name} · {m.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {editManager ? (
+              <div className="flex min-h-10 items-center justify-between gap-2 rounded-md border px-3 py-2">
+                <span className="min-w-0 truncate text-sm">
+                  <span className="font-semibold">{editManager.name}</span>
+                  {editManager.email ? <span className="text-muted-foreground"> · {editManager.email}</span> : null}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  onClick={() => setEditManager(null)}
+                  aria-label="Unlink manager"
+                >
+                  <X className="mr-1 h-3.5 w-3.5" aria-hidden /> Unlink
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Input
+                  id="tm-manager"
+                  type="email"
+                  value={managerEmail}
+                  onChange={(e) => setManagerEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void findManager()
+                    }
+                  }}
+                  placeholder="manager@example.com"
+                  className="h-10"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0"
+                  disabled={findingManager || !managerEmail.trim()}
+                  onClick={() => void findManager()}
+                >
+                  {findingManager ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Search className="mr-1.5 h-4 w-4" aria-hidden />
+                  )}
+                  Link
+                </Button>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              {managers !== null && managers.length === 0
-                ? 'No manager accounts exist yet — ask them to register as a Team Manager first.'
-                : 'Linking a manager account lets them bid from their own login and see the squad under “My team”.'}
+              {editManager
+                ? 'This account bids for the team from its own login and sees the squad under “My team”. Save to apply.'
+                : 'No manager linked. Enter the email they registered with, or send an invite link from the team card.'}
             </p>
           </div>
 
@@ -403,6 +517,13 @@ function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f:
   const set = (patch: Partial<TeamFormState>) => onChange({ ...form, ...patch })
   return (
     <div className="grid gap-4 sm:grid-cols-2">
+      <ImageUpload
+        className="sm:col-span-2"
+        label="Team logo (optional)"
+        kind="LOGO"
+        value={form.logoUrl}
+        onChange={(url) => set({ logoUrl: url })}
+      />
       <div className="space-y-1.5 sm:col-span-2">
         <Label htmlFor="tm-name">
           Team name <span className="text-rose-600">*</span>
@@ -498,6 +619,7 @@ function AddTeamDialog({
     name: '',
     color: suggestedColor,
     captainName: '',
+    logoUrl: null,
     budget: '200000',
     maxSquad: '12',
     minSquad: '9',
