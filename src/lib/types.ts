@@ -111,6 +111,8 @@ export interface AuctionDTO {
   allowPreviousOwnerRebid: boolean
   /** true = any logged-in manager may claim an unassigned team in the room. */
   allowOpenClaim: boolean
+  /** Auto Auction: the next player comes up automatically after each lot. */
+  autoAdvance: boolean
 }
 
 export interface TournamentDetail {
@@ -251,8 +253,17 @@ export interface RoomState {
   } | null
   soldFeed: { playerName: string; teamName: string; price: number; at: string }[]
   minIncrement: number
+  /** Configured bidding duration — applied to each NEW player's session. */
   bidTimerSeconds: number
+  /** The duration locked in for the player on the block (bids reset the timer to this). */
+  sessionTimerSeconds: number
   goingIntervalSeconds: number
+  /** Auto Auction: the next player is brought to the block automatically. */
+  autoAdvance: boolean
+  /** 1 = the main auction; +1 for every "Re-Auction Unsold & Skipped Players" round. */
+  round: number
+  /** Epoch ms when Auto Auction will bring the next player up; null when nothing is scheduled. */
+  nextPlayerAt: number | null
   /** Team locked out of the current cycle by the re-auction policy, if any. */
   previousOwnerTeamId?: string | null
   /** false = the team that lost a re-auctioned player may not bid for them again. */
@@ -288,6 +299,12 @@ export type OrganizerAction =
   | 'manual_bid'
   | 'end'
   | 'reopen'
+  /** payload {enabled: boolean} — Auto Auction on/off; applies from the next transition */
+  | 'set_auto_advance'
+  /** payload {seconds: number} — bidding duration; applies from the next player */
+  | 'set_bid_timer'
+  /** Start the next round with only the UNSOLD and SKIPPED players (current round must be complete). */
+  | 'reauction_unsold'
 
 export interface ResultsSummary {
   totalPlayers: number

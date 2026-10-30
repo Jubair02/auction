@@ -40,6 +40,9 @@ const STRINGS = {
     refreshSeat: 'Refresh seat',
     switchSeat: 'Switch seat',
     connectingFloor: 'Connecting to the auction floor…',
+    serviceUnreachable: "Can't reach the live auction service",
+    serviceUnreachableHint: 'Still trying every few seconds — this page will connect by itself as soon as the service is back.',
+    serviceUnreachableDev: 'Running locally? Start it with "npm run dev" (starts the website and the auction service together) or "npm run dev:auction".',
     watchingNote: 'You’re watching — only team managers can bid.',
     goBack: 'Go back',
     cricket: 'Cricket',
@@ -64,6 +67,9 @@ const STRINGS = {
     refreshSeat: 'আসন রিফ্রেশ করুন',
     switchSeat: 'আসন বদলান',
     connectingFloor: 'নিলামে সংযোগ হচ্ছে…',
+    serviceUnreachable: 'লাইভ নিলাম সার্ভিসে সংযোগ করা যাচ্ছে না',
+    serviceUnreachableHint: 'কয়েক সেকেন্ড পরপর আবার চেষ্টা করা হচ্ছে — সার্ভিস চালু হলেই পেজটি নিজে থেকে যুক্ত হবে।',
+    serviceUnreachableDev: 'লোকালি চালাচ্ছেন? "npm run dev" (ওয়েবসাইট ও নিলাম সার্ভিস একসাথে চালু হয়) বা "npm run dev:auction" দিয়ে চালু করুন।',
     watchingNote: 'আপনি দেখছেন — শুধু টিম ম্যানেজাররা বিড করতে পারবেন।',
     goBack: 'ফিরে যান',
     cricket: 'ক্রিকেট',
@@ -88,6 +94,9 @@ const STRINGS = {
   refreshSeat: string
   switchSeat: string
   connectingFloor: string
+  serviceUnreachable: string
+  serviceUnreachableHint: string
+  serviceUnreachableDev: string
   watchingNote: string
   goBack: string
   cricket: string
@@ -331,7 +340,17 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
       ) : !state ? (
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="h-7 w-7 animate-spin" aria-hidden />
-          <p className="text-sm font-medium">{t.connectingFloor}</p>
+          {sock.connectFailures >= 3 ? (
+            <div className="max-w-md space-y-1.5 text-center">
+              <p className="text-sm font-semibold text-foreground">{t.serviceUnreachable}</p>
+              <p className="text-sm">{t.serviceUnreachableHint}</p>
+              {typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname) ? (
+                <p className="text-xs">{t.serviceUnreachableDev}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm font-medium">{t.connectingFloor}</p>
+          )}
         </div>
       ) : role === 'ORGANIZER' ? (
         <OrganizerLayout state={state} sock={sock} />
@@ -363,7 +382,7 @@ function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
 
       <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
         <PoolKpiStrip state={state} />
-        <OrganizerControls state={state} onAction={sock.organizerAction} />
+        <OrganizerControls state={state} onAction={sock.organizerAction} clockOffset={sock.clockOffset} />
         <TeamsPanel state={state} />
         <ParticipantsPanel state={state} />
         <ActivityFeed notifications={sock.notifications} />

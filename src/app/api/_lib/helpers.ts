@@ -213,6 +213,7 @@ export function serializeAuction(a: Auction): AuctionDTO {
     bidCount: a.bidCount,
     allowPreviousOwnerRebid: a.allowPreviousOwnerRebid,
     allowOpenClaim: a.allowOpenClaim,
+    autoAdvance: a.autoAdvance,
   }
 }
 

@@ -14,7 +14,7 @@ export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
 
-const TIMER = { min: 5, max: 120, fallback: 20 }
+const TIMER = { min: 5, max: 600, fallback: 20 } // same range as the live control
 const GOING = { min: 3, max: 60, fallback: 8 }
 const INCREMENT = { min: 500, max: 100000, fallback: 5000 }
 

@@ -5,8 +5,8 @@
 import './env' // MUST be first: loads DATABASE_URL / AUCTION_SECRET from the parent .env
 import { createServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
-import { PrismaClient } from '@prisma/client'
 import { getAuctionSecret, verifyToken } from '../../src/lib/crypto'
+import { createResilientClient } from '../../src/lib/db-resilience'
 import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
 import { AuctionEngine } from './engine'
@@ -19,13 +19,19 @@ try {
   process.exit(1)
 }
 
-// The web app reaches this service through the gateway on its own origin, so
+// Behind the gateway the web app reaches this service on its own origin, so
 // same-origin needs no configuration. ALLOWED_ORIGINS (comma-separated, e.g.
 // "https://neelamghor.com,https://www.neelamghor.com") admits extra origins.
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
-  .split(',')
-  .map((o) => o.trim().replace(/\/$/, ''))
-  .filter(Boolean)
+// Outside production, a page served by Next directly on :3000 talks to :3003
+// cross-origin, so those local origins are allowed too.
+const DEV_ORIGINS = process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://127.0.0.1:3000']
+const ALLOWED_ORIGINS = [
+  ...DEV_ORIGINS,
+  ...(process.env.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+]
 
 /**
  * Browsers do not apply CORS to WebSockets, so the Origin is checked here for
@@ -51,10 +57,12 @@ const LIMITS = {
   action: { limit: 30, windowMs: 10_000 },
 }
 
-const db = new PrismaClient()
+// Retries transient connection failures on reads; 20 s transaction budget.
+const db = createResilientClient()
 const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/', // DO NOT change — Caddy gateway requires this exact path
+  // Cross-origin long-polling (the WebSocket fallback) needs CORS headers.
   ...(ALLOWED_ORIGINS.length > 0 ? { cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] } } : {}),
   allowRequest: (req, callback) => callback(null, originAllowed(req.headers.origin, req.headers.host)),
   maxHttpBufferSize: 16 * 1024, // every client message is a tiny JSON object

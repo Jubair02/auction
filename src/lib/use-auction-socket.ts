@@ -1,7 +1,6 @@
 'use client'
 
-// Live auction socket hook — connects to the auction mini-service (port 3003)
-// through the gateway using the mandatory `io('/?XTransformPort=3003')` pattern.
+// Live auction socket hook — connects to the auction mini-service (port 3003).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
@@ -12,6 +11,8 @@ export interface AuctionSocketApi {
   connected: boolean
   joined: boolean
   joinError: string | null
+  /** Consecutive failed attempts to reach the auction service (0 once connected). */
+  connectFailures: number
   state: RoomState | null
   /** serverTime - clientTime at last snapshot, to correct countdowns */
   clockOffset: number
@@ -19,6 +20,21 @@ export interface AuctionSocketApi {
   placeBid: (amount: number) => void
   organizerAction: (action: OrganizerAction, payload?: Record<string, unknown>) => void
   rejoin: () => void
+}
+
+/**
+ * Where the auction service lives, as seen from this page:
+ *  - NEXT_PUBLIC_AUCTION_URL when set (e.g. a dedicated wss:// host);
+ *  - Next served directly on :3000 (local `next dev` / `next start`, no
+ *    gateway): straight to :3003 on the same host;
+ *  - otherwise behind the gateway (Caddy), which routes `?XTransformPort=3003`.
+ */
+function auctionEndpoint(): { url: string; path: string } {
+  const configured = process.env.NEXT_PUBLIC_AUCTION_URL
+  if (configured) return { url: configured, path: '/' }
+  const { protocol, hostname, port } = window.location
+  if (port === '3000') return { url: `${protocol}//${hostname}:3003`, path: '/' }
+  return { url: '/?XTransformPort=3003', path: '/' }
 }
 
 export function useAuctionSocket(roomCode: string, token: string | null): AuctionSocketApi {
@@ -31,6 +47,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
   const [connected, setConnected] = useState(false)
   const [joined, setJoined] = useState(false)
   const [joinError, setJoinError] = useState<string | null>(null)
+  const [connectFailures, setConnectFailures] = useState(0)
   const [state, setState] = useState<RoomState | null>(null)
   const [clockOffset, setClockOffset] = useState(0)
   const [notifications, setNotifications] = useState<RoomNotification[]>([])
@@ -53,18 +70,26 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
   useEffect(() => {
     if (!token) return
-    const socket = io('/?XTransformPort=3003', {
-      path: '/',
+    const endpoint = auctionEndpoint()
+    const socket = io(endpoint.url, {
+      path: endpoint.path,
       transports: ['websocket', 'polling'],
       forceNew: true,
+      // A live auction must survive a service restart or a phone switching
+      // networks: keep retrying (backing off to 5s) instead of giving up.
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
       timeout: 10000,
     })
     socketRef.current = socket
 
+    // Counts failed connection attempts so the room can say "the live service
+    // is unreachable" instead of spinning on "Connecting…" forever.
+    socket.on('connect_error', () => setConnectFailures((n) => n + 1))
     socket.on('connect', () => {
+      setConnectFailures(0)
       setConnected(true)
       doJoin()
     })
@@ -120,7 +145,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
   const rejoin = useCallback(() => doJoin(), [doJoin])
 
-  return { connected, joined, joinError, state, clockOffset, notifications, placeBid, organizerAction, rejoin }
+  return { connected, joined, joinError, connectFailures, state, clockOffset, notifications, placeBid, organizerAction, rejoin }
 }
 
 /** Live countdown derived from server timerEndsAt corrected by clockOffset. */

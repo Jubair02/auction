@@ -3,19 +3,26 @@
 import { useState } from 'react'
 import {
   Ban,
+  Bot,
+  CircleCheck,
+  Timer,
   FastForward,
   Gavel,
   Hand,
   ListChecks,
   Pause,
+  Pencil,
   Play,
+  Repeat,
+  Trophy,
   RotateCcw,
   Send,
   Shuffle,
   Square,
   Tag,
 } from 'lucide-react'
-import { formatBDT } from '@/lib/format'
+import { formatBDT, formatClock } from '@/lib/format'
+import { useCountdown } from '@/lib/use-auction-socket'
 import type { OrganizerAction, RoomState, RoomTeam } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import {
@@ -40,6 +47,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -51,12 +59,14 @@ import {
 interface OrganizerControlsProps {
   state: RoomState
   onAction: (action: OrganizerAction, payload?: Record<string, unknown>) => void
+  /** serverTime − clientTime, so the session countdown matches the server. */
+  clockOffset?: number
 }
 
-type ConfirmKind = 'sell' | 'unsold' | 'end' | 'reopen' | null
+type ConfirmKind = 'sell' | 'unsold' | 'end' | 'reopen' | 'rounds' | null
 
 /** Organizer cockpit — start/pause/sell controls, manual bid, category chips. */
-export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
+export function OrganizerControls({ state, onAction, clockOffset = 0 }: OrganizerControlsProps) {
   const [confirm, setConfirm] = useState<ConfirmKind>(null)
   const [manualOpen, setManualOpen] = useState(false)
 
@@ -66,6 +76,9 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
   const ended = state.status === 'ENDED'
   const hasPlayer = !!state.currentPlayer
   const hasBid = !!state.currentBid
+  // Round over: nothing on the block and nobody left to bring up this round.
+  const roundComplete = (live || paused) && !hasPlayer && state.pool.available === 0
+  const leftOver = state.pool.unsold + state.pool.skipped
 
   return (
     <>
@@ -89,6 +102,7 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
 
           {ended ? (
             <div className="space-y-3">
+              <RoundSummary state={state} final />
               <p className="rounded-lg bg-muted px-3 py-3 text-center text-sm font-medium text-muted-foreground">
                 Auction ended — head to the results report for final squads.
               </p>
@@ -98,17 +112,34 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
             </div>
           ) : null}
 
+          {roundComplete ? (
+            <RoundSummary
+              state={state}
+              onReauction={() => setConfirm('rounds')}
+              onFinalize={() => setConfirm('end')}
+              reauctionDisabled={!live}
+            />
+          ) : null}
+
+          {!ended ? <AutoAuctionPanel state={state} onAction={onAction} clockOffset={clockOffset} /> : null}
+
           {(live || paused) ? (
             <>
               <Button
                 size="lg"
                 className="h-12 w-full text-sm font-bold"
-                disabled={hasPlayer}
+                disabled={hasPlayer || state.autoAdvance || roundComplete}
                 onClick={() => onAction('next_player')}
-                title={hasPlayer ? 'A player is already on the block' : 'Bring a random player to the block'}
+                title={
+                  state.autoAdvance
+                    ? 'Auto Auction brings up the next player — turn it off to pick manually'
+                    : hasPlayer
+                      ? 'A player is already on the block'
+                      : 'Bring a random player to the block'
+                }
               >
                 <Shuffle className="mr-2 h-4.5 w-4.5" />
-                Next player (random)
+                {state.autoAdvance ? 'Next player (automatic)' : 'Next player (random)'}
               </Button>
 
               <div className="grid grid-cols-2 gap-2">
@@ -142,7 +173,7 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
                 </Button>
               </div>
 
-              {!hasPlayer && live ? (
+              {!hasPlayer && live && !state.autoAdvance ? (
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ListChecks className="h-3.5 w-3.5" aria-hidden />
                   Pick a player from the pool below or bring a random one.
@@ -205,6 +236,18 @@ export function OrganizerControls({ state, onAction }: OrganizerControlsProps) {
           onAction={() => {
             setConfirm(null)
             onAction('end')
+          }}
+        />
+      </AlertDialog>
+
+      <AlertDialog open={confirm === 'rounds'} onOpenChange={(o) => !o && setConfirm(null)}>
+        <ConfirmShell
+          title={`Start round ${state.round + 1}?`}
+          description={`The ${leftOver} unsold & skipped player${leftOver === 1 ? '' : 's'} go back into the pool and are auctioned again from their base price. Sold players, squads, budgets and all earlier bids stay as they are.${state.autoAdvance ? ' Auto Auction is on, so the first player comes up by itself.' : ' Use Next player to bring up each player.'}`}
+          actionLabel="Start re-auction round"
+          onAction={() => {
+            setConfirm(null)
+            onAction('reauction_unsold')
           }}
         />
       </AlertDialog>
@@ -442,5 +485,272 @@ function ManualBidDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+const DURATION_PRESETS = [15, 20, 30, 45, 60, 90]
+const DURATION_MIN = 5
+const DURATION_MAX = 600
+
+/**
+ * Auto Auction switch, bidding duration and the live session countdown.
+ * Everything is server-driven: the switch and duration are organizer actions,
+ * and the countdown reads the server's timer — so every screen agrees and a
+ * refresh changes nothing.
+ */
+function AutoAuctionPanel({ state, onAction, clockOffset }: OrganizerControlsProps & { clockOffset: number }) {
+  const live = state.status === 'LIVE'
+  const paused = state.status === 'PAUSED'
+  const hasPlayer = !!state.currentPlayer
+  // The duration is read-only until the organizer clicks Edit; the draft only
+  // exists while editing and is discarded by Cancel.
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const draftSeconds = Number(draft)
+  const draftValid = Number.isInteger(draftSeconds) && draftSeconds >= DURATION_MIN && draftSeconds <= DURATION_MAX
+  const startEdit = () => {
+    setDraft(String(state.bidTimerSeconds))
+    setEditing(true)
+  }
+  const cancelEdit = () => {
+    setDraft('')
+    setEditing(false)
+  }
+  const saveEdit = () => {
+    if (!draftValid) return
+    if (draftSeconds !== state.bidTimerSeconds) onAction('set_bid_timer', { seconds: draftSeconds })
+    setEditing(false)
+  }
+
+  const lotRemaining = useCountdown(state.timerEndsAt, clockOffset, live && hasPlayer)
+  const nextIn = useCountdown(state.nextPlayerAt, clockOffset, live && !hasPlayer && state.autoAdvance)
+
+  let session: { label: string; value: string; tone: string }
+  if (paused && hasPlayer) {
+    session = { label: 'Paused', value: formatClock(state.pausedRemainingMs ?? 0), tone: 'text-slate-600' }
+  } else if (live && hasPlayer) {
+    const secs = Math.ceil(lotRemaining / 1000)
+    session = {
+      label: state.stage === 2 ? 'Going twice' : state.stage === 1 ? 'Going once' : 'Bidding open',
+      value: formatClock(lotRemaining),
+      tone: secs <= 5 ? 'text-rose-600' : secs <= 10 ? 'text-amber-600' : 'text-emerald-700',
+    }
+  } else if (live && state.autoAdvance && state.nextPlayerAt) {
+    session = { label: 'Next player in', value: formatClock(nextIn), tone: 'text-primary' }
+  } else {
+    session = {
+      label: state.status === 'READY' ? 'Not started' : 'No player on the block',
+      value: '—',
+      tone: 'text-muted-foreground',
+    }
+  }
+
+  let hint = 'Each new bid restarts the countdown, then “going once / twice” follows.'
+  if (editing && !draftValid) hint = `Enter ${DURATION_MIN}–${DURATION_MAX} seconds.`
+  else if (hasPlayer && state.sessionTimerSeconds !== state.bidTimerSeconds) {
+    hint = `This player runs on ${state.sessionTimerSeconds}s; ${state.bidTimerSeconds}s starts with the next player.`
+  }
+
+  return (
+    <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Label htmlFor="auto-auction" className="flex cursor-pointer items-center gap-1.5 text-sm font-semibold">
+            <Bot className="h-4 w-4 text-primary" aria-hidden /> Auto Auction
+          </Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {state.autoAdvance
+              ? 'On — when a player is sold or goes unsold, the next random player comes up by itself.'
+              : 'Off — you bring up each player with Next player.'}
+            {hasPlayer ? ' Changes apply after the current player.' : ''}
+          </p>
+        </div>
+        <Switch
+          id="auto-auction"
+          checked={state.autoAdvance}
+          onCheckedChange={(enabled) => onAction('set_auto_advance', { enabled })}
+          aria-label="Auto Auction"
+          className="cursor-pointer"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label
+          htmlFor={editing ? 'bid-duration' : undefined}
+          className="flex items-center gap-1.5 text-sm font-semibold"
+        >
+          <Timer className="h-4 w-4 text-primary" aria-hidden /> Bidding duration
+        </Label>
+        {editing ? (
+          <>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  id="bid-duration"
+                  type="number"
+                  inputMode="numeric"
+                  min={DURATION_MIN}
+                  max={DURATION_MAX}
+                  value={draft}
+                  autoFocus
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveEdit()
+                    if (e.key === 'Escape') cancelEdit()
+                  }}
+                  className="h-10 pr-16 tabular-nums"
+                  aria-describedby="bid-duration-hint"
+                />
+                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+                  seconds
+                </span>
+              </div>
+              <Button type="button" className="h-10" disabled={!draftValid} onClick={saveEdit}>
+                Save
+              </Button>
+              <Button type="button" variant="outline" className="h-10" onClick={cancelEdit}>
+                Cancel
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {DURATION_PRESETS.map((sec) => (
+                <Button
+                  key={sec}
+                  type="button"
+                  variant={String(sec) === draft ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 px-2 text-xs tabular-nums"
+                  onClick={() => setDraft(String(sec))}
+                >
+                  {sec}s
+                </Button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+            <span className="text-sm font-semibold tabular-nums" aria-label="Current bidding duration">
+              {state.bidTimerSeconds} seconds
+            </span>
+            <Button type="button" variant="outline" size="sm" className="h-8" onClick={startEdit}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Edit
+            </Button>
+          </div>
+        )}
+        <p id="bid-duration-hint" className="text-xs text-muted-foreground">
+          {hint}
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg bg-background px-3 py-2" aria-live="polite">
+        <span className="text-xs font-medium text-muted-foreground">Current session · {session.label}</span>
+        <span className={cn('font-mono text-lg font-bold tabular-nums', session.tone)}>{session.value}</span>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sold / Unsold / Skipped summary shown when a round runs out of players
+ * (with the next-round and finalize actions), and read-only once finalized.
+ */
+function RoundSummary({
+  state,
+  final = false,
+  onReauction,
+  onFinalize,
+  reauctionDisabled = false,
+}: {
+  state: RoomState
+  final?: boolean
+  onReauction?: () => void
+  onFinalize?: () => void
+  reauctionDisabled?: boolean
+}) {
+  const sold = state.players.filter((p) => p.status === 'SOLD')
+  const totalValue = sold.reduce((sum, p) => sum + (p.soldPrice ?? 0), 0)
+  const leftOver = state.players.filter((p) => p.status === 'UNSOLD' || p.status === 'SKIPPED')
+  const tiles = [
+    { label: 'Sold', value: state.pool.sold, sub: formatBDT(totalValue), tone: 'text-emerald-700' },
+    { label: 'Unsold', value: state.pool.unsold, sub: null, tone: 'text-rose-700' },
+    { label: 'Skipped', value: state.pool.skipped, sub: null, tone: 'text-slate-700' },
+  ]
+
+  return (
+    <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
+      <p className="flex items-center gap-1.5 text-sm font-semibold">
+        <Trophy className="h-4 w-4 text-primary" aria-hidden />
+        {final ? 'Final summary' : `Round ${state.round} complete`}
+        {state.round > 1 ? (
+          <span className="text-xs font-normal text-muted-foreground">
+            · {state.round} round{state.round === 1 ? '' : 's'} so far
+          </span>
+        ) : null}
+      </p>
+
+      <div className="grid grid-cols-3 gap-2">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="rounded-lg bg-background px-2 py-2 text-center">
+            <p className={cn('text-xl font-black tabular-nums', tile.tone)}>{tile.value}</p>
+            <p className="text-xs font-medium text-muted-foreground">{tile.label}</p>
+            {tile.sub ? <p className="truncate text-[11px] tabular-nums text-muted-foreground">{tile.sub}</p> : null}
+          </div>
+        ))}
+      </div>
+
+      {leftOver.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Unsold & skipped</p>
+          <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+            {leftOver.map((p) => (
+              <span
+                key={p.id}
+                className={cn(
+                  'rounded-full border px-2 py-0.5 text-xs',
+                  p.status === 'UNSOLD' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-slate-200 bg-background text-slate-700',
+                )}
+              >
+                #{p.playerNumber} {p.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {!final ? (
+        <div className="space-y-2">
+          {leftOver.length > 0 ? (
+            <Button
+              className="h-10 w-full gap-1.5 px-3 text-sm font-semibold"
+              disabled={reauctionDisabled}
+              onClick={onReauction}
+              title="Re-Auction Unsold & Skipped Players"
+            >
+              <Repeat className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">Re-auction unsold &amp; skipped</span>
+              <span className="ml-0.5 rounded-full bg-white/20 px-1.5 text-xs font-bold tabular-nums">
+                {leftOver.length}
+              </span>
+            </Button>
+          ) : (
+            <p className="text-center text-xs text-muted-foreground">Every player has been sold.</p>
+          )}
+          {reauctionDisabled && leftOver.length > 0 ? (
+            <p className="text-center text-xs text-muted-foreground">Resume the auction to start the next round.</p>
+          ) : null}
+          <Button
+            variant="outline"
+            className="h-9 w-full gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+            onClick={onFinalize}
+          >
+            <CircleCheck className="h-3.5 w-3.5" aria-hidden /> Finalize auction
+          </Button>
+        </div>
+      ) : null}
+    </div>
   )
 }

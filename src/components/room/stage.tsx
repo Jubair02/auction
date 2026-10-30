@@ -21,6 +21,9 @@ const STRINGS = {
     completeBody: 'The gavel has fallen for the last time. See the final squads and spending in the results report.',
     viewResults: 'View results',
     waitingNext: 'Waiting for the organizer to bring the next player to the block…',
+    roundComplete: (round: number, sold: number, unsold: number, skipped: number) =>
+      `Round ${round} complete — ${sold} sold, ${unsold} unsold, ${skipped} skipped`,
+    waitingNextRound: 'Waiting for the organizer to start another round or finalize the auction…',
     lastSold: (player: string, team: string | null | undefined, price: string) => `Last: ${player} sold to ${team} for ${price}`,
     lastUnsold: (player: string) => `Last: ${player} went unsold`,
     paused: 'Paused',
@@ -54,6 +57,9 @@ const STRINGS = {
     completeBody: 'শেষবারের মতো হাতুড়ি পড়েছে। ফলাফল রিপোর্টে চূড়ান্ত স্কোয়াড আর খরচ দেখুন।',
     viewResults: 'ফলাফল দেখুন',
     waitingNext: 'আয়োজক পরের খেলোয়াড়কে নিলামে তুলবেন, অপেক্ষা করুন…',
+    roundComplete: (round: number, sold: number, unsold: number, skipped: number) =>
+      `রাউন্ড ${round} শেষ — ${sold} বিক্রি, ${unsold} অবিক্রিত, ${skipped} বাদ`,
+    waitingNextRound: 'আয়োজক আরেকটি রাউন্ড শুরু করবেন নাকি নিলাম চূড়ান্ত করবেন, অপেক্ষা করুন…',
     lastSold: (player: string, team: string | null | undefined, price: string) => `শেষ: ${player}, ${price}-এ ${team}-এর কাছে বিক্রি`,
     lastUnsold: (player: string) => `শেষ: ${player} অবিক্রিত`,
     paused: 'বিরতি',
@@ -87,6 +93,8 @@ const STRINGS = {
   completeBody: string
   viewResults: string
   waitingNext: string
+  roundComplete: (round: number, sold: number, unsold: number, skipped: number) => string
+  waitingNextRound: string
   lastSold: (player: string, team: string | null | undefined, price: string) => string
   lastUnsold: (player: string) => string
   paused: string
@@ -131,7 +139,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
   const remaining = useCountdown(state.timerEndsAt, clockOffset, active)
   // The ring must be scaled to whichever timer is actually running: the bid timer
   // during stage 0, the (shorter) going-once/twice interval after that.
-  const totalMs = (state.stage > 0 ? state.goingIntervalSeconds : state.bidTimerSeconds) * 1000
+  const totalMs = (state.stage > 0 ? state.goingIntervalSeconds : state.sessionTimerSeconds) * 1000
   const paused = state.status === 'PAUSED' && hasPlayer
   const shownRemaining = paused ? (state.pausedRemainingMs ?? 0) : remaining
 
@@ -197,7 +205,16 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
             ) : (
               <div className="flex min-h-44 flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/30 px-4 text-center text-muted-foreground">
                 <Loader />
-                <p className="text-sm font-medium">{t.waitingNext}</p>
+                {state.pool.available === 0 ? (
+                  <>
+                    <p className="text-sm font-semibold text-foreground">
+                      {t.roundComplete(state.round, state.pool.sold, state.pool.unsold, state.pool.skipped)}
+                    </p>
+                    <p className="text-sm font-medium">{t.waitingNextRound}</p>
+                  </>
+                ) : (
+                  <p className="text-sm font-medium">{t.waitingNext}</p>
+                )}
                 {state.lastResult ? (
                   <p className="text-xs">
                     {state.lastResult.type === 'SOLD'

@@ -119,6 +119,32 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Tailwind 4 gives buttons the default arrow cursor; everything clickable
+     should show a pointer. Disabled controls show "not-allowed" instead. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="tab"]:not([data-disabled]),
+  [role="checkbox"]:not([data-disabled]),
+  [role="radio"]:not([data-disabled]),
+  [role="option"]:not([data-disabled]),
+  [role="menuitem"]:not([data-disabled]),
+  [role="combobox"]:not([data-disabled]),
+  summary,
+  label[for],
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  select:not(:disabled),
+  a[href] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [role="switch"][data-disabled],
+  input:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
 }
 
 /* Custom scrollbar styling */

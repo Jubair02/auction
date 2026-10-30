@@ -10,7 +10,6 @@ import { createHash, randomInt, randomUUID } from 'node:crypto'
 import type { Server, Socket } from 'socket.io'
 import type {
   Prisma,
-  PrismaClient,
   Auction,
   Tournament,
   Team,
@@ -18,6 +17,7 @@ import type {
   RoomParticipant,
 } from '@prisma/client'
 import type { RoomState, RoomStateWire, RoomRole, SocketIdentity } from '../../src/lib/types'
+import { BOUNDED_TX_SQL, type ResilientClient } from '../../src/lib/db-resilience'
 import { bdt, maxBidFor, validateBid } from './rules'
 
 type EngineStatus = 'READY' | 'LIVE' | 'PAUSED' | 'ENDED'
@@ -36,6 +36,9 @@ type AuditType = 'SALE' | 'RE_AUCTION' | 'REFUND' | 'UNSOLD' | 'SKIPPED'
 class SaleAlreadyChanged extends Error {}
 
 const CATEGORY_CODES = ['A', 'B', 'C', 'D', 'E']
+/** Pause between a SOLD/UNSOLD call and the auto-picked next player, so everyone sees the result. */
+const AUTO_ADVANCE_DELAY_MS = 4000
+const BID_TIMER_RANGE = { min: 5, max: 600 }
 
 interface BidView {
   amount: number
@@ -76,9 +79,18 @@ interface Room {
   pausedRemainingMs: number | null
   lastResult: RoomState['lastResult']
   soldFeed: RoomState['soldFeed']
+  /** Configured bidding duration; locked into sessionTimerSeconds when a player goes on the block. */
   bidTimerSeconds: number
+  /** Duration of the CURRENT player's session — bids reset the timer to this. */
+  sessionTimerSeconds: number
   goingIntervalSeconds: number
   minIncrement: number
+  /** Auto Auction: bring the next player up by itself after a lot closes. */
+  autoAdvance: boolean
+  /** When Auto Auction will pick the next player (epoch ms); the single source of truth for the pick. */
+  nextPlayerAt: number | null
+  /** 1 = main auction; each "Re-Auction Unsold & Skipped Players" starts the next round. */
+  round: number
   auction: Auction
   tournament: Tournament
   teams: TeamCache[]
@@ -105,7 +117,7 @@ export class AuctionEngine {
 
   constructor(
     private io: Server,
-    private db: PrismaClient,
+    private db: ResilientClient,
   ) {
     // Single global ticker: stage transitions + finalize (500ms resolution).
     this.ticker = setInterval(() => void this.tick(), 500)
@@ -325,6 +337,7 @@ export class AuctionEngine {
       if (invalid) return this.emitError(socket, invalid)
 
       const created = await this.db.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
         const bid = await tx.bid.create({
           data: {
             auctionId: room.auctionId,
@@ -349,7 +362,7 @@ export class AuctionEngine {
         { teamId: team.id, teamName: team.name, amount, createdAt: created.createdAt.toISOString() },
       ]
       room.stage = 0
-      room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
+      room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
       room.pausedRemainingMs = null
       this.notify(room, 'success', `${team.name} bids ${bdt(amount)} for ${player.name}`)
       this.broadcast(room)
@@ -381,6 +394,9 @@ export class AuctionEngine {
         case 'manual_bid': return this.manualBid(socket, room, payload, actor)
         case 'end': return this.actionEnd(socket, room)
         case 'reopen': return this.actionReopen(socket, room)
+        case 'set_auto_advance': return this.actionSetAutoAdvance(socket, room, payload)
+        case 'set_bid_timer': return this.actionSetBidTimer(socket, room, payload)
+        case 'reauction_unsold': return this.actionReauctionUnsold(socket, room, actor)
         default: return this.emitError(socket, `Unknown action: ${String(action)}`)
       }
     })
@@ -395,6 +411,7 @@ export class AuctionEngine {
     if (room.players.length === 0) return this.emitError(socket, 'Add at least one player before starting')
     if (room.teams.length === 0) return this.emitError(socket, 'Add at least one team before starting')
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
       this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }),
     ])
@@ -432,8 +449,9 @@ export class AuctionEngine {
   private async actionResume(socket: Socket, room: Room): Promise<void> {
     if (room.status !== 'PAUSED') return this.emitError(socket, 'Auction is not paused')
     room.status = 'LIVE'
-    room.timerEndsAt = Date.now() + (room.pausedRemainingMs ?? room.bidTimerSeconds * 1000)
+    room.timerEndsAt = room.currentPlayerId ? Date.now() + (room.pausedRemainingMs ?? room.sessionTimerSeconds * 1000) : null
     room.pausedRemainingMs = null
+    if (!room.currentPlayerId) this.scheduleAutoAdvance(room)
     await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } })
     this.notify(room, 'info', 'Auction resumed')
     this.broadcast(room)
@@ -477,6 +495,7 @@ export class AuctionEngine {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.player.update({ where: { id: player.id }, data: { status: 'SKIPPED' } }),
       this.db.auction.update({
         where: { id: room.auctionId },
@@ -495,6 +514,7 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
+    this.scheduleAutoAdvance(room)
     this.notify(room, 'info', `${player.name} is skipped by the organizer`)
     this.broadcast(room)
   }
@@ -600,6 +620,7 @@ export class AuctionEngine {
 
     try {
       await this.db.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
         // Compare-and-swap on the exact sale we read. If anything about it
         // changed in the meantime (another re-auction, a refresh-triggered
         // retry, a second organizer) this matches zero rows and the whole
@@ -666,7 +687,10 @@ export class AuctionEngine {
     room.currentBidHistory = [] // fresh ladder; the old cycle lives on in history
     room.previousOwnerTeamId = soldToTeamId
     room.stage = 0
-    room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
+    // A re-auction is a fresh session: lock in the current configured duration.
+    room.sessionTimerSeconds = room.bidTimerSeconds
+    room.nextPlayerAt = null
+    room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
     room.pausedRemainingMs = null
 
     this.notify(
@@ -682,6 +706,7 @@ export class AuctionEngine {
     if (room.status === 'ENDED') return this.emitError(socket, 'Auction already ended')
     const liveOnes = room.players.filter((p) => p.status === 'LIVE')
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       ...liveOnes.map((p) =>
         this.db.player.update({
           where: { id: p.id },
@@ -706,6 +731,7 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
+    room.nextPlayerAt = null
     this.notify(room, 'success', 'Auction ended. Final squads are ready!')
     this.broadcast(room)
   }
@@ -718,6 +744,7 @@ export class AuctionEngine {
   private async actionReopen(socket: Socket, room: Room): Promise<void> {
     if (room.status !== 'ENDED') return this.emitError(socket, 'The auction is not ended')
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
       this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }),
     ])
@@ -730,7 +757,14 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
-    this.notify(room, 'info', 'Auction reopened — bring the next player to the block.')
+    this.scheduleAutoAdvance(room)
+    this.notify(
+      room,
+      'info',
+      room.autoAdvance
+        ? 'Auction reopened — Auto Auction brings the next player up shortly.'
+        : 'Auction reopened — bring the next player to the block.',
+    )
     this.broadcast(room)
   }
 
@@ -751,6 +785,7 @@ export class AuctionEngine {
     if (invalid) return this.emitError(socket, invalid)
 
     await this.db.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
       await tx.bid.create({
         data: {
           auctionId: room.auctionId,
@@ -774,7 +809,7 @@ export class AuctionEngine {
       { teamId: team.id, teamName: team.name, amount, createdAt: new Date().toISOString() },
     ]
     room.stage = 0
-    room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
+    room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
     room.pausedRemainingMs = null
     this.notify(room, 'info', `Manual bid by ${actor.name ?? 'the organizer'}: ${team.name} → ${bdt(amount)}`)
     this.broadcast(room)
@@ -784,7 +819,14 @@ export class AuctionEngine {
   private async pickNextPlayer(room: Room): Promise<boolean> {
     const pool = room.players.filter((p) => p.status === 'AVAILABLE')
     if (pool.length === 0) {
-      this.notify(room, 'info', 'Every player has been dealt with — you can end the auction.')
+      const leftOver = room.players.filter((p) => p.status === 'UNSOLD' || p.status === 'SKIPPED').length
+      this.notify(
+        room,
+        'info',
+        leftOver > 0
+          ? `Round ${room.round} complete — re-auction the ${leftOver} unsold & skipped player${leftOver === 1 ? '' : 's'}, or finalize the auction.`
+          : `Round ${room.round} complete — every player has been sold. Finalize the auction when ready.`,
+      )
       return false
     }
 
@@ -824,6 +866,7 @@ export class AuctionEngine {
 
   private async putOnBlock(room: Room, player: Player): Promise<void> {
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.player.update({ where: { id: player.id }, data: { status: 'LIVE' } }),
       this.db.auction.update({
         where: { id: room.auctionId },
@@ -837,7 +880,11 @@ export class AuctionEngine {
     room.currentBidHistory = []
     room.previousOwnerTeamId = null
     room.stage = 0
-    room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
+    // New session: the configured duration applies from here (a change made
+    // mid-session never touches the player already on the block).
+    room.sessionTimerSeconds = room.bidTimerSeconds
+    room.nextPlayerAt = null
+    room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
     room.pausedRemainingMs = null
     this.notify(room, 'info', `Player #${player.playerNumber} — ${player.name} is on the block!`)
   }
@@ -846,18 +893,23 @@ export class AuctionEngine {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     const bid = room.currentBid
     if (!player || !bid) return
-    await this.db.$transaction([
-      this.db.player.update({
-        where: { id: player.id },
+    // Compare-and-swap on "still on the block in this cycle": if a previous
+    // attempt committed but its reply was lost (dropped DB connection) and the
+    // timer retries, the team must not be charged twice.
+    const applied = await this.db.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
+      const claimed = await tx.player.updateMany({
+        where: { id: player.id, status: 'LIVE', auctionCycle: player.auctionCycle },
         data: { status: 'SOLD', soldPrice: bid.amount, soldToTeamId: bid.teamId },
-      }),
-      this.db.team.update({ where: { id: bid.teamId }, data: { spent: { increment: bid.amount } } }),
-      this.db.auction.update({
+      })
+      if (claimed.count !== 1) return false
+      await tx.team.update({ where: { id: bid.teamId }, data: { spent: { increment: bid.amount } } })
+      await tx.auction.update({
         where: { id: room.auctionId },
         data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
-      }),
+      })
       // Cycle 0 is the first sale; anything above is a sale from a re-auction.
-      this.db.auctionEvent.create({
+      await tx.auctionEvent.create({
         data: this.auditRow(room, {
           type: 'SALE',
           cycle: player.auctionCycle,
@@ -867,8 +919,26 @@ export class AuctionEngine {
           amount: bid.amount,
           actor,
         }),
-      }),
-    ])
+      })
+      return true
+    })
+    if (!applied) {
+      const row = await this.db.player.findUnique({ where: { id: player.id } })
+      const alreadySold = row?.status === 'SOLD' && row.soldToTeamId === bid.teamId && row.soldPrice === bid.amount
+      if (!alreadySold) {
+        // Something else changed the player — trust the database, not memory.
+        console.error(`[engine] sale of ${player.id} skipped: player is ${row?.status ?? 'missing'} in the database`)
+        await this.resyncPool(room)
+        room.currentPlayerId = null
+        room.currentBid = null
+        room.currentBidHistory = []
+        room.stage = 0
+        room.timerEndsAt = null
+        this.broadcast(room)
+        return
+      }
+      // else: the earlier attempt did commit — just bring memory up to date below.
+    }
     const pi = room.players.findIndex((p) => p.id === player.id)
     if (pi >= 0) {
       room.players[pi] = { ...room.players[pi], status: 'SOLD', soldPrice: bid.amount, soldToTeamId: bid.teamId }
@@ -899,6 +969,7 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
+    this.scheduleAutoAdvance(room)
     this.notify(room, 'success', `${player.name} SOLD to ${bid.teamName} for ${bdt(bid.amount)}!`)
     this.broadcast(room)
   }
@@ -907,6 +978,7 @@ export class AuctionEngine {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     if (!player) return
     await this.db.$transaction([
+      this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.player.update({ where: { id: player.id }, data: { status: 'UNSOLD' } }),
       this.db.auction.update({
         where: { id: room.auctionId },
@@ -934,7 +1006,163 @@ export class AuctionEngine {
     room.stage = 0
     room.timerEndsAt = null
     room.pausedRemainingMs = null
+    this.scheduleAutoAdvance(room)
     this.notify(room, 'error', `${player.name} goes UNSOLD`)
+    this.broadcast(room)
+  }
+
+  /**
+   * "Re-Auction Unsold & Skipped Players": starts the next round with only the
+   * players nobody bought (UNSOLD) or the organizer passed over (SKIPPED).
+   * Sold players are untouched. Each returned player's auction cycle is bumped,
+   * so their earlier bids stay in the history but never count in the new round.
+   * Only allowed once the current round is complete — never mid-round, never
+   * automatically.
+   */
+  private async actionReauctionUnsold(socket: Socket, room: Room, actor: Actor): Promise<void> {
+    if (room.status === 'ENDED') return this.emitError(socket, 'The auction is finalized — reopen it first.')
+    if (room.status !== 'LIVE') return this.emitError(socket, 'Resume the auction before starting a new round.')
+    if (room.currentPlayerId) return this.emitError(socket, 'A player is on the block — finish this round first.')
+
+    await this.resyncPool(room)
+    if (room.players.some((p) => p.status === 'AVAILABLE')) {
+      return this.emitError(socket, 'This round still has players to auction — finish the round first.')
+    }
+    const returning = room.players.filter((p) => p.status === 'UNSOLD' || p.status === 'SKIPPED')
+    if (returning.length === 0) return this.emitError(socket, 'There are no unsold or skipped players to re-auction.')
+
+    const nextRound = room.round + 1
+    const ids = returning.map((p) => p.id)
+    await this.db.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
+      // Guarded on status, so a double click cannot return anyone twice.
+      await tx.player.updateMany({
+        where: { id: { in: ids }, status: { in: ['UNSOLD', 'SKIPPED'] } },
+        data: { status: 'AVAILABLE', auctionCycle: { increment: 1 } },
+      })
+      await tx.auction.update({ where: { id: room.auctionId }, data: { round: nextRound } })
+      await tx.auctionEvent.createMany({
+        data: returning.map((p) =>
+          this.auditRow(room, {
+            type: 'RE_AUCTION',
+            cycle: p.auctionCycle + 1,
+            player: p,
+            actor,
+            reason: `Round ${nextRound}: back in the pool (was ${p.status.toLowerCase()})`,
+          }),
+        ),
+      })
+    })
+
+    await this.resyncPool(room)
+    room.round = nextRound
+    room.lastResult = null
+    room.previousOwnerTeamId = null
+    // CATEGORY mode: start the round at the first category that has players again.
+    if (room.tournament.auctionMode === 'CATEGORY') {
+      const first = CATEGORY_CODES.find((code) => room.players.some((p) => p.category === code && p.status === 'AVAILABLE'))
+      if (first && first !== room.currentCategory) {
+        room.currentCategory = first
+        await this.db.auction.update({ where: { id: room.auctionId }, data: { currentCategory: first } })
+      }
+    }
+    this.scheduleAutoAdvance(room) // Auto Auction ON → the round's first player comes up by itself
+    this.notify(
+      room,
+      'success',
+      `Round ${nextRound} started — ${returning.length} unsold & skipped player${returning.length === 1 ? ' is' : 's are'} back under the hammer.`,
+    )
+    this.broadcast(room)
+  }
+
+  // ----------------------------------------------------------
+  // Auto Auction
+  // ----------------------------------------------------------
+  /**
+   * After a lot closes (or the block is otherwise empty while LIVE), schedule
+   * the automatic pick. Only a timestamp is stored — the ticker performs the
+   * pick under the room lock, so it happens exactly once no matter how many
+   * clients refresh, reconnect or toggle the setting.
+   */
+  private scheduleAutoAdvance(room: Room): void {
+    if (room.autoAdvance && room.status === 'LIVE' && !room.currentPlayerId) {
+      room.nextPlayerAt ??= Date.now() + AUTO_ADVANCE_DELAY_MS
+    } else {
+      room.nextPlayerAt = null
+    }
+  }
+
+  private autoAdvanceDue(room: Room, now: number): boolean {
+    return (
+      room.autoAdvance &&
+      room.status === 'LIVE' &&
+      !room.currentPlayerId &&
+      room.nextPlayerAt != null &&
+      now >= room.nextPlayerAt
+    )
+  }
+
+  /** Runs under the room lock. Re-checks everything: a manual pick may have won the race. */
+  private async autoAdvanceNow(room: Room): Promise<void> {
+    if (!this.autoAdvanceDue(room, Date.now())) return
+    room.nextPlayerAt = null // claim the pick before any await
+    try {
+      await this.resyncPool(room)
+      const picked = await this.pickNextPlayer(room)
+      if (!picked) this.notify(room, 'info', 'Auto Auction: no players left to bring up.')
+    } catch (err) {
+      // e.g. a dropped DB connection — try again shortly rather than stall.
+      console.error('[engine] auto-advance pick failed, retrying in 3s:', (err as Error).message)
+      if (!room.currentPlayerId) room.nextPlayerAt = Date.now() + 3000
+    }
+    this.broadcast(room)
+  }
+
+  private async actionSetAutoAdvance(
+    socket: Socket,
+    room: Room,
+    payload: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (typeof payload?.enabled !== 'boolean') return this.emitError(socket, 'enabled must be true or false')
+    const enabled = payload.enabled
+    if (enabled !== room.autoAdvance) {
+      await this.db.auction.update({ where: { id: room.auctionId }, data: { autoAdvance: enabled } })
+      room.autoAdvance = enabled
+      this.notify(
+        room,
+        'info',
+        enabled
+          ? room.currentPlayerId
+            ? 'Auto Auction ON — the next player comes up automatically after this one.'
+            : 'Auto Auction ON'
+          : 'Auto Auction OFF — use Next player to bring up each player.',
+      )
+    }
+    // Never touches a running session; arms (or cancels) only the next transition.
+    this.scheduleAutoAdvance(room)
+    this.broadcast(room)
+  }
+
+  private async actionSetBidTimer(
+    socket: Socket,
+    room: Room,
+    payload: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    const seconds = Number(payload?.seconds)
+    if (!Number.isInteger(seconds) || seconds < BID_TIMER_RANGE.min || seconds > BID_TIMER_RANGE.max) {
+      return this.emitError(socket, `Bidding duration must be ${BID_TIMER_RANGE.min}–${BID_TIMER_RANGE.max} seconds`)
+    }
+    if (seconds !== room.bidTimerSeconds) {
+      await this.db.auction.update({ where: { id: room.auctionId }, data: { bidTimerSeconds: seconds } })
+      room.bidTimerSeconds = seconds
+      this.notify(
+        room,
+        'info',
+        room.currentPlayerId
+          ? `Bidding duration set to ${seconds}s — applies from the next player.`
+          : `Bidding duration set to ${seconds}s.`,
+      )
+    }
     this.broadcast(room)
   }
 
@@ -944,6 +1172,20 @@ export class AuctionEngine {
   private async tick(): Promise<void> {
     const now = Date.now()
     for (const room of [...this.rooms.values()]) {
+      if (this.autoAdvanceDue(room, now) && !room.ticking) {
+        room.ticking = true
+        try {
+          await this.withLock(room.auctionId, async () => {
+            const live = this.rooms.get(room.auctionId)
+            if (live) await this.autoAdvanceNow(live)
+          })
+        } catch (err) {
+          console.error('[engine] auto-advance error', err)
+        } finally {
+          room.ticking = false
+        }
+        continue
+      }
       if (room.status !== 'LIVE' || !room.currentPlayerId || room.timerEndsAt == null) continue
       if (room.ticking || now < room.timerEndsAt) continue
       room.ticking = true
@@ -977,8 +1219,16 @@ export class AuctionEngine {
       this.broadcast(room)
     } else {
       room.timerEndsAt = null
-      if (room.currentBid) await this.finalizeSold(room)
-      else await this.finalizeUnsold(room)
+      try {
+        if (room.currentBid) await this.finalizeSold(room)
+        else await this.finalizeUnsold(room)
+      } catch (err) {
+        // Usually a dropped DB connection. Memory is only updated after a
+        // successful write, so retry shortly instead of leaving the player
+        // stranded on the block with no timer. finalizeSold is idempotent.
+        console.error('[engine] closing the lot failed, retrying in 2s:', (err as Error).message)
+        if (room.currentPlayerId) room.timerEndsAt = Date.now() + 2000
+      }
     }
   }
 
@@ -1105,8 +1355,12 @@ export class AuctionEngine {
       lastResult: null,
       soldFeed: [],
       bidTimerSeconds: auction.bidTimerSeconds,
+      sessionTimerSeconds: auction.bidTimerSeconds,
       goingIntervalSeconds: auction.goingIntervalSeconds,
       minIncrement: auction.minIncrement,
+      autoAdvance: auction.autoAdvance,
+      nextPlayerAt: null,
+      round: auction.round,
       auction,
       tournament,
       teams: [],
@@ -1207,9 +1461,12 @@ export class AuctionEngine {
     // Resume timers after restart.
     if (room.status === 'LIVE' && room.currentPlayerId) {
       room.stage = 0
-      room.timerEndsAt = Date.now() + room.bidTimerSeconds * 1000
+      room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
     } else if (room.status === 'PAUSED' && room.currentPlayerId) {
-      room.pausedRemainingMs = room.bidTimerSeconds * 1000
+      room.pausedRemainingMs = room.sessionTimerSeconds * 1000
+    } else if (room.status === 'LIVE') {
+      // Empty block after a restart: Auto Auction carries on by itself.
+      this.scheduleAutoAdvance(room)
     }
     return room
   }
@@ -1256,6 +1513,9 @@ export class AuctionEngine {
     room.goingIntervalSeconds = row.goingIntervalSeconds
     room.minIncrement = row.minIncrement
     room.allowPreviousOwnerRebid = row.allowPreviousOwnerRebid
+    room.autoAdvance = row.autoAdvance
+    if (!room.autoAdvance) room.nextPlayerAt = null
+    room.round = row.round
   }
 
   /** Refreshes DB-backed caches (auction/tournament rows, teams+squads, players). */
@@ -1399,7 +1659,11 @@ export class AuctionEngine {
       soldFeed: room.soldFeed,
       minIncrement: room.minIncrement,
       bidTimerSeconds: room.bidTimerSeconds,
+      sessionTimerSeconds: room.sessionTimerSeconds,
       goingIntervalSeconds: room.goingIntervalSeconds,
+      autoAdvance: room.autoAdvance,
+      nextPlayerAt: room.nextPlayerAt,
+      round: room.round,
       previousOwnerTeamId: room.previousOwnerTeamId,
       allowPreviousOwnerRebid: room.allowPreviousOwnerRebid,
     }

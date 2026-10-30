@@ -148,6 +148,12 @@ model Auction {
   // false = a team can only be bid for by the manager the organizer linked or
   // invited; true = any logged-in manager may claim an unassigned team in the room.
   allowOpenClaim          Boolean  @default(false)
+  // Auto Auction: when a lot closes, the engine brings the next random player
+  // to the block by itself (after a short pause for the SOLD/UNSOLD call).
+  autoAdvance             Boolean  @default(false)
+  // Re-auction rounds: 1 = the main auction; each "Re-Auction Unsold &
+  // Skipped Players" starts the next round with only those players.
+  round                   Int      @default(1)
   createdAt               DateTime @default(now())
 
   tournament Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
