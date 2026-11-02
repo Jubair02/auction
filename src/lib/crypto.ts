@@ -12,7 +12,10 @@ let cachedSecret: string | null = null
 
 export function getAuctionSecret(): string {
   if (cachedSecret) return cachedSecret
-  const secret = process.env.AUCTION_SECRET ?? ''
+  // Hosting dashboards keep whatever is pasted, so a value copied from .env
+  // with its quotes, or with a trailing newline, would silently differ from
+  // the same secret on the other host. Normalise both forms away.
+  const secret = (process.env.AUCTION_SECRET ?? '').trim().replace(/^(['"])(.*)\1$/, '$2')
   if (secret.length < MIN_SECRET_LENGTH) {
     throw new Error(
       `AUCTION_SECRET must be set to a random string of at least ${MIN_SECRET_LENGTH} characters ` +
@@ -47,8 +50,34 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url')
 }
 
+/**
+ * Short public fingerprint of the secret (8 hex chars of its SHA-256). It cannot
+ * be used to recover or forge anything, but comparing it between the website and
+ * the auction service shows at once whether both run with the same secret.
+ */
+export function secretFingerprint(): string {
+  return createHash('sha256').update(getAuctionSecret()).digest('hex').slice(0, 8)
+}
+
+/** Why a token failed verification, for an error message that says what to fix. */
+export function explainTokenFailure(token: string): string {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[0] ?? '', 'base64url').toString('utf8')) as {
+      exp?: number
+      kid?: string
+    }
+    if (payload.kid && payload.kid !== secretFingerprint()) {
+      return `AUCTION_SECRET mismatch: the website signed this pass with secret ${payload.kid}, but the auction service uses ${secretFingerprint()}. Set the exact same AUCTION_SECRET on both hosts.`
+    }
+    if (payload.exp && payload.exp < Date.now()) return 'Your room pass has expired — refresh your seat'
+  } catch {
+    // not a token we can read
+  }
+  return 'Invalid or expired token'
+}
+
 export function signToken(payload: Record<string, unknown>, ttlSeconds: number): string {
-  const body = { ...payload, exp: Date.now() + ttlSeconds * 1000 }
+  const body = { ...payload, kid: secretFingerprint(), exp: Date.now() + ttlSeconds * 1000 }
   const data = b64url(JSON.stringify(body))
   const sig = createHmac('sha256', getAuctionSecret()).update(data).digest('base64url')
   return `${data}.${sig}`

@@ -5,7 +5,16 @@ import assert from 'node:assert/strict'
 // Must be set before the first sign/verify (the secret is read lazily and cached).
 process.env.AUCTION_SECRET = 'test-secret-'.padEnd(48, 'x')
 
-const { generateOneTimeToken, hashOneTimeToken, hashPassword, signToken, verifyPassword, verifyToken } = await import(
+const {
+  explainTokenFailure,
+  generateOneTimeToken,
+  hashOneTimeToken,
+  hashPassword,
+  secretFingerprint,
+  signToken,
+  verifyPassword,
+  verifyToken,
+} = await import(
   './crypto.ts'
 )
 
@@ -25,8 +34,15 @@ describe('tokens', () => {
     assert.deepEqual({ ...verifyToken<{ sub: string; role: string }>(token), exp: undefined }, {
       sub: 'u1',
       role: 'ORGANIZER',
+      kid: secretFingerprint(),
       exp: undefined,
     })
+  })
+
+  it('names a secret mismatch instead of a generic failure', () => {
+    const foreign = `${Buffer.from(JSON.stringify({ sub: 'u1', kid: 'deadbeef', exp: Date.now() + 60_000 })).toString('base64url')}.sig`
+    assert.equal(verifyToken(foreign), null)
+    assert.match(explainTokenFailure(foreign), /AUCTION_SECRET mismatch/)
   })
 
   it('rejects a tampered payload or signature', () => {

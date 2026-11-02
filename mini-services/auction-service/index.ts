@@ -5,7 +5,7 @@
 import './env' // MUST be first: loads DATABASE_URL / AUCTION_SECRET from the parent .env
 import { createServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
-import { getAuctionSecret, verifyToken } from '../../src/lib/crypto'
+import { explainTokenFailure, getAuctionSecret, secretFingerprint, verifyToken } from '../../src/lib/crypto'
 import { createResilientClient } from '../../src/lib/db-resilience'
 import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
@@ -104,7 +104,11 @@ io.on('connection', (socket) => {
       if (!roomCode || !token) return ack?.({ ok: false, error: 'roomCode and token are required' })
 
       const identity = verifyToken<SocketIdentity>(token)
-      if (!identity || !identity.auctionId) return ack?.({ ok: false, error: 'Invalid or expired token' })
+      if (!identity || !identity.auctionId) {
+        const reason = explainTokenFailure(token)
+        console.warn(`[auction-service] join rejected for ${roomCode}: ${reason}`)
+        return ack?.({ ok: false, error: reason })
+      }
 
       const auction = await db.auction.findUnique({ where: { roomCode } })
       if (!auction) return ack?.({ ok: false, error: 'Room not found' })
@@ -188,6 +192,8 @@ io.on('connection', (socket) => {
 const PORT = Number(process.env.PORT) || 3003
 httpServer.listen(PORT, () => {
   console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/")`)
+  // Must equal the "secret" value from the website's /api/health.
+  console.log(`[auction-service] AUCTION_SECRET fingerprint: ${secretFingerprint()}`)
 })
 
 // Graceful shutdown
