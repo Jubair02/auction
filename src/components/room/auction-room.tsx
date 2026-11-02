@@ -246,6 +246,26 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
     }
   }
 
+  // A pass saved in this tab can stop working (it expired, or the server's
+  // secret changed). Instead of showing an error the user can't fix with
+  // Retry, get a fresh pass once: organizers are re-seated automatically,
+  // managers/viewers go back to the join card. Tried once per pass, so a
+  // fresh pass that is also rejected still shows the real error.
+  const [recoveredToken, setRecoveredToken] = useState<string | null>(null)
+  useEffect(() => {
+    if (!sock.joinError || !token || recoveredToken === token) return
+    if (!/token|pass|AUCTION_SECRET/i.test(sock.joinError)) return
+    const t0 = setTimeout(() => {
+      setRecoveredToken(token)
+      if (identity?.role === 'ORGANIZER') {
+        void refreshOrganizerSeat()
+      } else {
+        leaveRoom()
+      }
+    }, 0)
+    return () => clearTimeout(t0)
+  }, [sock.joinError, token, recoveredToken, identity?.role])
+
   // ---------- not found ----------
   if (phase === 'notfound') {
     return (
