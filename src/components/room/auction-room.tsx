@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Eye, Gavel, Loader2, LogOut, RefreshCw, ShieldAlert, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Eye, Gavel, Loader2, LogOut, Maximize2, Minimize2, RefreshCw, ShieldAlert, Wifi, WifiOff } from 'lucide-react'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { useAppStore } from '@/lib/store'
+import { useFullscreen } from '@/lib/use-fullscreen'
 import {
   clearRoomIdentity,
   loadRoomIdentity,
@@ -18,8 +19,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AuctionStage } from './stage'
-import { BidPanel } from './bid-panel'
+import { BidPanel, MobileBidBar } from './bid-panel'
 import { OrganizerControls } from './organizer-controls'
 import { TeamsPanel } from './teams-panel'
 import { ActivityFeed, ParticipantsPanel } from './participants-panel'
@@ -47,6 +49,7 @@ const STRINGS = {
     goBack: 'Go back',
     cricket: 'Cricket',
     football: 'Football',
+    otherSport: 'Others',
     category: 'Category',
     normal: 'Normal',
     status: { READY: 'Ready', LIVE: 'Live', PAUSED: 'Paused', ENDED: 'Ended' },
@@ -55,6 +58,11 @@ const STRINGS = {
     live: 'Live',
     joining: 'Joining…',
     connecting: 'Connecting…',
+    tabTeams: 'Teams',
+    tabPeople: 'People',
+    tabActivity: 'Activity',
+    fullScreen: 'Full screen',
+    exitFullScreen: 'Exit full screen',
   },
   bn: {
     unreachable: 'রুমে পৌঁছানো যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।',
@@ -74,6 +82,7 @@ const STRINGS = {
     goBack: 'ফিরে যান',
     cricket: 'ক্রিকেট',
     football: 'ফুটবল',
+    otherSport: 'অন্যান্য',
     category: 'ক্যাটাগরি',
     normal: 'সাধারণ',
     status: { READY: 'প্রস্তুত', LIVE: 'লাইভ', PAUSED: 'বিরতি', ENDED: 'শেষ' },
@@ -82,6 +91,11 @@ const STRINGS = {
     live: 'লাইভ',
     joining: 'যোগ দিচ্ছে…',
     connecting: 'সংযোগ হচ্ছে…',
+    tabTeams: 'দলসমূহ',
+    tabPeople: 'অংশগ্রহণকারী',
+    tabActivity: 'অ্যাক্টিভিটি',
+    fullScreen: 'ফুল স্ক্রিন',
+    exitFullScreen: 'ফুল স্ক্রিন বন্ধ করুন',
   },
 } satisfies Strings<{
   unreachable: string
@@ -101,6 +115,7 @@ const STRINGS = {
   goBack: string
   cricket: string
   football: string
+  otherSport: string
   category: string
   normal: string
   status: Record<AuctionStatus, string>
@@ -109,6 +124,11 @@ const STRINGS = {
   live: string
   joining: string
   connecting: string
+  tabTeams: string
+  tabPeople: string
+  tabActivity: string
+  fullScreen: string
+  exitFullScreen: string
 }>
 
 /** fatalError marker for a network failure — rendered in the viewer's language. */
@@ -134,6 +154,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
   const [organizerPending, setOrganizerPending] = useState(false)
 
   const sock = useAuctionSocket(roomCode, token)
+  const { isFullscreen } = useFullscreen()
 
   // Reset room-scoped state when the room code changes (adjust during render — no effect needed).
   const [roomKey, setRoomKey] = useState(roomCode)
@@ -325,7 +346,14 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
     state && identity?.teamId ? state.teams.find((team) => team.id === identity.teamId) : undefined
 
   return (
-    <div className="container mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-6">
+    <div
+      className={cn(
+        'container mx-auto px-3 py-4 sm:px-4 sm:py-6',
+        isFullscreen ? 'max-w-[1680px]' : 'max-w-7xl',
+        // keeps the page clear of the phone bid bar
+        role === 'MANAGER' && state && 'pb-32 lg:pb-6'
+      )}
+    >
       <RoomHeader
         info={info}
         liveStatus={sock.state?.status ?? null}
@@ -391,8 +419,8 @@ type LiveState = RoomState
 function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
   const canSelect = state.status === 'LIVE' && !state.currentPlayer
   return (
-    <div className="mt-4 grid items-start gap-5 lg:grid-cols-[1fr_380px]">
-      <div className="space-y-5 lg:col-start-1 lg:row-start-1">
+    <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="lg:col-start-1 lg:row-start-1">
         <AuctionStage
           state={state}
           clockOffset={sock.clockOffset}
@@ -400,15 +428,14 @@ function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
         />
       </div>
 
+      {/* the cockpit: controls first, everything else one tab away */}
       <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-        <PoolKpiStrip state={state} />
         <OrganizerControls state={state} onAction={sock.organizerAction} clockOffset={sock.clockOffset} />
-        <TeamsPanel state={state} />
-        <ParticipantsPanel state={state} />
-        <ActivityFeed notifications={sock.notifications} />
+        <RoomSideTabs state={state} notifications={sock.notifications} tabs={['teams', 'people', 'activity']} />
       </div>
 
-      <div className="space-y-4 lg:col-start-1 lg:row-start-2">
+      <div className="space-y-3 lg:col-start-1 lg:row-start-2">
+        <PoolKpiStrip state={state} />
         <PlayerPoolPanel state={state} canSelect={canSelect} onAction={sock.organizerAction} />
       </div>
     </div>
@@ -425,25 +452,28 @@ function ManagerLayout({
   myTeam: RoomTeam | undefined
 }) {
   return (
-    <div className="mt-4 grid items-start gap-5 lg:grid-cols-[1fr_360px]">
-      <div className="lg:col-start-1 lg:row-start-1">
-        <AuctionStage
-          state={state}
-          clockOffset={sock.clockOffset}
-          onViewResults={() => navigate(`/results/${state.tournamentId}`)}
-        />
+    <>
+      <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <AuctionStage
+            state={state}
+            clockOffset={sock.clockOffset}
+            onViewResults={() => navigate(`/results/${state.tournamentId}`)}
+          />
+        </div>
+
+        <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <BidPanel state={state} myTeam={myTeam} onBid={sock.placeBid} />
+          <RoomSideTabs state={state} notifications={sock.notifications} tabs={['activity', 'teams', 'people']} />
+        </div>
+
+        <div className="lg:col-start-1 lg:row-start-2">
+          <SquadPanel state={state} myTeam={myTeam} />
+        </div>
       </div>
 
-      <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-        <BidPanel state={state} myTeam={myTeam} onBid={sock.placeBid} />
-        <ParticipantsPanel state={state} />
-        <ActivityFeed notifications={sock.notifications} />
-      </div>
-
-      <div className="lg:col-start-1 lg:row-start-2">
-        <SquadPanel state={state} myTeam={myTeam} />
-      </div>
-    </div>
+      <MobileBidBar state={state} myTeam={myTeam} onBid={sock.placeBid} />
+    </>
   )
 }
 
@@ -473,6 +503,60 @@ function ViewerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
 
 // ---------- chrome ----------
 
+type SideTab = 'teams' | 'people' | 'activity'
+
+/** Teams, participants and the activity feed behind one tab strip, instead of three stacked cards. */
+function RoomSideTabs({
+  state,
+  notifications,
+  tabs,
+}: {
+  state: LiveState
+  notifications: Sock['notifications']
+  /** Tab order — the first one opens by default. */
+  tabs: SideTab[]
+}) {
+  const t = useStrings(STRINGS)
+  const online = state.participants.filter((p) => p.online).length + state.viewersOnline
+  const label: Record<SideTab, React.ReactNode> = {
+    teams: (
+      <>
+        {t.tabTeams} <span className="text-xs tabular-nums text-muted-foreground">{state.teams.length}</span>
+      </>
+    ),
+    people: (
+      <>
+        {t.tabPeople} <span className="text-xs tabular-nums text-muted-foreground">{online}</span>
+      </>
+    ),
+    activity: t.tabActivity,
+  }
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <Tabs defaultValue={tabs[0]} className="gap-0">
+        <div className="border-b p-2">
+          <TabsList className="w-full">
+            {tabs.map((tab) => (
+              <TabsTrigger key={tab} value={tab}>
+                {label[tab]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+        <TabsContent value="teams" className="max-h-[28rem] overflow-y-auto p-3">
+          <TeamsPanel state={state} embedded />
+        </TabsContent>
+        <TabsContent value="people" className="max-h-[28rem] overflow-y-auto p-2">
+          <ParticipantsPanel state={state} embedded />
+        </TabsContent>
+        <TabsContent value="activity" className="max-h-[28rem] overflow-y-auto p-2">
+          <ActivityFeed notifications={notifications} embedded />
+        </TabsContent>
+      </Tabs>
+    </Card>
+  )
+}
+
 function PoolKpiStrip({ state }: { state: LiveState }) {
   const items = [
     { label: 'Available', value: state.pool.available, tone: 'text-emerald-700' },
@@ -482,11 +566,11 @@ function PoolKpiStrip({ state }: { state: LiveState }) {
     { label: 'Total', value: state.pool.total, tone: 'text-foreground' },
   ]
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" aria-label="Player pool counts">
+    <div className="grid grid-cols-5 divide-x rounded-xl border bg-card" aria-label="Player pool counts">
       {items.map((i) => (
-        <div key={i.label} className="rounded-lg border bg-card px-2 py-2 text-center">
-          <p className={cn('text-lg font-black leading-tight tabular-nums', i.tone)}>{i.value}</p>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i.label}</p>
+        <div key={i.label} className="px-1 py-2.5 text-center">
+          <p className={cn('text-lg font-black leading-tight tabular-nums sm:text-xl', i.tone)}>{i.value}</p>
+          <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i.label}</p>
         </div>
       ))}
     </div>
@@ -512,15 +596,19 @@ function RoomHeader({
   onLeave?: () => void
 }) {
   const t = useStrings(STRINGS)
+  const fullscreen = useFullscreen()
   const status = liveStatus ?? info.status
   return (
-    <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4">
+    <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-4">
       <div className="flex min-w-0 items-center gap-3">
         <Button
           variant="ghost"
           size="icon"
           className="h-9 w-9 shrink-0"
-          onClick={() => navigate(role === 'VIEWER' ? '/' : '/dashboard')}
+          onClick={() => {
+            if (fullscreen.isFullscreen) fullscreen.toggle()
+            navigate(role === 'VIEWER' ? '/' : '/dashboard')
+          }}
           aria-label={t.goBack}
         >
           <ArrowLeft className="h-4.5 w-4.5" />
@@ -530,7 +618,7 @@ function RoomHeader({
             <Badge variant="outline" className="font-mono text-xs font-bold tracking-[0.18em]">
               {info.roomCode}
             </Badge>
-            <Badge variant="secondary" className="text-xs">{info.sport === 'CRICKET' ? t.cricket : t.football}</Badge>
+            <Badge variant="secondary" className="text-xs">{info.sport === 'CRICKET' ? t.cricket : info.sport === 'FOOTBALL' ? t.football : t.otherSport}</Badge>
             <Badge variant="outline" className="text-xs">{info.mode === 'CATEGORY' ? t.category : t.normal}</Badge>
             <span
               className={cn(
@@ -554,6 +642,19 @@ function RoomHeader({
           <span className="hidden text-xs font-medium text-muted-foreground md:inline">
             {identityName} · {t.role[role]}
           </span>
+        ) : null}
+        {fullscreen.supported ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={fullscreen.toggle}
+            aria-label={fullscreen.isFullscreen ? t.exitFullScreen : t.fullScreen}
+            title={fullscreen.isFullscreen ? t.exitFullScreen : t.fullScreen}
+          >
+            {fullscreen.isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            <span className="ml-1.5 hidden lg:inline">{fullscreen.isFullscreen ? t.exitFullScreen : t.fullScreen}</span>
+          </Button>
         ) : null}
         {onLeave ? (
           <Button variant="ghost" size="sm" className="h-9 text-muted-foreground hover:text-foreground" onClick={onLeave}>

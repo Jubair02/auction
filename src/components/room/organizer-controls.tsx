@@ -121,8 +121,6 @@ export function OrganizerControls({ state, onAction, clockOffset = 0 }: Organize
             />
           ) : null}
 
-          {!ended ? <AutoAuctionPanel state={state} onAction={onAction} clockOffset={clockOffset} /> : null}
-
           {(live || paused) ? (
             <>
               <Button
@@ -194,10 +192,12 @@ export function OrganizerControls({ state, onAction, clockOffset = 0 }: Organize
               </Button>
             </div>
           ) : null}
+
+          {!ended ? <CategoryChips state={state} onAction={onAction} /> : null}
+
+          {!ended ? <AutoAuctionPanel state={state} onAction={onAction} clockOffset={clockOffset} /> : null}
         </CardContent>
       </Card>
-
-      <CategoryChips state={state} onAction={onAction} />
 
       {/* confirms */}
       <AlertDialog open={confirm === 'sell'} onOpenChange={(o) => !o && setConfirm(null)}>
@@ -309,17 +309,13 @@ function ConfirmShell({
   )
 }
 
-/** Category A–E chips with live available counts (category mode only). */
+/** Category A–E chips with live available counts (category mode only) — a section of the controls card. */
 export function CategoryChips({ state, onAction }: OrganizerControlsProps) {
   if (state.mode !== 'CATEGORY' || state.categories.length === 0) return null
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
-          Selling order — categories
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
+    <div className="space-y-2 border-t pt-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Selling order — categories</p>
+      <div className="flex flex-wrap gap-2">
         {state.categories.map((c) => {
           const activeCat = state.currentCategory === c.code
           const depleted = c.available === 0
@@ -345,8 +341,8 @@ export function CategoryChips({ state, onAction }: OrganizerControlsProps) {
             </button>
           )
         })}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 

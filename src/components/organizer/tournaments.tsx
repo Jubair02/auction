@@ -142,6 +142,7 @@ export default function TournamentsList() {
               <SelectItem value="ALL">All sports</SelectItem>
               <SelectItem value="CRICKET">Cricket</SelectItem>
               <SelectItem value="FOOTBALL">Football</SelectItem>
+              <SelectItem value="OTHER">Others</SelectItem>
             </SelectContent>
           </Select>
           <Select value={status} onValueChange={setStatus}>

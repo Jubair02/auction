@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { isSport, type TournamentDetail } from '@/lib/types'
 import { jsonError } from '@/lib/auth'
 import {
   clampInt,
@@ -7,6 +8,8 @@ import {
   readJson,
   requireSession,
   requireSessionRole,
+  parseOtherSportDetails,
+  serializeTournamentFull,
   serializeTournamentSummary,
 } from '../_lib/helpers'
 
@@ -59,8 +62,10 @@ export async function POST(req: Request) {
     return jsonError('Tournament name must be 2–80 characters', 400)
   }
 
-  const sport = body.sport === 'FOOTBALL' ? 'FOOTBALL' : body.sport === 'CRICKET' ? 'CRICKET' : null
-  if (!sport) return jsonError('Sport must be CRICKET or FOOTBALL', 400)
+  const sport = isSport(body.sport) ? body.sport : null
+  if (!sport) return jsonError('Sport must be CRICKET, FOOTBALL or OTHER', 400)
+  const other = parseOtherSportDetails(sport, body, true)
+  if (!other.ok) return jsonError(other.error, 400)
 
   const auctionMode =
     body.auctionMode === 'NORMAL' ? 'NORMAL' : body.auctionMode === 'CATEGORY' ? 'CATEGORY' : null
@@ -97,6 +102,7 @@ export async function POST(req: Request) {
     data: {
       name,
       sport,
+      ...other.data,
       tournamentType: optionalString(body.tournamentType, 60),
       description: optionalString(body.description, 2000),
       location: optionalString(body.location, 120),
@@ -109,5 +115,14 @@ export async function POST(req: Request) {
     },
   })
 
-  return Response.json({ tournament: serializeTournamentSummary(tournament) }, { status: 201 })
+  // A new tournament has no players, teams or auction yet, so this is exactly
+  // what GET /api/tournaments/:id would return. Sending it now lets the Manage
+  // page open instantly instead of making a second round trip for it.
+  const detail: TournamentDetail = {
+    tournament: serializeTournamentFull(tournament),
+    players: [],
+    teams: [],
+    auction: null,
+  }
+  return Response.json({ tournament: serializeTournamentSummary(tournament), detail }, { status: 201 })
 }

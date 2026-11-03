@@ -53,9 +53,8 @@ import { apiDelete, apiDownload, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import {
   CATEGORIES,
-  CRICKET_ROLES,
+  rolesForTournament,
   DEFAULT_CATEGORY_BASE_PRICES,
-  FOOTBALL_ROLES,
   type AuctionMode,
   type PlayerDTO,
   type PlayerStatus,
@@ -63,10 +62,6 @@ import {
 } from '@/lib/types'
 
 const ALL_STATUSES: PlayerStatus[] = ['AVAILABLE', 'LIVE', 'SOLD', 'UNSOLD', 'SKIPPED']
-
-function rolesFor(sport: Sport): readonly string[] {
-  return sport === 'FOOTBALL' ? FOOTBALL_ROLES : CRICKET_ROLES
-}
 
 interface PlayerFormState {
   name: string
@@ -93,6 +88,7 @@ function emptyForm(mode: AuctionMode, basePrice: number): PlayerFormState {
 export function PlayersTab({
   tournamentId,
   sport,
+  playerRoles,
   auctionMode,
   basePrice,
   players,
@@ -101,6 +97,8 @@ export function PlayersTab({
 }: {
   tournamentId: string
   sport: Sport
+  /** An "Others" tournament's own roles (empty → the sport's defaults). */
+  playerRoles?: string[]
   auctionMode: AuctionMode
   basePrice: number
   players: PlayerDTO[]
@@ -123,7 +121,7 @@ export function PlayersTab({
   const [deleteTarget, setDeleteTarget] = useState<PlayerDTO | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const roles = rolesFor(sport)
+  const roles = rolesForTournament({ sport, playerRoles })
 
   const filtered = useMemo(() => {
     return players.filter((p) => {

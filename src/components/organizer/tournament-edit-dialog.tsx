@@ -24,7 +24,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { apiPatch, ApiError } from '@/lib/api'
-import type { TournamentDetail } from '@/lib/types'
+import type { Sport, TournamentDetail } from '@/lib/types'
+import { OtherSportFields, otherSportError, otherSportFrom, otherSportPayload, type OtherSportValue } from '@/components/organizer/other-sport-fields'
 
 const TOURNAMENT_TYPES = [
   'Corporate Cricket',
@@ -62,7 +63,8 @@ export function TournamentEditDialog({
   onSaved: () => Promise<void>
 }) {
   const [name, setName] = useState(tournament.name)
-  const [sport, setSport] = useState<'CRICKET' | 'FOOTBALL'>(tournament.sport)
+  const [sport, setSport] = useState<Sport>(tournament.sport)
+  const [other, setOther] = useState<OtherSportValue>(() => otherSportFrom(tournament))
   const [tournamentType, setTournamentType] = useState(tournament.tournamentType ?? NO_TYPE)
   const [location, setLocation] = useState(tournament.location ?? '')
   const [description, setDescription] = useState(tournament.description ?? '')
@@ -88,11 +90,18 @@ export function TournamentEditDialog({
       return
     }
 
+    const otherError = sport === 'OTHER' ? otherSportError(other) : null
+    if (otherError) {
+      toast.error(otherError)
+      return
+    }
+
     setSaving(true)
     try {
       await apiPatch(`/api/tournaments/${tournament.id}`, {
         name: name.trim(),
         sport,
+        ...(sport === 'OTHER' ? otherSportPayload(other) : {}),
         tournamentType: tournamentType === NO_TYPE ? null : tournamentType,
         location: location.trim() || null,
         description: description.trim() || null,
@@ -133,16 +142,23 @@ export function TournamentEditDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="te-sport">Sport</Label>
-            <Select value={sport} onValueChange={(v) => setSport(v as 'CRICKET' | 'FOOTBALL')}>
+            <Select value={sport} onValueChange={(v) => setSport(v as Sport)}>
               <SelectTrigger id="te-sport" className="h-10 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="CRICKET">Cricket</SelectItem>
                 <SelectItem value="FOOTBALL">Football</SelectItem>
+                <SelectItem value="OTHER">Others</SelectItem>
               </SelectContent>
             </Select>
           </div>
+
+          {sport === 'OTHER' ? (
+            <div className="sm:col-span-2">
+              <OtherSportFields value={other} onChange={setOther} idPrefix="te" />
+            </div>
+          ) : null}
 
           <div className="space-y-1.5">
             <Label htmlFor="te-type">Type</Label>

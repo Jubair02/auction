@@ -3,11 +3,13 @@
 // App shell + hash router. The entire SPA lives under the single Next.js route "/".
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Gavel, LayoutDashboard, Loader2, LogIn, LogOut, Megaphone, ShieldCheck, UserPlus } from 'lucide-react'
-import { Toaster as SonnerToaster } from 'sonner'
+import { Gavel, Loader2, LogIn, LogOut, Megaphone, ShieldCheck, UserPlus } from 'lucide-react'
+import { Toaster as SonnerToaster, toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { apiGet } from '@/lib/api'
-import { navigate, useRoute } from '@/lib/router'
+import { navigate, setReturnTo, useRoute } from '@/lib/router'
+import { useFullscreen } from '@/lib/use-fullscreen'
+import { canOpen, DASHBOARD_PATH, pageAccess } from '@/lib/access'
 import { type Strings, useLang, useLangBootstrap, useLangStore, useStrings } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -43,41 +45,17 @@ const RegisterPlayer = dynamic(() => import('@/components/register-player'), { l
 const MyTeamView = dynamic(() => import('@/components/manager/my-team'), { loading: () => <CenterLoader /> })
 const ResultsView = dynamic(() => import('@/components/results/results-view'), { loading: () => <CenterLoader /> })
 
-function RoleGate({
-  allowed,
-  user,
-  authLoading,
-  children,
-}: {
-  allowed: ('ADMIN' | 'ORGANIZER' | 'MANAGER')[]
-  user: ReturnType<typeof useAppStore.getState>['user']
-  authLoading: boolean
-  children: React.ReactNode
-}) {
-  if (authLoading) return <CenterLoader />
-  if (!user) {
-    return (
-      <AccessPanel
-        title="Login required"
-        description="Please log in to access this page."
-        action={
-          <Button onClick={() => navigate('/login')}>
-            <LogIn className="mr-2 h-4 w-4" /> Login
-          </Button>
-        }
-      />
-    )
-  }
-  if (!allowed.includes(user.role)) {
-    return (
-      <AccessPanel
-        title="Access restricted"
-        description={`This area is only for ${allowed.join(' / ').toLowerCase()} accounts. You are logged in as ${user.role.toLowerCase()}.`}
-        action={<Button variant="outline" onClick={() => navigate('/dashboard')}>Go to my dashboard</Button>}
-      />
-    )
-  }
-  return <>{children}</>
+/**
+ * Leaves a page the current user may not open. Replaces the history entry, so
+ * Back doesn't return to the blocked page and bounce again.
+ */
+function Redirect({ to, returnTo, notice }: { to: string; returnTo?: string; notice?: string }) {
+  useEffect(() => {
+    if (returnTo) setReturnTo(returnTo)
+    if (notice) toast.error(notice, { id: 'access-denied' })
+    navigate(to, { replace: true })
+  }, [to, returnTo, notice])
+  return <CenterLoader />
 }
 
 function CenterLoader() {
@@ -126,50 +104,56 @@ export default function AppRoot() {
   }, [fetchMe])
 
   const head = segs[0] ?? ''
+  // The live room drops the footer, and in browser full screen the header too —
+  // so a projector or TV shows only the auction.
+  const inRoom = head === 'room'
+  const roomFocus = useFullscreen().isFullscreen && inRoom
 
   const renderRoute = () => {
     // The landing page doesn't depend on who is logged in — show it without
     // waiting for the session check.
     if (head === '') return <Landing />
     if (!authChecked) return <CenterLoader />
+
+    // One access check for every page (rules in lib/access.ts).
+    if (!canOpen(segs, user?.role ?? null)) {
+      if (authLoading) return <CenterLoader />
+      const access = pageAccess(segs)
+      // Already logged in: login/register lead to the user's own dashboard.
+      if (access === 'guest') return <Redirect to={DASHBOARD_PATH} />
+      // Logged out: log in first, then come straight back here (if allowed).
+      if (!user) return <Redirect to="/login" returnTo={window.location.pathname + window.location.search} />
+      // Logged in with the wrong role: back to their own dashboard.
+      return <Redirect to={DASHBOARD_PATH} notice={t.noAccess} />
+    }
+
     switch (true) {
       case head === 'login' && segs.length === 1:
-        return authLoading ? <CenterLoader /> : user ? <RedirectDashboard /> : <AuthView mode="login" />
+        return <AuthView mode="login" />
       case head === 'register' && segs.length === 1:
-        return authLoading ? <CenterLoader /> : user ? <RedirectDashboard /> : <AuthView mode="register" />
+        return <AuthView mode="register" />
       case head === 'forgot-password' && segs.length === 1:
         return <ForgotPasswordView />
       // Works signed in or out — the link must always be usable.
       // Token in the fragment (/reset-password#<token>); the path form is kept for old links.
       case head === 'reset-password' && !!(segs[1] || fragment):
         return <ResetPasswordView token={segs[1] ?? fragment} />
+      // Each role's own dashboard, all at /dashboard.
       case head === 'dashboard' && segs.length === 1:
-        return authLoading ? <CenterLoader /> : !user ? (
-          <AccessPanel title="Login required" description="Please log in to open your dashboard." action={<Button onClick={() => navigate('/login')}><LogIn className="mr-2 h-4 w-4" /> Login</Button>} />
-        ) : user.role === 'ADMIN' ? (
-          <AdminView />
-        ) : user.role === 'ORGANIZER' ? (
-          <OrganizerDashboard />
-        ) : (
-          <ManagerDashboard />
-        )
+        return user?.role === 'ADMIN' ? <AdminView /> : user?.role === 'ORGANIZER' ? <OrganizerDashboard /> : <ManagerDashboard />
       case head === 'tournaments' && segs.length === 1:
-        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentsList /></RoleGate>
+        return <TournamentsList />
       case head === 'tournaments' && segs[1] === 'new':
-        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentCreate /></RoleGate>
+        return <TournamentCreate />
       // Both spellings are accepted: /tournaments/:id/history and /tournaments/history/:id
       case head === 'tournaments' && segs[2] === 'history' && !!segs[1]:
-        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><AuctionHistory tournamentId={segs[1]} /></RoleGate>
+        return <AuctionHistory tournamentId={segs[1]} />
       case head === 'tournaments' && segs[1] === 'history' && !!segs[2]:
-        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><AuctionHistory tournamentId={segs[2]} /></RoleGate>
+        return <AuctionHistory tournamentId={segs[2]} />
       case head === 'tournaments' && !!segs[1]:
-        return <RoleGate allowed={['ORGANIZER', 'ADMIN']} user={user} authLoading={authLoading}><TournamentDetail tournamentId={segs[1]} /></RoleGate>
+        return <TournamentDetail tournamentId={segs[1]} />
       case head === 'results' && !!segs[1]:
-        return authLoading ? <CenterLoader /> : !user ? (
-          <AccessPanel title="Login required" description="Please log in to view auction results." action={<Button onClick={() => navigate('/login')}><LogIn className="mr-2 h-4 w-4" /> Login</Button>} />
-        ) : (
-          <ResultsView tournamentId={segs[1]} />
-        )
+        return <ResultsView tournamentId={segs[1]} />
       case head === 'room' && !!segs[1]:
         return <AuctionRoom roomCode={(segs[1] || '').toUpperCase()} />
       case head === 'register-player' && segs.length === 2:
@@ -179,9 +163,9 @@ export default function AppRoot() {
       case head === 'join' && segs.length === 1:
         return <JoinRoomView />
       case head === 'my-team' && segs.length === 1:
-        return <RoleGate allowed={['MANAGER']} user={user} authLoading={authLoading}><MyTeamView /></RoleGate>
+        return <MyTeamView />
       case head === 'admin' && segs.length === 1:
-        return <RoleGate allowed={['ADMIN']} user={user} authLoading={authLoading}><AdminView /></RoleGate>
+        return <AdminView />
       default:
         return <NotFound />
     }
@@ -194,13 +178,10 @@ export default function AppRoot() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 print:hidden">
+      <header hidden={roomFocus} className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 print:hidden">
         <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4">
-          <button
-            className="flex items-center gap-2 rounded-md px-1 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-            onClick={() => navigate('/')}
-            aria-label="NeelamGhor home"
-          >
+          {/* Brand mark only — deliberately not a link, so clicking it never leaves the current page. */}
+          <div className="flex select-none items-center gap-2 px-1 py-1" aria-label="NeelamGhor">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Gavel className="h-4.5 w-4.5" aria-hidden />
             </span>
@@ -208,15 +189,12 @@ export default function AppRoot() {
               Neelam<span className="text-primary">Ghor</span>
             </span>
             <Badge variant="secondary" className="ml-1 hidden sm:inline-flex">BD</Badge>
-          </button>
+          </div>
 
           <nav className="flex items-center gap-1.5" aria-label="Main navigation">
             <LangToggle />
             {user ? (
               <>
-                <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => navigate('/dashboard')}>
-                  <LayoutDashboard className="mr-1.5 h-4 w-4" /> {t.dashboard}
-                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -238,16 +216,13 @@ export default function AppRoot() {
                       <Badge variant="secondary" className="mt-1.5">{user.role}</Badge>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => navigate('/dashboard')}>
-                      <LayoutDashboard className="mr-2 h-4 w-4" /> {t.dashboard}
-                    </DropdownMenuItem>
                     {user.role === 'MANAGER' && (
                       <>
                         <DropdownMenuItem onClick={() => navigate('/join')}>{t.joinRoom}</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => navigate('/my-team')}>{t.myTeam}</DropdownMenuItem>
+                        <DropdownMenuSeparator />
                       </>
                     )}
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => void logout()} variant="destructive">
                       <LogOut className="mr-2 h-4 w-4" /> {t.logout}
                     </DropdownMenuItem>
@@ -268,11 +243,11 @@ export default function AppRoot() {
         </div>
       </header>
 
-      <AnnouncementBanner />
+      {roomFocus ? null : <AnnouncementBanner />}
 
       <main className="flex-1">{renderRoute()}</main>
 
-      <footer className="mt-auto border-t bg-muted/40 pb-[env(safe-area-inset-bottom)] print:hidden">
+      <footer hidden={inRoom} className="mt-auto border-t bg-muted/40 pb-[env(safe-area-inset-bottom)] print:hidden">
         <div className="container mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-sm text-muted-foreground sm:flex-row">
           <p className="flex items-center gap-1.5">
             <Gavel className="h-3.5 w-3.5" aria-hidden />
@@ -289,7 +264,6 @@ export default function AppRoot() {
 
 const SHELL_STRINGS = {
   en: {
-    dashboard: 'Dashboard',
     joinRoom: 'Join auction room',
     myTeam: 'My team',
     logout: 'Log out',
@@ -297,9 +271,9 @@ const SHELL_STRINGS = {
     register: 'Register',
     tagline: 'Live player auctions for Bangladesh',
     footerFacts: '৳ BDT · Cricket & Football · Room-code joining',
+    noAccess: "You don't have access to that page — here is your dashboard.",
   },
   bn: {
-    dashboard: 'ড্যাশবোর্ড',
     joinRoom: 'নিলাম রুমে যোগ দিন',
     myTeam: 'আমার দল',
     logout: 'লগ আউট',
@@ -307,8 +281,9 @@ const SHELL_STRINGS = {
     register: 'রেজিস্টার',
     tagline: 'বাংলাদেশের লাইভ প্লেয়ার নিলাম',
     footerFacts: '৳ টাকা · ক্রিকেট ও ফুটবল · রুম কোড দিয়ে যোগদান',
+    noAccess: 'ওই পেজে আপনার প্রবেশাধিকার নেই — এই আপনার ড্যাশবোর্ড।',
   },
-} satisfies Strings<Record<'dashboard' | 'joinRoom' | 'myTeam' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts', string>>
+} satisfies Strings<Record<'joinRoom' | 'myTeam' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'noAccess', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {
@@ -361,9 +336,3 @@ function AnnouncementBanner() {
   )
 }
 
-function RedirectDashboard() {
-  useEffect(() => {
-    navigate('/dashboard')
-  }, [])
-  return <CenterLoader />
-}

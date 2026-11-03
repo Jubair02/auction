@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { apiPost, ApiError } from '@/lib/api'
 import { consumeReturnTo, navigate, peekReturnTo } from '@/lib/router'
+import { postLoginPath } from '@/lib/access'
 import { useAppStore } from '@/lib/store'
 import type { SafeUser, UserRole } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
@@ -163,7 +164,9 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
     setUser(user)
     const firstName = user.name.split(/\s+/)[0]
     toast.success(created ? t.welcomeNew(firstName) : t.welcomeBack(firstName))
-    navigate(consumeReturnTo() ?? '/dashboard')
+    // Back to the page they were trying to reach — only if their role may open
+    // it — otherwise straight to their own dashboard.
+    navigate(postLoginPath(consumeReturnTo(), user.role), { replace: true })
   }
 
   const submit = async (e: React.FormEvent) => {

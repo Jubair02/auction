@@ -58,7 +58,7 @@ import { invalidateCached, peekCached, useCachedGet } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate } from '@/lib/format'
-import type { TournamentDetail as TournamentDetailDTO, TournamentSummary } from '@/lib/types'
+import { sportLabel, type TournamentDetail as TournamentDetailDTO, type TournamentSummary } from '@/lib/types'
 
 const EXPORT_TYPES: { type: string; label: string }[] = [
   { type: 'players', label: 'Players' },
@@ -194,7 +194,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
             <TournamentStatusBadge status={t.status} />
           </h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span>{t.sport === 'FOOTBALL' ? 'Football' : 'Cricket'}</span>
+            <span>{sportLabel(t.sport, 'en', t.sportName)}</span>
             {t.tournamentType ? <span>{t.tournamentType}</span> : null}
             {t.location ? <span>{t.location}</span> : null}
             <span>Starts {formatDate(t.startDate)}</span>
@@ -314,7 +314,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
               <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
                 {[
                   { k: 'Name', v: t.name },
-                  { k: 'Sport', v: t.sport === 'FOOTBALL' ? 'Football' : 'Cricket' },
+                  { k: 'Sport', v: sportLabel(t.sport, 'en', t.sportName) },
                   { k: 'Type', v: t.tournamentType ?? '—' },
                   { k: 'Location', v: t.location ?? '—' },
                   { k: 'Start date', v: formatDate(t.startDate) },
@@ -358,6 +358,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
           <PlayersTab
             tournamentId={tournamentId}
             sport={t.sport}
+            playerRoles={t.playerRoles}
             auctionMode={t.auctionMode}
             basePrice={t.basePrice}
             players={players}
@@ -368,7 +369,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
 
         {/* ---------------- TEAMS ---------------- */}
         <TabsContent value="teams" className="mt-4">
-          <TeamsTab tournamentId={tournamentId} teams={teams} refetch={load} loading={loading} />
+          <TeamsTab tournamentId={tournamentId} teams={teams} refetch={load} loading={loading} defaultMaxSquad={t.playersPerTeam} />
         </TabsContent>
 
         {/* ---------------- REGISTRATIONS ---------------- */}

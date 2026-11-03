@@ -57,11 +57,14 @@ export function TeamsTab({
   teams,
   refetch,
   loading,
+  defaultMaxSquad,
 }: {
   tournamentId: string
   teams: TeamDTO[]
   refetch: () => Promise<void>
   loading: boolean
+  /** An "Others" tournament's players per team: pre-fills new teams' max squad. */
+  defaultMaxSquad?: number | null
 }) {
   const [addOpen, setAddOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -393,6 +396,7 @@ export function TeamsTab({
         <AddTeamDialog
           onClose={() => setAddOpen(false)}
           suggestedColor={suggestedColor}
+          defaultMaxSquad={defaultMaxSquad}
           saving={saving}
           onSubmit={addTeam}
         />
@@ -607,11 +611,13 @@ function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f:
 function AddTeamDialog({
   onClose,
   suggestedColor,
+  defaultMaxSquad,
   saving,
   onSubmit,
 }: {
   onClose: () => void
   suggestedColor: string
+  defaultMaxSquad?: number | null
   saving: boolean
   onSubmit: (f: TeamFormState) => Promise<void>
 }) {
@@ -621,8 +627,8 @@ function AddTeamDialog({
     captainName: '',
     logoUrl: null,
     budget: '200000',
-    maxSquad: '12',
-    minSquad: '9',
+    maxSquad: String(defaultMaxSquad ?? 12),
+    minSquad: String(Math.min(9, defaultMaxSquad ?? 12)),
   }))
 
   return (

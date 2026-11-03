@@ -32,6 +32,7 @@ const STRINGS = {
     errJoin: 'Could not join the room. Try again.',
     cricket: 'Cricket',
     football: 'Football',
+    otherSport: 'Others',
     categoryBids: 'Category bids',
     normalBids: 'Normal bids',
     joinAs: 'Join as',
@@ -71,6 +72,7 @@ const STRINGS = {
     errJoin: 'রুমে যোগ দেওয়া যায়নি। আবার চেষ্টা করুন।',
     cricket: 'ক্রিকেট',
     football: 'ফুটবল',
+    otherSport: 'অন্যান্য',
     categoryBids: 'ক্যাটাগরি বিড',
     normalBids: 'সাধারণ বিড',
     joinAs: 'যেভাবে যোগ দেবেন',
@@ -110,6 +112,7 @@ const STRINGS = {
   errJoin: string
   cricket: string
   football: string
+  otherSport: string
   categoryBids: string
   normalBids: string
   joinAs: string
@@ -216,7 +219,7 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
             <h1 className="text-xl font-black tracking-tight sm:text-2xl">{info.tournamentName}</h1>
             <div className="flex flex-wrap items-center justify-center gap-1.5">
               <Badge variant="outline" className="font-mono tracking-widest">{info.roomCode}</Badge>
-              <Badge variant="secondary">{info.sport === 'CRICKET' ? t.cricket : t.football}</Badge>
+              <Badge variant="secondary">{info.sport === 'CRICKET' ? t.cricket : info.sport === 'FOOTBALL' ? t.football : t.otherSport}</Badge>
               <Badge variant="outline">{info.mode === 'CATEGORY' ? t.categoryBids : t.normalBids}</Badge>
               <TournamentStatusBadge status={info.status} />
             </div>

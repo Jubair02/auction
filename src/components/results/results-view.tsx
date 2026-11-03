@@ -5,7 +5,7 @@ import { Download, Gavel, Loader2, Printer, ShieldAlert, Trophy } from 'lucide-r
 import { apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate, formatTime } from '@/lib/format'
-import type { ResultsData } from '@/lib/types'
+import { sportLabel, type ResultsData } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -110,7 +110,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
       <div className="mb-4 hidden text-center print:block">
         <p className="text-lg font-black">NeelamGhor — Auction Report</p>
         <p className="text-sm">
-          {tournament.name} · {tournament.sport === 'CRICKET' ? 'Cricket' : 'Football'}
+          {tournament.name} · {sportLabel(tournament.sport)}
           {tournament.roomCode ? ` · Room ${tournament.roomCode}` : ''} · {formatDate(tournament.startDate)}
         </p>
       </div>
@@ -124,7 +124,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <span className="flex items-center gap-1">
               <Trophy className="h-3.5 w-3.5" aria-hidden />
-              {tournament.sport === 'CRICKET' ? 'Cricket' : 'Football'}
+              {sportLabel(tournament.sport)}
             </span>
             {tournament.roomCode ? (
               <Badge variant="outline" className="font-mono text-xs tracking-[0.18em]">{tournament.roomCode}</Badge>

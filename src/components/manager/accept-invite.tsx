@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import type { Sport } from '@/lib/types'
 import { CheckCircle2, Loader2, LogIn, MailWarning, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -71,7 +72,7 @@ interface InviteInfo {
   teamName: string
   teamColor: string | null
   tournamentName: string
-  sport: 'CRICKET' | 'FOOTBALL'
+  sport: Sport
   budget: number
   expiresAt: string
 }

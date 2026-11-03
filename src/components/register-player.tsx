@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { sportLabel, type Sport } from '@/lib/types'
 import { CheckCircle2, ClipboardSignature, Loader2, MapPin } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -20,7 +21,7 @@ type RegisterPlayerStrings = {
   phoneRequired: string
   roleRequired: string
   loading: string
-  registrationFor: (sport: 'CRICKET' | 'FOOTBALL') => string
+  registrationFor: (sport: Sport, sportName?: string | null) => string
   starts: (date: string) => string
   registeredTitle: string
   registeredBody: (tournament: string) => string
@@ -46,7 +47,8 @@ const STRINGS = {
     phoneRequired: 'Enter your phone number so the organizer can reach you.',
     roleRequired: 'Pick your playing role.',
     loading: 'Loading…',
-    registrationFor: (sport) => `${sport === 'FOOTBALL' ? 'Football' : 'Cricket'} player registration`,
+    registrationFor: (sport, sportName) =>
+      sport === 'OTHER' && !sportName ? 'Player registration' : `${sportLabel(sport, 'en', sportName)} player registration`,
     starts: (date) => `· starts ${date}`,
     registeredTitle: "You're registered!",
     registeredBody: (tournament) =>
@@ -71,7 +73,8 @@ const STRINGS = {
     phoneRequired: 'ফোন নম্বর দিন, যাতে আয়োজক আপনার সাথে যোগাযোগ করতে পারেন।',
     roleRequired: 'আপনার খেলার ভূমিকা বেছে নিন।',
     loading: 'লোড হচ্ছে…',
-    registrationFor: (sport) => `${sport === 'FOOTBALL' ? 'ফুটবল' : 'ক্রিকেট'} খেলোয়াড় নিবন্ধন`,
+    registrationFor: (sport, sportName) =>
+      sport === 'OTHER' && !sportName ? 'খেলোয়াড় নিবন্ধন' : `${sportLabel(sport, 'bn', sportName)} খেলোয়াড় নিবন্ধন`,
     starts: (date) => `· শুরু ${date}`,
     registeredTitle: 'আপনার নিবন্ধন হয়ে গেছে!',
     registeredBody: (tournament) =>
@@ -93,7 +96,8 @@ const STRINGS = {
 
 interface RegistrationInfo {
   tournamentName: string
-  sport: 'CRICKET' | 'FOOTBALL'
+  sport: Sport
+  sportName?: string | null
   location: string | null
   startDate: string | null
   logoUrl: string | null
@@ -173,7 +177,7 @@ export default function RegisterPlayer({ code }: { code: string }) {
               )}
               <CardTitle className="text-xl font-extrabold">{info.tournamentName}</CardTitle>
               <CardDescription className="flex flex-wrap items-center justify-center gap-x-2">
-                <span>{t.registrationFor(info.sport)}</span>
+                <span>{t.registrationFor(info.sport, info.sportName)}</span>
                 {info.location ? (
                   <span className="inline-flex items-center gap-1">
                     <MapPin className="h-3.5 w-3.5" aria-hidden /> {info.location}

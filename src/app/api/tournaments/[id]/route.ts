@@ -1,10 +1,12 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { isSport } from '@/lib/types'
 import { jsonError } from '@/lib/auth'
 import {
   coercePositiveInt,
   isOwnerOrAdmin,
   parseDateInput,
+  parseOtherSportDetails,
   readJson,
   requireSession,
   serializeAuction,
@@ -108,10 +110,24 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   }
 
   if (body.sport !== undefined) {
-    if (body.sport !== 'CRICKET' && body.sport !== 'FOOTBALL') {
-      return jsonError('Sport must be CRICKET or FOOTBALL', 400)
+    if (!isSport(body.sport)) {
+      return jsonError('Sport must be CRICKET, FOOTBALL or OTHER', 400)
     }
     data.sport = body.sport
+  }
+
+  // "Others" details: validated against the sport the tournament will have.
+  // Switching to Others needs a game name; switching away clears them.
+  const nextSport = (data.sport as string | undefined) ?? tournament.sport
+  const otherFieldSent = ['sportName', 'playerRoles', 'playersPerTeam', 'playersOnField'].some((k) => body[k] !== undefined)
+  if (otherFieldSent || nextSport !== tournament.sport) {
+    const other = parseOtherSportDetails(nextSport, body, nextSport === 'OTHER' && tournament.sport !== 'OTHER')
+    if (!other.ok) return jsonError(other.error, 400)
+    const merged = { playersPerTeam: tournament.playersPerTeam, playersOnField: tournament.playersOnField, ...other.data }
+    if (merged.playersPerTeam && merged.playersOnField && merged.playersOnField > merged.playersPerTeam) {
+      return jsonError('Playing on field cannot be more than players per team', 400)
+    }
+    Object.assign(data, other.data)
   }
 
   if (body.auctionMode !== undefined) {

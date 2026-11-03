@@ -51,7 +51,7 @@ import { api, apiGet, apiPatch, ApiError } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate } from '@/lib/format'
-import type { AdminStats, SafeUser, TournamentSummary } from '@/lib/types'
+import { sportLabel, type AdminStats, type SafeUser, type TournamentSummary } from '@/lib/types'
 
 type AdminUser = SafeUser & { tournamentCount: number }
 type AdminTournament = TournamentSummary & { organizerName?: string }
@@ -468,7 +468,7 @@ function TournamentsTab() {
                       ) : null}
                     </TableCell>
                     <TableCell className="text-sm">{t.organizerName ?? '—'}</TableCell>
-                    <TableCell className="text-sm">{t.sport === 'FOOTBALL' ? 'Football' : 'Cricket'}</TableCell>
+                    <TableCell className="text-sm">{sportLabel(t.sport, 'en', t.sportName)}</TableCell>
                     <TableCell>
                       <TournamentStatusBadge status={t.status} />
                     </TableCell>
@@ -497,7 +497,7 @@ function TournamentsTab() {
                     <div className="min-w-0">
                       <p className="truncate font-bold">{t.name}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {t.organizerName ?? '—'} · {t.sport === 'FOOTBALL' ? 'Football' : 'Cricket'}
+                        {t.organizerName ?? '—'} · {sportLabel(t.sport, 'en', t.sportName)}
                       </p>
                     </div>
                     <TournamentStatusBadge status={t.status} />

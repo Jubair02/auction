@@ -69,8 +69,8 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
           <div
             className={
               sold
-                ? 'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-teal-300 bg-gradient-to-b from-teal-50 to-background px-4 py-10 text-center shadow-sm'
-                : 'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-rose-200 bg-gradient-to-b from-rose-50 to-background px-4 py-10 text-center shadow-sm'
+                ? 'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-teal-300 bg-gradient-to-b from-teal-50 to-background px-4 py-10 text-center shadow-sm dark:border-teal-400/40 dark:from-teal-400/15 dark:to-transparent sm:py-14'
+                : 'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-rose-200 bg-gradient-to-b from-rose-50 to-background px-4 py-10 text-center shadow-sm dark:border-rose-400/30 dark:from-rose-500/10 dark:to-transparent sm:py-14'
             }
           >
             {sold ? <SoldConfetti /> : null}
@@ -99,7 +99,7 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
                     </p>
                   </div>
                 </div>
-                <p className="text-3xl font-black tabular-nums text-teal-700 sm:text-4xl">
+                <p className="text-4xl font-black tabular-nums text-teal-700 dark:text-teal-300 sm:text-6xl">
                   {formatBDT(lastResult.price ?? 0)}
                 </p>
               </>

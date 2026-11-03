@@ -42,6 +42,7 @@ const STRINGS = {
     noTeam: 'No team attached to your seat',
     minimumBid: 'Minimum bid',
     yourMaximum: 'Your maximum',
+    maxShort: (amount: string) => `Max ${amount}`,
     heldBack: (amount: string, minSquad: number | undefined) =>
       `${amount} held back so you can still reach your minimum squad of ${minSquad}`,
     quickBids: 'Quick bid buttons',
@@ -82,6 +83,7 @@ const STRINGS = {
     noTeam: 'আপনার আসনের সাথে কোনো দল যুক্ত নেই',
     minimumBid: 'সর্বনিম্ন বিড',
     yourMaximum: 'আপনার সর্বোচ্চ',
+    maxShort: (amount: string) => `সর্বোচ্চ ${amount}`,
     heldBack: (amount: string, minSquad: number | undefined) =>
       `সর্বনিম্ন ${minSquad} জনের স্কোয়াড পূরণের জন্য ${amount} রেখে দেওয়া হয়েছে`,
     quickBids: 'দ্রুত বিডের বাটন',
@@ -120,6 +122,7 @@ const STRINGS = {
   noTeam: string
   minimumBid: string
   yourMaximum: string
+  maxShort: (amount: string) => string
   heldBack: (amount: string, minSquad: number | undefined) => string
   quickBids: string
   bidAmount: (amount: string) => string
@@ -137,10 +140,12 @@ interface BidPanelProps {
   onBid: (amount: number) => void
 }
 
-/** THE conversion element — manager's bidding console. */
-export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
+/**
+ * Bidding rules shared by the full console and the mobile bid bar, so both
+ * enable, label and validate bids exactly the same way.
+ */
+function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
   const t = useStrings(STRINGS)
-  const [custom, setCustom] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const player = state.currentPlayer
@@ -191,28 +196,17 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
     return null
   }
 
-  function submit(amount: number) {
+  /** Validates, then bids. Returns whether the bid was sent. */
+  function submit(amount: number): boolean {
     const err = validate(amount)
     if (err) {
       setError(err)
-      return
+      return false
     }
     setError(null)
-    setCustom('')
     onBid(amount)
+    return true
   }
-
-  function submitCustom() {
-    const n = Number(custom.replace(/[^0-9]/g, ''))
-    if (!custom.trim() || Number.isNaN(n) || n <= 0) {
-      setError(t.invalidAmount)
-      return
-    }
-    submit(Math.round(n))
-  }
-
-  const disabled = !biddingOpen
-  const disableReason = reason()
 
   // Quick increments always start from the minimum legal next bid, so no quick
   // button can produce an amount the server would reject.
@@ -221,6 +215,54 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
   const quickLabels = state.currentBid
     ? quickAmounts.map((a) => `+${formatNumber(a - state.currentBid!.amount)}`)
     : [t.base, `+${formatNumber(steps[1])}`, `+${formatNumber(steps[2])}`]
+
+  return {
+    t,
+    player,
+    minBid,
+    maxBid,
+    reserved,
+    squadFull,
+    pricedOut,
+    disabled: !biddingOpen,
+    disableReason: reason(),
+    quickAmounts,
+    quickLabels,
+    error,
+    setError,
+    submit,
+  }
+}
+
+/** THE conversion element — manager's bidding console. */
+export function BidPanel(props: BidPanelProps) {
+  const { myTeam } = props
+  const {
+    t,
+    player,
+    minBid,
+    maxBid,
+    reserved,
+    squadFull,
+    pricedOut,
+    disabled,
+    disableReason,
+    quickAmounts,
+    quickLabels,
+    error,
+    setError,
+    submit,
+  } = useBidConsole(props)
+  const [custom, setCustom] = useState('')
+
+  function submitCustom() {
+    const n = Number(custom.replace(/[^0-9]/g, ''))
+    if (!custom.trim() || Number.isNaN(n) || n <= 0) {
+      setError(t.invalidAmount)
+      return
+    }
+    if (submit(Math.round(n))) setCustom('')
+  }
 
   return (
     <Card className="border-primary/25 shadow-md">
@@ -348,5 +390,63 @@ export function BidPanel({ state, myTeam, onBid }: BidPanelProps) {
         ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * Phone-only bid bar pinned to the bottom of the screen, so a manager can bid
+ * without scrolling away from the stage while the clock runs. The full console
+ * (custom amounts, budget detail) stays in the page below.
+ */
+export function MobileBidBar(props: BidPanelProps) {
+  const { state, myTeam } = props
+  const { t, player, maxBid, disabled, disableReason, quickAmounts, quickLabels, error, submit } = useBidConsole(props)
+  if (!myTeam || state.status === 'ENDED') return null
+
+  const [first, second] = quickAmounts
+  const message = error ?? (disableReason ? `${disableReason} ${t.disabledSuffix}` : null)
+
+  return (
+    <div
+      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-2 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur supports-[backdrop-filter]:bg-background/85 pb-[calc(0.5rem+env(safe-area-inset-bottom))] lg:hidden"
+      role="region"
+      aria-label={t.title}
+    >
+      <div className="mx-auto flex max-w-xl items-center gap-2">
+        <div className="min-w-0 flex-1 leading-tight">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
+          <p className="truncate text-base font-black tabular-nums text-emerald-700">{formatBDT(myTeam.remaining)}</p>
+          <p className="truncate text-[10px] text-muted-foreground tabular-nums">
+            {t.maxShort(formatBDT(maxBid))}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          className="h-12 shrink-0 flex-col gap-0 border-2 border-primary/30 px-3 text-primary"
+          disabled={disabled || !player || second > maxBid}
+          onClick={() => submit(second)}
+          aria-label={t.bidAmount(formatBDT(second))}
+        >
+          <span className="text-sm font-black leading-none">{quickLabels[1]}</span>
+          <span className="text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(second)}</span>
+        </Button>
+        <Button
+          className="h-12 min-w-[9.5rem] shrink-0 text-base font-black"
+          disabled={disabled || !player || first > maxBid}
+          onClick={() => submit(first)}
+        >
+          <Gavel className="mr-1.5 h-4 w-4" aria-hidden />
+          {player ? t.bidAmount(formatBDT(first)) : t.bid}
+        </Button>
+      </div>
+      {message ? (
+        <p
+          className={cn('mx-auto mt-1 max-w-xl truncate text-center text-[11px] font-medium', error ? 'text-rose-600' : 'text-muted-foreground')}
+          role={error ? 'alert' : undefined}
+        >
+          {message}
+        </p>
+      ) : null}
+    </div>
   )
 }

@@ -76,12 +76,16 @@ export function consumeReturnTo(): string | null {
   return route && isAppPath(route) ? route : null
 }
 
-/** Navigate within the app, e.g. navigate('/tournaments'). */
-export function navigate(to: string) {
+/**
+ * Navigate within the app, e.g. navigate('/tournaments'). `replace` swaps the
+ * current history entry instead of adding one (redirects away from a page).
+ */
+export function navigate(to: string, { replace = false }: { replace?: boolean } = {}) {
   const target = to.startsWith('/') ? to : `/${to}`
   if (!isAppPath(target)) return
   if (window.location.pathname + window.location.hash !== target) {
-    window.history.pushState(null, '', target)
+    if (replace) window.history.replaceState(null, '', target)
+    else window.history.pushState(null, '', target)
     window.dispatchEvent(new Event(NAV_EVENT))
   }
   window.scrollTo(0, 0)

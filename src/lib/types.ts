@@ -7,7 +7,7 @@
 
 export type UserRole = 'ADMIN' | 'ORGANIZER' | 'MANAGER'
 export type UserStatus = 'ACTIVE' | 'BLOCKED'
-export type Sport = 'CRICKET' | 'FOOTBALL'
+export type Sport = 'CRICKET' | 'FOOTBALL' | 'OTHER'
 export type AuctionMode = 'CATEGORY' | 'NORMAL'
 export type TournamentStatus = 'DRAFT' | 'READY' | 'LIVE' | 'COMPLETED'
 export type PlayerStatus = 'AVAILABLE' | 'LIVE' | 'SOLD' | 'UNSOLD' | 'SKIPPED'
@@ -16,6 +16,41 @@ export type RoomRole = 'ORGANIZER' | 'MANAGER' | 'VIEWER'
 
 export const CRICKET_ROLES = ['Batsman', 'Bowler', 'All-rounder', 'Wicketkeeper'] as const
 export const FOOTBALL_ROLES = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'] as const
+// "Others" covers any other sport or game (kabaddi, volleyball, hockey…): roles generic enough for most.
+export const OTHER_ROLES = ['Attacker', 'Defender', 'All-rounder', 'Player'] as const
+
+export const SPORTS: readonly Sport[] = ['CRICKET', 'FOOTBALL', 'OTHER']
+
+export function isSport(value: unknown): value is Sport {
+  return value === 'CRICKET' || value === 'FOOTBALL' || value === 'OTHER'
+}
+
+/** Player roles offered for a sport. */
+export function rolesForSport(sport: string): readonly string[] {
+  return sport === 'FOOTBALL' ? FOOTBALL_ROLES : sport === 'OTHER' ? OTHER_ROLES : CRICKET_ROLES
+}
+
+/** Player roles for a tournament: an "Others" tournament's own roles when it set any. */
+export function rolesForTournament(t: { sport: string; playerRoles?: readonly string[] | null }): readonly string[] {
+  return t.sport === 'OTHER' && t.playerRoles && t.playerRoles.length > 0 ? t.playerRoles : rolesForSport(t.sport)
+}
+
+/** Limits for an "Others" tournament's details (shared by the form and the API). */
+export const OTHER_SPORT_LIMITS = { nameMax: 40, roles: 12, roleMax: 30, teamMax: 100 } as const
+
+const SPORT_LABELS: Record<'en' | 'bn', Record<Sport, string>> = {
+  en: { CRICKET: 'Cricket', FOOTBALL: 'Football', OTHER: 'Others' },
+  bn: { CRICKET: 'ক্রিকেট', FOOTBALL: 'ফুটবল', OTHER: 'অন্যান্য' },
+}
+
+/**
+ * Display name of a sport ("Cricket", "Football", "Others"). Pass an "Others"
+ * tournament's sportName to show the game itself ("Kabaddi").
+ */
+export function sportLabel(sport: string, lang: 'en' | 'bn' = 'en', sportName?: string | null): string {
+  if (sport === 'OTHER' && sportName) return sportName
+  return SPORT_LABELS[lang][sport as Sport] ?? sport
+}
 export const CATEGORIES = ['A', 'B', 'C', 'D', 'E'] as const
 export const DEFAULT_CATEGORY_BASE_PRICES: Record<string, number> = { A: 50000, B: 30000, C: 20000, D: 10000, E: 5000 }
 
@@ -55,6 +90,11 @@ export interface TournamentSummary {
   status: TournamentStatus
   organizerId: string
   createdAt: string
+  /** "Others" only: the game (e.g. Kabaddi), its roles and team sizes. */
+  sportName: string | null
+  playerRoles: string[]
+  playersPerTeam: number | null
+  playersOnField: number | null
   playerCount: number
   soldCount: number
   teamCount: number

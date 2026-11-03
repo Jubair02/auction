@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import { apiGet, apiPost } from '@/lib/api'
+import { clearCached } from '@/lib/api-cache'
 import { navigate } from '@/lib/router'
 import type { SafeUser } from '@/lib/types'
 
@@ -14,32 +15,41 @@ interface AppState {
   logout: () => Promise<void>
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  user: null,
-  authLoading: true,
-  authChecked: false,
+export const useAppStore = create<AppState>((set, get) => {
+  // Cached page data belongs to whoever was logged in when it was fetched.
+  // Drop it whenever the account changes so the next user never sees it.
+  const applyUser = (user: SafeUser | null) => {
+    if ((get().user?.id ?? null) !== (user?.id ?? null)) clearCached()
+    set({ user, authLoading: false, authChecked: true })
+  }
 
-  fetchMe: async () => {
-    set({ authLoading: true })
-    try {
-      const res = await apiGet<{ user: SafeUser | null }>('/api/auth/me')
-      set({ user: res.user, authLoading: false, authChecked: true })
-      return res.user
-    } catch {
-      set({ user: null, authLoading: false, authChecked: true })
-      return null
-    }
-  },
+  return {
+    user: null,
+    authLoading: true,
+    authChecked: false,
 
-  setUser: (user) => set({ user, authLoading: false, authChecked: true }),
+    fetchMe: async () => {
+      set({ authLoading: true })
+      try {
+        const res = await apiGet<{ user: SafeUser | null }>('/api/auth/me')
+        applyUser(res.user)
+        return res.user
+      } catch {
+        applyUser(null)
+        return null
+      }
+    },
 
-  logout: async () => {
-    try {
-      await apiPost('/api/auth/logout', {})
-    } catch {
-      // ignore
-    }
-    set({ user: null })
-    if (typeof window !== 'undefined') navigate('/')
-  },
-}))
+    setUser: (user) => applyUser(user),
+
+    logout: async () => {
+      try {
+        await apiPost('/api/auth/logout', {})
+      } catch {
+        // ignore
+      }
+      applyUser(null)
+      if (typeof window !== 'undefined') navigate('/')
+    },
+  }
+})

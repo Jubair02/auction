@@ -63,6 +63,20 @@ export function prefetch(url: string): void {
   load(url).catch(() => undefined)
 }
 
+/**
+ * Store data the app already has for `url` — e.g. what a create request just
+ * returned — so the page that shows it opens without fetching. It still
+ * revalidates on mount, so it stays accurate.
+ */
+export function seedCached(url: string, data: unknown): void {
+  cache.set(url, { data, at: Date.now() })
+}
+
+/** Forget everything — on logout or a switch of account, so one user never sees another's data. */
+export function clearCached(): void {
+  cache.clear()
+}
+
 /** Drop cached responses after a change that makes them wrong (save, delete…). */
 export function invalidateCached(...urls: string[]): void {
   for (const url of urls) cache.delete(url)

@@ -61,9 +61,46 @@ export const ParticipantsPanel = memo(
     s.teams.map((t) => t.id + t.name).join() === n.teams.map((t) => t.id + t.name).join()
 )
 
-function ParticipantsPanelView({ state }: { state: RoomState }) {
+function ParticipantsPanelView({ state, embedded = false }: { state: RoomState; embedded?: boolean }) {
   const t = useStrings(STRINGS)
   const onlineCount = state.participants.filter((p) => p.online).length + state.viewersOnline
+  const list = (
+    <div className={cn('space-y-1.5', !embedded && 'max-h-64 overflow-y-auto')}>
+      {state.participants.length === 0 ? (
+        <p className="py-4 text-center text-sm text-muted-foreground">{t.nobody}</p>
+      ) : null}
+      {state.participants.map((p, i) => {
+        const meta = ROLE_META[p.role]
+        const Icon = meta.icon
+        return (
+          <div key={`${p.role}-${p.name}-${i}`} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted/60">
+            <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full', meta.className)} aria-hidden>
+              <Icon className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{p.name}</p>
+              {p.teamId ? (
+                <p className="truncate text-xs text-muted-foreground">
+                  {state.teams.find((team) => team.id === p.teamId)?.name ?? t.team}
+                </p>
+              ) : null}
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{t.roles[p.role]}</span>
+            <span
+              className={cn('h-2 w-2 shrink-0 rounded-full', p.online ? 'bg-emerald-500' : 'bg-slate-300')}
+              aria-label={p.online ? t.online : t.offline}
+            />
+          </div>
+        )
+      })}
+      {state.viewersOnline > 0 ? (
+        <p className="flex items-center gap-2 px-2 pt-1 text-xs text-muted-foreground">
+          <Eye className="h-3.5 w-3.5" aria-hidden /> {t.watching(state.viewersOnline)}
+        </p>
+      ) : null}
+    </div>
+  )
+  if (embedded) return list
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -72,40 +109,7 @@ function ParticipantsPanelView({ state }: { state: RoomState }) {
           <Badge variant="secondary" className="tabular-nums">{t.onlineCount(onlineCount)}</Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="max-h-64 space-y-1.5 overflow-y-auto">
-        {state.participants.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">{t.nobody}</p>
-        ) : null}
-        {state.participants.map((p, i) => {
-          const meta = ROLE_META[p.role]
-          const Icon = meta.icon
-          return (
-            <div key={`${p.role}-${p.name}-${i}`} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted/60">
-              <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full', meta.className)} aria-hidden>
-                <Icon className="h-3.5 w-3.5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{p.name}</p>
-                {p.teamId ? (
-                  <p className="truncate text-xs text-muted-foreground">
-                    {state.teams.find((team) => team.id === p.teamId)?.name ?? t.team}
-                  </p>
-                ) : null}
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{t.roles[p.role]}</span>
-              <span
-                className={cn('h-2 w-2 shrink-0 rounded-full', p.online ? 'bg-emerald-500' : 'bg-slate-300')}
-                aria-label={p.online ? t.online : t.offline}
-              />
-            </div>
-          )
-        })}
-        {state.viewersOnline > 0 ? (
-          <p className="flex items-center gap-2 px-2 pt-1 text-xs text-muted-foreground">
-            <Eye className="h-3.5 w-3.5" aria-hidden /> {t.watching(state.viewersOnline)}
-          </p>
-        ) : null}
-      </CardContent>
+      <CardContent>{list}</CardContent>
     </Card>
   )
 }
@@ -118,8 +122,22 @@ const LEVEL_DOT: Record<RoomNotification['level'], string> = {
 }
 
 /** Live gavel feed — newest first. */
-export function ActivityFeed({ notifications }: { notifications: RoomNotification[] }) {
+export function ActivityFeed({ notifications, embedded = false }: { notifications: RoomNotification[]; embedded?: boolean }) {
   const t = useStrings(STRINGS)
+  const list = (
+    <ul className={cn('space-y-1.5', !embedded && 'max-h-64 overflow-y-auto pr-1')} aria-live="polite">
+      {notifications.length === 0 ? (
+        <li className="py-4 text-center text-sm text-muted-foreground">{t.quiet}</li>
+      ) : null}
+      {notifications.map((n) => (
+        <li key={n.id} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-muted/60">
+          <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', LEVEL_DOT[n.level])} aria-hidden />
+          <span className="min-w-0 flex-1 break-words">{n.message}</span>
+        </li>
+      ))}
+    </ul>
+  )
+  if (embedded) return list
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -128,19 +146,7 @@ export function ActivityFeed({ notifications }: { notifications: RoomNotificatio
           {t.activity}
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <ul className="max-h-64 space-y-1.5 overflow-y-auto pr-1" aria-live="polite">
-          {notifications.length === 0 ? (
-            <li className="py-4 text-center text-sm text-muted-foreground">{t.quiet}</li>
-          ) : null}
-          {notifications.map((n) => (
-            <li key={n.id} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-muted/60">
-              <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', LEVEL_DOT[n.level])} aria-hidden />
-              <span className="min-w-0 flex-1 break-words">{n.message}</span>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
+      <CardContent>{list}</CardContent>
     </Card>
   )
 }

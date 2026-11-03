@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { db } from '@/lib/db'
+import { sportLabel } from '@/lib/types'
 import ClientApp from '@/components/client-app'
 
 type PageProps = { params: Promise<{ slug?: string[] }> }
@@ -24,8 +25,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
         select: { roomCode: true, status: true, tournament: { select: { name: true, sport: true } } },
       })
       if (auction) {
-        const sport = auction.tournament.sport === 'FOOTBALL' ? 'football' : 'cricket'
-        const title = `${auction.tournament.name} — live ${sport} player auction`
+        const sport = auction.tournament.sport === 'OTHER' ? '' : `${sportLabel(auction.tournament.sport).toLowerCase()} `
+        const title = `${auction.tournament.name} — live ${sport}player auction`
         const description =
           auction.status === 'ENDED'
             ? `The ${auction.tournament.name} auction has finished. Room ${auction.roomCode} on NeelamGhor.`
@@ -40,7 +41,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       })
       if (t) {
         const title = `Register for ${t.name}`
-        const description = `Sign up as a ${t.sport === 'FOOTBALL' ? 'football' : 'cricket'} player for the ${t.name} auction${t.location ? ` in ${t.location}` : ''}.`
+        const description = `Sign up as a ${t.sport === 'OTHER' ? '' : `${sportLabel(t.sport).toLowerCase()} `}player for the ${t.name} auction${t.location ? ` in ${t.location}` : ''}.`
         return { title, description, openGraph: { title, description }, robots: { index: false, follow: false } }
       }
     }

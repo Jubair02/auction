@@ -46,7 +46,13 @@ model PasswordResetToken {
 model Tournament {
   id               String    @id @default(cuid())
   name             String
-  sport            String    @default("CRICKET") // CRICKET | FOOTBALL
+  sport            String    @default("CRICKET") // CRICKET | FOOTBALL | OTHER
+  // OTHER only — which game it is and how it is played. Cricket/football use
+  // the built-in roles and these stay empty.
+  sportName        String? // e.g. Kabaddi, Volleyball
+  playerRoles      String[]  @default([]) // e.g. Raider, Defender, All-rounder
+  playersPerTeam   Int? // squad size; the default max squad for new teams
+  playersOnField   Int? // how many play at once
   tournamentType   String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
   description      String?
   logoUrl          String?

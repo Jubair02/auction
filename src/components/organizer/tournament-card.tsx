@@ -8,12 +8,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { formatDate } from '@/lib/format'
-import type { TournamentSummary } from '@/lib/types'
-
-export const SPORT_LABELS: Record<string, string> = {
-  CRICKET: 'Cricket',
-  FOOTBALL: 'Football',
-}
+import { sportLabel, type TournamentSummary } from '@/lib/types'
 
 export const MODE_LABELS: Record<string, string> = {
   CATEGORY: 'Category A–E',
@@ -48,7 +43,7 @@ export function TournamentCard({
             <div className="min-w-0">
               <h3 className="truncate text-base font-bold leading-tight">{t.name}</h3>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {SPORT_LABELS[t.sport] ?? t.sport}
+                {sportLabel(t.sport, 'en', t.sportName)}
                 {t.tournamentType ? ` · ${t.tournamentType}` : ''}
                 {t.location ? ` · ${t.location}` : ''}
               </p>

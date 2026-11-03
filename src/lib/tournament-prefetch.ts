@@ -8,9 +8,14 @@ import { prefetch } from '@/lib/api-cache'
 export const TOURNAMENTS_URL = '/api/tournaments'
 export const tournamentDetailUrl = (id: string) => `/api/tournaments/${id}`
 
+/** Download the Manage page's code ahead of time (no data). */
+export function preloadTournamentPage(): void {
+  void import('@/components/organizer/tournament-detail').catch(() => undefined)
+}
+
 export function prefetchTournament(id: string): void {
   prefetch(tournamentDetailUrl(id))
-  void import('@/components/organizer/tournament-detail').catch(() => undefined)
+  preloadTournamentPage()
 }
 
 /** Props for a button/link that opens a tournament: prefetch on intent. */

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft,
@@ -9,11 +9,14 @@ import {
   Check,
   ClipboardList,
   Gavel,
+  Goal,
   ListChecks,
   Loader2,
   MapPin,
+  Medal,
   Trophy,
   Wallet,
+  type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -25,11 +28,18 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiPost, ApiError } from '@/lib/api'
-import { invalidateCached } from '@/lib/api-cache'
-import { TOURNAMENTS_URL } from '@/lib/tournament-prefetch'
+import { invalidateCached, seedCached } from '@/lib/api-cache'
+import { TOURNAMENTS_URL, preloadTournamentPage, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { formatBDT } from '@/lib/format'
-import { DEFAULT_CATEGORY_BASE_PRICES, type Sport } from '@/lib/types'
+import { DEFAULT_CATEGORY_BASE_PRICES, isSport, rolesForSport, sportLabel, type Sport, type TournamentDetail } from '@/lib/types'
+import {
+  EMPTY_OTHER_SPORT,
+  OtherSportFields,
+  otherSportError,
+  otherSportPayload,
+  type OtherSportValue,
+} from '@/components/organizer/other-sport-fields'
 
 const TOURNAMENT_TYPES = [
   'Corporate Cricket',
@@ -39,6 +49,12 @@ const TOURNAMENT_TYPES = [
   'Friends/Community Tournament',
   'Indoor Cricket',
   '6-a-side / 7-a-side Football',
+]
+
+const SPORT_CHOICES: { value: Sport; label: string; hint: string; icon: LucideIcon }[] = [
+  { value: 'CRICKET', label: 'Cricket', hint: 'Batsman · Bowler · All-rounder · WK', icon: Trophy },
+  { value: 'FOOTBALL', label: 'Football', hint: 'GK · Defender · Midfielder · Forward', icon: Goal },
+  { value: 'OTHER', label: 'Others', hint: 'Kabaddi, badminton, volleyball…', icon: Medal },
 ]
 
 const STEPS = [
@@ -55,9 +71,14 @@ const SUGGESTED_CATEGORY_PRICES = { ...DEFAULT_CATEGORY_BASE_PRICES }
 export default function TournamentCreate() {
   const [step, setStep] = useState(1)
 
+  // Creating always ends on the new tournament's Manage page: fetch its code
+  // while the organizer fills in the form, not after they click Create.
+  useEffect(() => preloadTournamentPage(), [])
+
   // Step 1 — basics
   const [name, setName] = useState('')
   const [sport, setSport] = useState<Sport | ''>('')
+  const [other, setOther] = useState<OtherSportValue>(EMPTY_OTHER_SPORT)
   const [tournamentType, setTournamentType] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
@@ -70,7 +91,8 @@ export default function TournamentCreate() {
 
   const [creating, setCreating] = useState(false)
 
-  const step1Valid = name.trim().length >= 2 && (sport === 'CRICKET' || sport === 'FOOTBALL')
+  const otherError = sport === 'OTHER' ? otherSportError(other) : null
+  const step1Valid = name.trim().length >= 2 && isSport(sport) && !otherError
 
   const parsedBasePrice = useMemo(() => {
     const n = parseInt(basePrice, 10)
@@ -81,7 +103,7 @@ export default function TournamentCreate() {
 
   const next = () => {
     if (step === 1 && !step1Valid) {
-      toast.error('Tournament name (2+ characters) and sport are required.')
+      toast.error(otherError ?? 'Tournament name (2+ characters) and sport are required.')
       return
     }
     if (step === 2 && !step2Valid) {
@@ -96,9 +118,10 @@ export default function TournamentCreate() {
   const create = async () => {
     setCreating(true)
     try {
-      const res = await apiPost<{ tournament: { id: string } }>('/api/tournaments', {
+      const res = await apiPost<{ tournament: { id: string }; detail?: TournamentDetail }>('/api/tournaments', {
         name: name.trim(),
         sport,
+        ...(sport === 'OTHER' ? otherSportPayload(other) : {}),
         tournamentType: tournamentType || undefined,
         location: location.trim() || undefined,
         description: description.trim() || undefined,
@@ -108,6 +131,9 @@ export default function TournamentCreate() {
         basePrice: auctionMode === 'NORMAL' ? parsedBasePrice : undefined,
       })
       invalidateCached(TOURNAMENTS_URL)
+      // The response already holds the new tournament's full page data: the
+      // Manage page renders from it at once (and refreshes in the background).
+      if (res.detail) seedCached(tournamentDetailUrl(res.tournament.id), res.detail)
       toast.success('Tournament created — now add players and teams!')
       navigate(`/tournaments/${res.tournament.id}`)
     } catch (ex) {
@@ -172,40 +198,43 @@ export default function TournamentCreate() {
                     id="t-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Mirpur Corporate Cricket League 2026"
+                    placeholder="e.g. Mirpur Corporate League 2026"
                     className="h-11"
                     maxLength={80}
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-3">
                   <Label>
                     Sport <span className="text-rose-600">*</span>
                   </Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {(
-                      [
-                        { value: 'CRICKET', label: 'Cricket', roles: 'Batsman · Bowler · All-rounder · Wicketkeeper' },
-                        { value: 'FOOTBALL', label: 'Football', roles: 'Goalkeeper · Defender · Midfielder · Forward' },
-                      ] as const
-                    ).map((s) => (
-                      <button
-                        key={s.value}
-                        type="button"
-                        onClick={() => setSport(s.value)}
-                        aria-pressed={sport === s.value}
-                        className={`flex min-h-24 flex-col items-center justify-center gap-1 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                          sport === s.value
-                            ? 'border-primary bg-primary/5 text-primary'
-                            : 'border-border bg-background hover:bg-accent'
-                        }`}
-                      >
-                        <Trophy className="h-5 w-5" aria-hidden />
-                        <span className="text-sm font-bold">{s.label}</span>
-                        <span className="text-[11px] text-muted-foreground">{s.roles}</span>
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {SPORT_CHOICES.map((s) => {
+                      const selected = sport === s.value
+                      return (
+                        <button
+                          key={s.value}
+                          type="button"
+                          onClick={() => setSport(s.value)}
+                          aria-pressed={selected}
+                          className={`relative flex min-h-28 flex-col items-center justify-center gap-1 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                            selected ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-background hover:bg-accent'
+                          }`}
+                        >
+                          {selected ? (
+                            <span className="absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded bg-primary text-primary-foreground">
+                              <Check className="h-3.5 w-3.5" aria-hidden />
+                            </span>
+                          ) : null}
+                          <s.icon className="h-6 w-6" aria-hidden />
+                          <span className="text-base font-bold">{s.label}</span>
+                          <span className={`text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{s.hint}</span>
+                        </button>
+                      )
+                    })}
                   </div>
+
+                  {sport === 'OTHER' ? <OtherSportFields value={other} onChange={setOther} idPrefix="t" /> : null}
                 </div>
 
                 <div className="space-y-1.5">
@@ -396,7 +425,19 @@ export default function TournamentCreate() {
                 <dl className="divide-y rounded-xl border">
                   {[
                     { k: 'Name', v: name },
-                    { k: 'Sport', v: sport === 'CRICKET' ? 'Cricket' : sport === 'FOOTBALL' ? 'Football' : '—' },
+                    { k: 'Sport', v: sport ? sportLabel(sport, 'en', other.sportName.trim()) : '—' },
+                    ...(sport === 'OTHER'
+                      ? [
+                          { k: 'Player roles', v: other.playerRoles.length > 0 ? other.playerRoles.join(' · ') : rolesForSport('OTHER').join(' · ') },
+                          {
+                            k: 'Team size',
+                            v:
+                              [other.playersPerTeam && `${other.playersPerTeam} per team`, other.playersOnField && `${other.playersOnField} on field`]
+                                .filter(Boolean)
+                                .join(' · ') || '—',
+                          },
+                        ]
+                      : []),
                     { k: 'Type', v: tournamentType || '—' },
                     { k: 'Location', v: location || '—' },
                     { k: 'Start date', v: startDate ? new Date(startDate).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },

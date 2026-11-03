@@ -16,6 +16,7 @@ import type {
   TournamentStatus,
   TournamentSummary,
 } from '@/lib/types'
+import { OTHER_SPORT_LIMITS } from '@/lib/types'
 import { Prisma } from '@prisma/client'
 import type { Auction, Player, Team, Tournament } from '@prisma/client'
 
@@ -280,6 +281,7 @@ export function serializeTournamentSummary(
     status: t.status as TournamentStatus,
     organizerId: t.organizerId,
     createdAt: t.createdAt.toISOString(),
+    ...otherSportDetails(t),
     playerCount: t._count?.players ?? 0,
     soldCount: t.soldCount ?? 0,
     teamCount: t._count?.teams ?? 0,
@@ -306,7 +308,80 @@ export function serializeTournamentFull(t: Tournament) {
     status: t.status as TournamentStatus,
     organizerId: t.organizerId,
     createdAt: t.createdAt.toISOString(),
+    ...otherSportDetails(t),
   }
+}
+
+/** The "Others" fields every tournament DTO carries (empty for cricket/football). */
+function otherSportDetails(t: Tournament) {
+  return {
+    sportName: t.sportName,
+    playerRoles: t.playerRoles ?? [],
+    playersPerTeam: t.playersPerTeam,
+    playersOnField: t.playersOnField,
+  }
+}
+
+/**
+ * Validates an "Others" tournament's details from a request body. Returns the
+ * database fields, or an error message. For cricket/football it clears them.
+ * `requireName`: creating needs the game's name; an edit may leave it as is.
+ */
+export function parseOtherSportDetails(
+  sport: string,
+  body: Record<string, unknown>,
+  requireName: boolean,
+):
+  | { ok: true; data: { sportName?: string | null; playerRoles?: string[]; playersPerTeam?: number | null; playersOnField?: number | null } }
+  | { ok: false; error: string } {
+  if (sport !== 'OTHER') {
+    return { ok: true, data: { sportName: null, playerRoles: [], playersPerTeam: null, playersOnField: null } }
+  }
+  const data: { sportName?: string | null; playerRoles?: string[]; playersPerTeam?: number | null; playersOnField?: number | null } = {}
+
+  if (body.sportName !== undefined || requireName) {
+    const name = typeof body.sportName === 'string' ? body.sportName.trim() : ''
+    if (name.length < 2 || name.length > OTHER_SPORT_LIMITS.nameMax) {
+      return { ok: false, error: `Sport name must be 2–${OTHER_SPORT_LIMITS.nameMax} characters` }
+    }
+    data.sportName = name
+  }
+
+  if (body.playerRoles !== undefined) {
+    if (!Array.isArray(body.playerRoles)) return { ok: false, error: 'Player roles must be a list' }
+    const roles: string[] = []
+    for (const r of body.playerRoles) {
+      const role = typeof r === 'string' ? r.trim() : ''
+      if (!role) continue
+      if (role.length > OTHER_SPORT_LIMITS.roleMax) {
+        return { ok: false, error: `Each role must be at most ${OTHER_SPORT_LIMITS.roleMax} characters` }
+      }
+      if (!roles.some((x) => x.toLowerCase() === role.toLowerCase())) roles.push(role)
+    }
+    if (roles.length > OTHER_SPORT_LIMITS.roles) return { ok: false, error: `At most ${OTHER_SPORT_LIMITS.roles} player roles` }
+    data.playerRoles = roles
+  }
+
+  const size = (v: unknown, label: string): number | null | string => {
+    if (v === undefined || v === null || v === '') return null
+    const n = coercePositiveInt(v)
+    if (!n || n > OTHER_SPORT_LIMITS.teamMax) return `${label} must be between 1 and ${OTHER_SPORT_LIMITS.teamMax}`
+    return n
+  }
+  if (body.playersPerTeam !== undefined) {
+    const n = size(body.playersPerTeam, 'Players per team')
+    if (typeof n === 'string') return { ok: false, error: n }
+    data.playersPerTeam = n
+  }
+  if (body.playersOnField !== undefined) {
+    const n = size(body.playersOnField, 'Playing on field')
+    if (typeof n === 'string') return { ok: false, error: n }
+    data.playersOnField = n
+  }
+  if (data.playersPerTeam && data.playersOnField && data.playersOnField > data.playersPerTeam) {
+    return { ok: false, error: 'Playing on field cannot be more than players per team' }
+  }
+  return { ok: true, data }
 }
 
 /** Sold counts per tournament id (single groupBy query instead of N queries). */

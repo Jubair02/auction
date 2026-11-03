@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { clientKey, rateLimit } from '@/lib/rate-limit'
-import { CRICKET_ROLES, FOOTBALL_ROLES } from '@/lib/types'
+import { rolesForTournament } from '@/lib/types'
 import { readJson } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -29,11 +29,12 @@ export async function GET(req: Request, { params }: RouteParams) {
   return Response.json({
     tournamentName: t.name,
     sport: t.sport,
+    sportName: t.sportName,
     location: t.location,
     startDate: t.startDate ? t.startDate.toISOString() : null,
     logoUrl: t.logoUrl,
     open: t.registrationOpen,
-    roles: t.sport === 'FOOTBALL' ? FOOTBALL_ROLES : CRICKET_ROLES,
+    roles: rolesForTournament(t),
   })
 }
 
@@ -69,7 +70,7 @@ export async function POST(req: Request, { params }: RouteParams) {
   if (!parsed?.success) return jsonError(parsed?.error.issues[0]?.message ?? 'Invalid registration', 400)
   const data = parsed.data
 
-  const roles: readonly string[] = t.sport === 'FOOTBALL' ? FOOTBALL_ROLES : CRICKET_ROLES
+  const roles: readonly string[] = rolesForTournament(t)
   if (!roles.includes(data.role)) return jsonError(`Role must be one of: ${roles.join(', ')}`, 400)
 
   const phone = data.phone.replace(/[\s-]/g, '')
