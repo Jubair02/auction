@@ -1,13 +1,15 @@
 'use client'
 
-import { Copy, MapPin, Trophy, Users } from 'lucide-react'
+import { CalendarClock, Copy, Trophy, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
-import { formatDate } from '@/lib/format'
+import { formatAuctionWhen } from '@/lib/format'
+import { isDone, isLive, plural } from '@/lib/tournament-status'
+import { cn } from '@/lib/utils'
 import { sportLabel, type TournamentSummary } from '@/lib/types'
 
 export const MODE_LABELS: Record<string, string> = {
@@ -31,11 +33,16 @@ export function TournamentCard({
   actions?: React.ReactNode
 }) {
   const soldPct = t.playerCount > 0 ? Math.round((t.soldCount / t.playerCount) * 100) : 0
+  const when = formatAuctionWhen(t.auctionAt)
+  const live = isLive(t)
+  const done = isDone(t)
+  // A date that has passed while the auction never ran needs the organizer's attention.
+  const overdue = !!when?.past && !live && !done
 
   return (
     <Card className="flex h-full flex-col transition-shadow hover:shadow-md">
       <CardHeader className="gap-2 pb-3">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <Trophy className="h-4.5 w-4.5" aria-hidden />
@@ -49,28 +56,32 @@ export function TournamentCard({
               </p>
             </div>
           </div>
-          <TournamentStatusBadge status={t.status} />
+          <TournamentStatusBadge status={live ? 'LIVE' : t.status} className="shrink-0" />
         </div>
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3 pb-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>Starts {formatDate(t.startDate)}</span>
-          <span>Auction {formatDate(t.auctionAt, true)}</span>
+          <span className={cn('inline-flex items-center gap-1', overdue && 'font-medium text-amber-700 dark:text-amber-400')}>
+            <CalendarClock className="h-3 w-3" aria-hidden />
+            {live ? 'Auction under way' : when ? `${done ? 'Held' : overdue ? 'Was due' : 'Auction'} ${when.text}` : 'No auction time set'}
+          </span>
           <span className="inline-flex items-center gap-1">
-            <Users className="h-3 w-3" aria-hidden /> {t.teamCount} teams
+            <Users className="h-3 w-3" aria-hidden /> {plural(t.teamCount, 'team')}
           </span>
         </div>
 
-        <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {t.soldCount} / {t.playerCount} players sold
-            </span>
-            <span className="font-semibold tabular-nums">{soldPct}%</span>
+        {t.playerCount === 0 ? (
+          <p className="text-xs text-muted-foreground">No players yet</p>
+        ) : (
+          <div>
+            <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+              <span>{`${t.soldCount} of ${plural(t.playerCount, 'player')} sold`}</span>
+              <span className="font-semibold tabular-nums">{soldPct}%</span>
+            </div>
+            <Progress value={soldPct} aria-label={`${soldPct}% of players sold`} />
           </div>
-          <Progress value={soldPct} aria-label={`${soldPct}% of players sold`} />
-        </div>
+        )}
 
         {t.roomCode ? (
           <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">

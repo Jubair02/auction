@@ -18,6 +18,24 @@ export function formatDate(value: string | Date | null | undefined, withTime = f
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) })
 }
 
+/** "Today, 7:00 pm" / "Tomorrow, 7:00 pm" / "Thu 12 Nov, 7:00 pm" — or null when no time is set. */
+export function formatAuctionWhen(iso: string | null): { text: string; past: boolean } | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const now = new Date()
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((day(d) - day(now)) / 86_400_000)
+  const time = d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })
+  const date =
+    days === 0
+      ? 'Today'
+      : days === 1
+        ? 'Tomorrow'
+        : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) })
+  return { text: `${date}, ${time}`, past: d.getTime() < now.getTime() }
+}
+
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000))
   const m = Math.floor(total / 60)

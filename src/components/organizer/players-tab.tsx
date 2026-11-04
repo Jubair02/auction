@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -350,10 +349,11 @@ export function PlayersTab({
         </Card>
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="hidden max-h-96 overflow-y-auto rounded-lg border md:block">
-            <Table>
-              <TableHeader className="sticky top-0 bg-background">
+          {/* Desktop table — scrolls with the page; the header sticks under the site header.
+              A plain <table>: the shared Table's overflow wrapper would stop the header sticking. */}
+          <div className="hidden rounded-lg border lg:block">
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-14 z-10 bg-background shadow-[0_1px_0_var(--border)]">
                 <TableRow>
                   <TableHead className="w-10">#</TableHead>
                   <TableHead>Player</TableHead>
@@ -419,11 +419,11 @@ export function PlayersTab({
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </table>
           </div>
 
-          {/* Mobile cards */}
-          <div className="max-h-96 space-y-2 overflow-y-auto pr-0.5 md:hidden">
+          {/* Phone & tablet cards */}
+          <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
             {filtered.map((p) => (
               <Card key={p.id} className="py-0">
                 <CardContent className="flex items-start gap-3 p-3">

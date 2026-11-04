@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Gavel, HandCoins, Loader2, LogIn, Sparkles, UserPlus, Users } from 'lucide-react'
+import { ArrowLeft, Gavel, HandCoins, Loader2, LogIn, Sparkles, UserPlus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,6 +30,7 @@ type AuthStrings = {
   loginTitle: string
   registerDescription: string
   loginDescription: string
+  backHome: string
   fullName: string
   namePlaceholder: string
   iWantTo: string
@@ -70,6 +71,7 @@ const STRINGS = {
     loginTitle: 'Welcome back',
     registerDescription: 'Run auctions as an organizer, or bid as a team manager.',
     loginDescription: 'Log in to manage tournaments or join your auction room.',
+    backHome: 'Back to home',
     fullName: 'Full name',
     namePlaceholder: 'e.g. Rakib Hasan',
     iWantTo: 'I want to…',
@@ -108,6 +110,7 @@ const STRINGS = {
     loginTitle: 'আবার স্বাগতম',
     registerDescription: 'আয়োজক হিসেবে নিলাম চালান, অথবা টিম ম্যানেজার হিসেবে বিড করুন।',
     loginDescription: 'টুর্নামেন্ট পরিচালনা করতে বা আপনার নিলাম রুমে যোগ দিতে লগইন করুন।',
+    backHome: 'হোমে ফিরে যান',
     fullName: 'পুরো নাম',
     namePlaceholder: 'যেমন: রাকিব হাসান',
     iWantTo: 'আমি চাই…',
@@ -218,7 +221,16 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
   }
 
   return (
-    <div className="container mx-auto flex min-h-[calc(100vh-8rem)] max-w-md items-center px-4 py-10">
+    <div className="container mx-auto flex min-h-[calc(100vh-8rem)] max-w-md flex-col justify-center px-4 py-10">
+      {/* Logged-out visitors have no menu, and the logo isn't a link. */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ml-2 mb-2 self-start text-muted-foreground"
+        onClick={() => navigate('/')}
+      >
+        <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {t.backHome}
+      </Button>
       <Card className="w-full shadow-sm">
         <CardHeader className="text-center">
           <span className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">

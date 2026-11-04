@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from 'react'
 import {
+  ArrowDownUp,
+  Copy,
+  DoorOpen,
   Download,
   FileSpreadsheet,
-  Gavel,
   History,
   LayoutList,
   MoreVertical,
@@ -15,9 +17,10 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Progress } from '@/components/ui/progress'
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   DropdownMenu,
@@ -40,12 +43,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterChips } from '@/components/shared/filter-chips'
+import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { TournamentCard, copyRoomCode } from '@/components/organizer/tournament-card'
 import { apiDelete, apiDownload, ApiError } from '@/lib/api'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, prefetchTournamentProps, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
-import type { TournamentSummary } from '@/lib/types'
+import { formatAuctionWhen } from '@/lib/format'
+import { auctionTime, byUrgency, isDone, isLive, PHASE_LABELS, plural, tournamentPhase, type TournamentPhase } from '@/lib/tournament-status'
+import { cn } from '@/lib/utils'
+import { sportLabel, type TournamentSummary } from '@/lib/types'
 
 const EXPORT_TYPES: { type: string; label: string }[] = [
   { type: 'players', label: 'Players' },
@@ -61,6 +69,35 @@ function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'tournament'
 }
 
+type StatusFilter = 'ALL' | TournamentPhase
+type SortKey = 'attention' | 'auction' | 'name' | 'newest'
+
+const SORTS: Record<SortKey, { label: string; compare: (a: TournamentSummary, b: TournamentSummary) => number }> = {
+  attention: { label: 'Most urgent', compare: byUrgency },
+  auction: { label: 'Auction date', compare: (a, b) => auctionTime(a) - auctionTime(b) || a.name.localeCompare(b.name) },
+  name: { label: 'Name A–Z', compare: (a, b) => a.name.localeCompare(b.name) },
+  newest: { label: 'Newest', compare: (a, b) => b.createdAt.localeCompare(a.createdAt) },
+}
+
+const STATUS_FILTERS: StatusFilter[] = ['ALL', 'LIVE', 'READY', 'DRAFT', 'COMPLETED']
+
+const subtitle = (t: TournamentSummary) =>
+  [sportLabel(t.sport, 'en', t.sportName), t.tournamentType, t.location].filter(Boolean).join(' · ')
+
+/** The auction time as the table shows it — flagged when the date passed and it never ran. */
+function AuctionWhen({ t }: { t: TournamentSummary }) {
+  if (isLive(t)) return <span className="font-medium text-amber-700 dark:text-amber-400">Under way</span>
+  const when = formatAuctionWhen(t.auctionAt)
+  if (!when) return <span className="text-muted-foreground">Not set</span>
+  const overdue = when.past && !isDone(t)
+  return (
+    <span className={cn('whitespace-nowrap', overdue && 'font-medium text-amber-700 dark:text-amber-400')}>
+      {when.text}
+      {overdue ? <span className="block text-xs font-normal">Date has passed</span> : null}
+    </span>
+  )
+}
+
 export default function TournamentsList() {
   const { data, loading, refetch: load } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL, (ex) =>
     toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournaments')
@@ -69,20 +106,37 @@ export default function TournamentsList() {
 
   const [query, setQuery] = useState('')
   const [sport, setSport] = useState('ALL')
-  const [status, setStatus] = useState('ALL')
+  const [status, setStatus] = useState<StatusFilter>('ALL')
+  const [sort, setSort] = useState<SortKey>('attention')
 
   const [deleteTarget, setDeleteTarget] = useState<TournamentSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // The sport filter only earns its place once there's more than one sport to pick from.
+  const sports = useMemo(() => [...new Set(tournaments.map((t) => t.sport))], [tournaments])
 
-  const filtered = useMemo(() => {
-    return tournaments.filter((t) => {
-      if (query && !t.name.toLowerCase().includes(query.toLowerCase())) return false
-      if (sport !== 'ALL' && t.sport !== sport) return false
-      if (status !== 'ALL' && t.status !== status) return false
-      return true
-    })
-  }, [tournaments, query, sport, status])
+  const matching = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return tournaments.filter(
+      (t) =>
+        (sport === 'ALL' || t.sport === sport) &&
+        (!q || [t.name, t.roomCode, t.location].some((v) => v?.toLowerCase().includes(q)))
+    )
+  }, [tournaments, query, sport])
+
+  const filtered = useMemo(
+    () => matching.filter((t) => status === 'ALL' || tournamentPhase(t) === status).sort(SORTS[sort].compare),
+    [matching, status, sort]
+  )
+
+  const count = (f: StatusFilter) => (f === 'ALL' ? matching.length : matching.filter((t) => tournamentPhase(t) === f).length)
+  const liveCount = tournaments.filter(isLive).length
+
+  const clearFilters = () => {
+    setQuery('')
+    setSport('ALL')
+    setStatus('ALL')
+  }
 
   const downloadExport = async (t: TournamentSummary, type: string) => {
     try {
@@ -109,152 +163,264 @@ export default function TournamentsList() {
     }
   }
 
+  const moreMenu = (t: TournamentSummary) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={`More actions for ${t.name}`}>
+          <MoreVertical className="h-4 w-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        {t.roomCode ? (
+          <>
+            <DropdownMenuItem onClick={() => navigate(`/room/${t.roomCode}`)}>
+              <DoorOpen className="mr-2 h-4 w-4" /> Open auction room
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => copyRoomCode(t.roomCode as string)}>
+              <Copy className="mr-2 h-4 w-4" /> Copy room code
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        <DropdownMenuItem onClick={() => navigate(`/tournaments/${t.id}/history`)}>
+          <History className="mr-2 h-4 w-4" /> Auction history
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/results/${t.id}`)}>
+          <Trophy className="mr-2 h-4 w-4" /> Results
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Download className="mr-2 h-4 w-4" /> Export
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            {EXPORT_TYPES.map((e) => (
+              <DropdownMenuItem key={e.type} onClick={() => void downloadExport(t, e.type)}>
+                <FileSpreadsheet className="mr-2 h-4 w-4" /> {e.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(t)}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Tournaments</h1>
-          <p className="mt-1 text-sm text-muted-foreground">All auctions you organize, in one place.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {loading
+              ? 'All auctions you organize, in one place.'
+              : `${plural(tournaments.length, 'tournament')}${liveCount ? ` · ${liveCount} live now` : ''}`}
+          </p>
         </div>
         <Button size="lg" className="min-h-11" onClick={() => navigate('/tournaments/new')}>
           <Plus className="mr-1.5 h-4 w-4" aria-hidden /> New tournament
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1 sm:max-w-xs">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name…"
-            aria-label="Search tournaments by name"
-            className="h-11 pl-9"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:flex">
-          <Select value={sport} onValueChange={setSport}>
-            <SelectTrigger className="h-11 w-full sm:w-40" aria-label="Filter by sport">
-              <SelectValue placeholder="Sport" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All sports</SelectItem>
-              <SelectItem value="CRICKET">Cricket</SelectItem>
-              <SelectItem value="FOOTBALL">Football</SelectItem>
-              <SelectItem value="OTHER">Others</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="h-11 w-full sm:w-40" aria-label="Filter by status">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All statuses</SelectItem>
-              <SelectItem value="DRAFT">DRAFT</SelectItem>
-              <SelectItem value="READY">READY</SelectItem>
-              <SelectItem value="LIVE">LIVE</SelectItem>
-              <SelectItem value="COMPLETED">COMPLETED</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <p className="text-sm text-muted-foreground sm:ml-auto">
-          {filtered.length} of {tournaments.length}
-        </p>
-      </div>
-
-      {/* Grid */}
       {loading ? (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-56 rounded-xl" />
+        <div className="mt-6 space-y-3">
+          <Skeleton className="h-10 w-full max-w-xl" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-lg" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : tournaments.length === 0 ? (
         <EmptyState
           className="mt-6"
-          icon={tournaments.length === 0 ? Trophy : Search}
-          title={tournaments.length === 0 ? 'No tournaments yet' : 'No matches for these filters'}
-          description={
-            tournaments.length === 0
-              ? 'Create your first tournament to start adding players and teams.'
-              : 'Try a different name, sport or status.'
-          }
+          icon={Trophy}
+          title="No tournaments yet"
+          description="Create your first tournament to start adding players and teams."
           action={
-            tournaments.length === 0 ? (
-              <Button onClick={() => navigate('/tournaments/new')}>
-                <Plus className="mr-1.5 h-4 w-4" aria-hidden /> New tournament
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setQuery('')
-                  setSport('ALL')
-                  setStatus('ALL')
-                }}
-              >
-                Clear filters
-              </Button>
-            )
+            <Button onClick={() => navigate('/tournaments/new')}>
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> New tournament
+            </Button>
           }
         />
       ) : (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((t) => (
-            <TournamentCard
-              key={t.id}
-              t={t}
-              actions={
-                <>
-                  <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
-                    <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> Manage
-                  </Button>
-                  {t.roomCode ? (
-                    <Button variant="outline" size="icon" className="h-10 w-10 shrink-0" aria-label={`Copy room code ${t.roomCode}`} onClick={() => copyRoomCode(t.roomCode as string)}>
-                      <Gavel className="h-4 w-4" aria-hidden />
-                    </Button>
-                  ) : null}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="icon" className="h-10 w-10 shrink-0" aria-label={`More actions for ${t.name}`}>
-                        <MoreVertical className="h-4 w-4" aria-hidden />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
-                      <DropdownMenuItem onClick={() => navigate(`/tournaments/${t.id}`)}>
-                        <LayoutList className="mr-2 h-4 w-4" /> Manage
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => navigate(`/tournaments/${t.id}/history`)}>
-                        <History className="mr-2 h-4 w-4" /> Auction history
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => navigate(`/results/${t.id}`)}>
-                        <Trophy className="mr-2 h-4 w-4" /> Results
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger>
-                          <Download className="mr-2 h-4 w-4" /> Export
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent>
-                          {EXPORT_TYPES.map((e) => (
-                            <DropdownMenuItem key={e.type} onClick={() => void downloadExport(t, e.type)}>
-                              <FileSpreadsheet className="mr-2 h-4 w-4" /> {e.label}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(t)}>
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
+        <>
+          {/* Filters */}
+          <div className="mt-6 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search name, room code or venue"
+                  aria-label="Search tournaments"
+                  className="h-10 pl-9"
+                />
+              </div>
+              <div className={cn('grid gap-3 sm:ml-auto sm:flex', sports.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
+                {sports.length > 1 ? (
+                  <Select value={sport} onValueChange={setSport}>
+                    <SelectTrigger className="h-10 w-full sm:w-36" aria-label="Filter by sport">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All sports</SelectItem>
+                      {sports.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {sportLabel(s)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+                <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+                  <SelectTrigger className="h-10 w-full sm:w-44" aria-label="Sort tournaments">
+                    <ArrowDownUp className="h-4 w-4 text-muted-foreground" aria-hidden />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(SORTS) as SortKey[]).map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {SORTS[k].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <FilterChips
+              label="Filter by status"
+              value={status}
+              onChange={setStatus}
+              options={STATUS_FILTERS.map((f) => ({ key: f, label: f === 'ALL' ? 'All' : PHASE_LABELS[f], count: count(f) }))}
+            />
+          </div>
+
+          {filtered.length === 0 ? (
+            <EmptyState
+              className="mt-6"
+              icon={Search}
+              title="No tournaments match"
+              description="Try another name, sport or status."
+              action={
+                <Button variant="outline" onClick={clearFilters}>
+                  Clear filters
+                </Button>
               }
             />
-          ))}
-        </div>
+          ) : (
+            <>
+              {/* Desktop table — page scroll, sticky header */}
+              <div className="mt-5 hidden rounded-lg border lg:block">
+                <table className="w-full caption-bottom text-sm">
+                  <TableHeader className="sticky top-14 z-10 bg-background shadow-[0_1px_0_var(--border)]">
+                    <TableRow>
+                      <TableHead>Tournament</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Auction</TableHead>
+                      <TableHead className="text-right">Teams</TableHead>
+                      <TableHead>Players sold</TableHead>
+                      <TableHead>Room code</TableHead>
+                      <TableHead className="text-right">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((t) => {
+                      const pct = t.playerCount > 0 ? Math.round((t.soldCount / t.playerCount) * 100) : 0
+                      return (
+                        <TableRow key={t.id}>
+                          <TableCell className="max-w-72 py-3">
+                            <button
+                              type="button"
+                              className="block max-w-full truncate text-left font-semibold hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                              {...prefetchTournamentProps(t.id)}
+                              onClick={() => navigate(`/tournaments/${t.id}`)}
+                            >
+                              {t.name}
+                            </button>
+                            <p className="truncate text-xs text-muted-foreground">{subtitle(t)}</p>
+                          </TableCell>
+                          <TableCell>
+                            <TournamentStatusBadge status={isLive(t) ? 'LIVE' : t.status} />
+                          </TableCell>
+                          <TableCell>
+                            <AuctionWhen t={t} />
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{t.teamCount}</TableCell>
+                          <TableCell>
+                            {t.playerCount === 0 ? (
+                              <span className="text-muted-foreground">No players yet</span>
+                            ) : (
+                              <div className="w-32">
+                                <p className="text-xs tabular-nums">
+                                  <span className="font-semibold">{t.soldCount}</span> of {t.playerCount}
+                                </p>
+                                <Progress value={pct} className="mt-1 h-1.5" aria-label={`${pct}% of players sold`} />
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {t.roomCode ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span className="font-mono text-xs font-bold">{t.roomCode}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label={`Copy room code ${t.roomCode}`}
+                                  onClick={() => copyRoomCode(t.roomCode as string)}
+                                >
+                                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                                </Button>
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">Not set up</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-9"
+                                {...prefetchTournamentProps(t.id)}
+                                onClick={() => navigate(`/tournaments/${t.id}`)}
+                              >
+                                Manage
+                              </Button>
+                              {moreMenu(t)}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </table>
+              </div>
+
+              {/* Phone & tablet cards */}
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:hidden">
+                {filtered.map((t) => (
+                  <TournamentCard
+                    key={t.id}
+                    t={t}
+                    actions={
+                      <>
+                        <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
+                          <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> Manage
+                        </Button>
+                        {moreMenu(t)}
+                      </>
+                    }
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {/* Delete confirmation */}

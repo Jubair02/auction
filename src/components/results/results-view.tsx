@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Download, Gavel, Loader2, Printer, ShieldAlert, Trophy } from 'lucide-react'
+import { ArrowLeft, Download, Gavel, Loader2, Printer, ShieldAlert, Trophy } from 'lucide-react'
 import { apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
+import { useAppStore } from '@/lib/store'
 import { formatBDT, formatDate, formatTime } from '@/lib/format'
 import { sportLabel, type ResultsData } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,11 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState<string | null>(null)
+  // Organizers and admins came from the tournament page; managers from their team page.
+  const role = useAppStore((s) => s.user?.role)
+  const back = role === 'MANAGER'
+    ? { to: '/dashboard', label: 'Back to my team' }
+    : { to: `/tournaments/${tournamentId}`, label: 'Back to tournament' }
 
   useEffect(() => {
     let cancelled = false
@@ -92,8 +98,8 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
           title="Results unavailable"
           description={error ?? 'This tournament has no results yet.'}
           action={
-            <Button variant="outline" onClick={() => navigate('/dashboard')}>
-              Back to dashboard
+            <Button variant="outline" onClick={() => navigate(back.to)}>
+              {back.label}
             </Button>
           }
         />
@@ -117,6 +123,14 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
 
       <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 mb-1 text-muted-foreground print:hidden"
+            onClick={() => navigate(back.to)}
+          >
+            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {back.label}
+          </Button>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-black tracking-tight sm:text-3xl">{tournament.name}</h1>
             <TournamentStatusBadge status={tournament.status} />

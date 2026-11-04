@@ -27,6 +27,16 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { navigate } from '@/lib/router'
+import { DASHBOARD_PATH } from '@/lib/access'
+import { useAppStore } from '@/lib/store'
+import type { UserRole } from '@/lib/types'
+
+/** Logged-in visitors get a way back to their own page instead of sign-up buttons. */
+const HOME_LABEL: Record<UserRole, string> = {
+  ORGANIZER: 'Open my tournaments',
+  MANAGER: 'Open my team',
+  ADMIN: 'Open admin console',
+}
 
 const fadeUp = {
   initial: { opacity: 0, y: 24 },
@@ -106,6 +116,7 @@ const TOURNAMENT_TYPES = [
 ]
 
 export default function Landing() {
+  const user = useAppStore((s) => s.user)
   return (
     <div className="bg-background">
       {/* ---------------- Hero ---------------- */}
@@ -127,8 +138,8 @@ export default function Landing() {
               Then go live: bids fly, timers tick, and the gavel falls — all in ৳ BDT.
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="min-h-11" onClick={() => navigate('/register')}>
-                Create your auction <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
+              <Button size="lg" className="min-h-11" onClick={() => navigate(user ? DASHBOARD_PATH : '/register')}>
+                {user ? HOME_LABEL[user.role] : 'Create your auction'} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
               </Button>
               <Button size="lg" variant="outline" className="min-h-11" onClick={() => navigate('/join')}>
                 <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> I have a room code
@@ -347,37 +358,39 @@ export default function Landing() {
         </motion.div>
       </section>
 
-      {/* ---------------- Final CTA ---------------- */}
-      <section className="container mx-auto max-w-7xl px-4 pb-16">
-        <motion.div {...fadeUp}>
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 px-6 py-12 text-center text-white shadow-lg sm:px-12 sm:py-16">
-            <Zap className="pointer-events-none absolute -left-8 -top-8 h-40 w-40 text-white/5" aria-hidden />
-            <Trophy className="pointer-events-none absolute -bottom-10 -right-6 h-44 w-44 text-white/5" aria-hidden />
-            <h2 className="relative text-2xl font-extrabold tracking-tight sm:text-3xl">
-              Your auction. One room. Zero spreadsheets.
-            </h2>
-            <p className="relative mx-auto mt-3 max-w-xl text-teal-100">
-              Create a free account, load your players and share the room code. The gavel is waiting.
-            </p>
-            <div className="relative mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-              <Button size="lg" variant="secondary" className="min-h-11 bg-white text-teal-900 hover:bg-teal-50" onClick={() => navigate('/register')}>
-                <Rocket className="mr-1.5 h-4 w-4" aria-hidden /> Create your auction
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="min-h-11 border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
-                onClick={() => navigate('/login')}
-              >
-                <PencilLine className="mr-1.5 h-4 w-4" aria-hidden /> Log in as organizer
-              </Button>
+      {/* ---------------- Final CTA (sign-up pitch — not for logged-in users) ---------------- */}
+      {user ? null : (
+        <section className="container mx-auto max-w-7xl px-4 pb-16">
+          <motion.div {...fadeUp}>
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 px-6 py-12 text-center text-white shadow-lg sm:px-12 sm:py-16">
+              <Zap className="pointer-events-none absolute -left-8 -top-8 h-40 w-40 text-white/5" aria-hidden />
+              <Trophy className="pointer-events-none absolute -bottom-10 -right-6 h-44 w-44 text-white/5" aria-hidden />
+              <h2 className="relative text-2xl font-extrabold tracking-tight sm:text-3xl">
+                Your auction. One room. Zero spreadsheets.
+              </h2>
+              <p className="relative mx-auto mt-3 max-w-xl text-teal-100">
+                Create a free account, load your players and share the room code. The gavel is waiting.
+              </p>
+              <div className="relative mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+                <Button size="lg" variant="secondary" className="min-h-11 bg-white text-teal-900 hover:bg-teal-50" onClick={() => navigate('/register')}>
+                  <Rocket className="mr-1.5 h-4 w-4" aria-hidden /> Create your auction
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="min-h-11 border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                  onClick={() => navigate('/login')}
+                >
+                  <PencilLine className="mr-1.5 h-4 w-4" aria-hidden /> Log in as organizer
+                </Button>
+              </div>
+              <p className="relative mt-5 flex items-center justify-center gap-1.5 text-xs text-teal-200">
+                <Coins className="h-3.5 w-3.5" aria-hidden /> Free during beta — ৳ BDT pricing built in
+              </p>
             </div>
-            <p className="relative mt-5 flex items-center justify-center gap-1.5 text-xs text-teal-200">
-              <Coins className="h-3.5 w-3.5" aria-hidden /> Free during beta — ৳ BDT pricing built in
-            </p>
-          </div>
-        </motion.div>
-      </section>
+          </motion.div>
+        </section>
+      )}
     </div>
   )
 }

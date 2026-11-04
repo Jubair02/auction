@@ -3,24 +3,17 @@
 import { useCallback, useState } from 'react'
 import {
   ArrowLeft,
-  ArrowRight,
-  Ban,
   Download,
   FileSpreadsheet,
   History,
-  Info,
   Loader2,
   MoreVertical,
   Pencil,
-  Radio,
   Trash2,
   Trophy,
-  Users,
-  Wallet,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -45,7 +38,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { StatCard } from '@/components/shared/empty-state'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { PlayersTab } from '@/components/organizer/players-tab'
 import { TeamsTab } from '@/components/organizer/teams-tab'
@@ -53,11 +45,12 @@ import { AuctionSetupTab } from '@/components/organizer/auction-setup-tab'
 import { RegistrationsTab } from '@/components/organizer/registrations-tab'
 import { InsightsTab } from '@/components/organizer/insights-tab'
 import { TournamentEditDialog } from '@/components/organizer/tournament-edit-dialog'
+import { goTo, nextStep, TournamentOverview, type DetailTab } from '@/components/organizer/tournament-overview'
 import { apiDelete, apiDownload, ApiError } from '@/lib/api'
 import { invalidateCached, peekCached, useCachedGet } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
-import { formatBDT, formatDate } from '@/lib/format'
+import { formatDate } from '@/lib/format'
 import { sportLabel, type TournamentDetail as TournamentDetailDTO, type TournamentSummary } from '@/lib/types'
 
 const EXPORT_TYPES: { type: string; label: string }[] = [
@@ -97,12 +90,15 @@ function TournamentDetailSkeleton({ tournamentId }: { tournamentId: string }) {
         <Skeleton className="mt-2 h-4 w-1/2 rounded-lg" />
       </div>
       <Skeleton className="mt-6 h-10 w-full max-w-2xl rounded-lg" />
-      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-24 rounded-xl" />
         ))}
       </div>
-      <Skeleton className="mt-4 h-72 rounded-xl" />
+      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <Skeleton className="h-80 rounded-xl" />
+        <Skeleton className="h-56 rounded-xl" />
+      </div>
     </div>
   )
 }
@@ -117,7 +113,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
     invalidateCached(TOURNAMENTS_URL)
     await refetch()
   }, [refetch])
-  const [tab, setTab] = useState('overview')
+  const [tab, setTab] = useState<DetailTab>('overview')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -161,10 +157,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
   }
 
   const { tournament: t, players, teams, auction } = data
-  const sold = players.filter((p) => p.status === 'SOLD').length
-  const unsold = players.filter((p) => p.status === 'UNSOLD').length
-  const totalBudget = teams.reduce((n, tm) => n + tm.budget, 0)
-  const avgSquad = teams.length > 0 ? Math.round((teams.reduce((n, tm) => n + tm.maxSquad, 0) / teams.length) * 10) / 10 : 0
+  const step = nextStep(data)
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8">
@@ -207,15 +200,16 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
+          <Button className="min-h-10 font-semibold" onClick={() => goTo(step, setTab)}>
+            {step.live ? (
+              <span className="mr-2 h-2 w-2 animate-pulse rounded-full bg-amber-300" aria-hidden />
+            ) : (
+              <step.icon className="mr-1.5 h-4 w-4" aria-hidden />
+            )}
+            {step.label}
+          </Button>
           <Button variant="outline" className="min-h-10" onClick={() => setEditOpen(true)}>
             <Pencil className="mr-1.5 h-4 w-4" aria-hidden /> Edit
-          </Button>
-          <Button
-            variant="outline"
-            className="min-h-10"
-            onClick={() => navigate(`/tournaments/${tournamentId}/history`)}
-          >
-            <History className="mr-1.5 h-4 w-4" aria-hidden /> History
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -236,9 +230,6 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
                   ))}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                <Pencil className="mr-2 h-4 w-4" /> Edit details
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate(`/results/${tournamentId}`)}>
                 <Trophy className="mr-2 h-4 w-4" /> Results
               </DropdownMenuItem>
@@ -255,7 +246,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
       </div>
 
       {/* Tabs */}
-      <Tabs value={tab} onValueChange={setTab} className="mt-6">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="mt-6">
         <TabsList className="h-auto w-full flex-wrap justify-start gap-0 sm:w-auto">
           <TabsTrigger value="overview" className="min-h-11">Overview</TabsTrigger>
           <TabsTrigger value="players" className="min-h-11">
@@ -277,80 +268,8 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
         </TabsList>
 
         {/* ---------------- OVERVIEW ---------------- */}
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          {t.status === 'COMPLETED' ? (
-            <Card className="border-teal-300 bg-teal-50/60">
-              <CardContent className="flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-3">
-                  <Trophy className="h-6 w-6 text-teal-700" aria-hidden />
-                  <div>
-                    <p className="font-bold text-teal-900">This auction has wrapped up</p>
-                    <p className="text-sm text-teal-800/80">The final squads and spending are ready to view.</p>
-                  </div>
-                </div>
-                <Button className="min-h-10 w-full sm:w-auto" onClick={() => navigate(`/results/${tournamentId}`)}>
-                  View final results <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-            <StatCard label="Players" value={players.length} icon={Users} />
-            <StatCard label="Sold" value={sold} icon={Trophy} tone="success" />
-            <StatCard label="Unsold" value={unsold} icon={Ban} tone="danger" />
-            <StatCard label="Teams" value={teams.length} icon={Users} />
-            <StatCard label="Total budget" value={formatBDT(totalBudget)} icon={Wallet} hint="Across all teams" />
-            <StatCard label="Avg max squad" value={avgSquad} icon={Radio} hint="Players per team" />
-          </div>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Info className="h-4 w-4 text-primary" aria-hidden /> Tournament details
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
-                {[
-                  { k: 'Name', v: t.name },
-                  { k: 'Sport', v: sportLabel(t.sport, 'en', t.sportName) },
-                  { k: 'Type', v: t.tournamentType ?? '—' },
-                  { k: 'Location', v: t.location ?? '—' },
-                  { k: 'Start date', v: formatDate(t.startDate) },
-                  { k: 'Auction at', v: formatDate(t.auctionAt, true) },
-                  { k: 'Auction mode', v: t.auctionMode === 'CATEGORY' ? 'Category-Based (A–E)' : 'Normal' },
-                  {
-                    k: 'Base price',
-                    v: t.auctionMode === 'NORMAL' ? formatBDT(t.basePrice) : 'Set per category',
-                  },
-                  { k: 'Status', v: t.status },
-                  { k: 'Created', v: formatDate(t.createdAt, true) },
-                ].map((row) => (
-                  <div key={row.k} className="flex items-start justify-between gap-4 border-b pb-2 text-sm last:border-b-0">
-                    <dt className="shrink-0 font-medium text-muted-foreground">{row.k}</dt>
-                    <dd className="text-right font-semibold">{row.v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </CardContent>
-          </Card>
-
-          <Card className="border-rose-200">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-rose-700">
-                <Trash2 className="h-4 w-4" aria-hidden /> Danger zone
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-muted-foreground">
-                Deleting removes the tournament with all players, teams and bids. This cannot be undone.
-              </p>
-              <Button variant="destructive" className="min-h-10 shrink-0" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="mr-1.5 h-4 w-4" aria-hidden /> Delete tournament
-              </Button>
-            </CardContent>
-          </Card>
+        <TabsContent value="overview" className="mt-4">
+          <TournamentOverview data={data} setTab={setTab} />
         </TabsContent>
 
         {/* ---------------- PLAYERS ---------------- */}

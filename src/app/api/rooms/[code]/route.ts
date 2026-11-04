@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { getSessionUser } from '@/lib/auth'
+import { DEMO_ROOM_CODE } from '@/lib/demo'
 import { clientKey, rateLimit, rateLimitBlocked } from '@/lib/rate-limit'
 import type { RoomInfo, RoomTeamInfo } from '@/lib/types'
 
@@ -37,7 +38,9 @@ export async function GET(req: Request, { params }: RouteParams) {
     },
   })
   if (!auction) {
-    rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
+    // The join page asks for the demo room on every visit; in an unseeded
+    // database that miss must not use up the visitor's wrong-code budget.
+    if (roomCode !== DEMO_ROOM_CODE) rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
     return Response.json({ error: 'Room not found. Check the code and try again.' }, { status: 404 })
   }
 

@@ -3,7 +3,7 @@
 // App shell + hash router. The entire SPA lives under the single Next.js route "/".
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Gavel, Loader2, LogIn, LogOut, Megaphone, ShieldCheck, UserPlus } from 'lucide-react'
+import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Trophy, UserPlus, Users } from 'lucide-react'
 import { Toaster as SonnerToaster, toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { apiGet } from '@/lib/api'
@@ -42,7 +42,6 @@ const ManagerDashboard = dynamic(() => import('@/components/manager/manager-dash
 const JoinRoomView = dynamic(() => import('@/components/manager/join-room'), { loading: () => <CenterLoader /> })
 const AcceptInvite = dynamic(() => import('@/components/manager/accept-invite'), { loading: () => <CenterLoader /> })
 const RegisterPlayer = dynamic(() => import('@/components/register-player'), { loading: () => <CenterLoader /> })
-const MyTeamView = dynamic(() => import('@/components/manager/my-team'), { loading: () => <CenterLoader /> })
 const ResultsView = dynamic(() => import('@/components/results/results-view'), { loading: () => <CenterLoader /> })
 
 /**
@@ -162,8 +161,9 @@ export default function AppRoot() {
         return <AcceptInvite token={segs[1] ?? fragment} />
       case head === 'join' && segs.length === 1:
         return <JoinRoomView />
+      // Old link to the managers' squad page — the dashboard now shows every squad.
       case head === 'my-team' && segs.length === 1:
-        return <MyTeamView />
+        return <ManagerDashboard />
       case head === 'admin' && segs.length === 1:
         return <AdminView />
       default:
@@ -216,10 +216,34 @@ export default function AppRoot() {
                       <Badge variant="secondary" className="mt-1.5">{user.role}</Badge>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
+                    {/* Each role's way home — the logo deliberately isn't a link. */}
                     {user.role === 'MANAGER' && (
                       <>
-                        <DropdownMenuItem onClick={() => navigate('/join')}>{t.joinRoom}</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => navigate('/my-team')}>{t.myTeam}</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
+                          <Users className="mr-2 h-4 w-4" /> {t.myTeam}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate('/join')}>
+                          <KeyRound className="mr-2 h-4 w-4" /> {t.joinRoom}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {user.role === 'ORGANIZER' && (
+                      <>
+                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
+                          <Trophy className="mr-2 h-4 w-4" /> {t.myTournaments}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate('/tournaments/new')}>
+                          <Plus className="mr-2 h-4 w-4" /> {t.newTournament}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {user.role === 'ADMIN' && (
+                      <>
+                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
+                          <ShieldCheck className="mr-2 h-4 w-4" /> {t.adminConsole}
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     )}
@@ -266,6 +290,9 @@ const SHELL_STRINGS = {
   en: {
     joinRoom: 'Join auction room',
     myTeam: 'My team',
+    myTournaments: 'My tournaments',
+    newTournament: 'New tournament',
+    adminConsole: 'Admin console',
     logout: 'Log out',
     login: 'Login',
     register: 'Register',
@@ -276,6 +303,9 @@ const SHELL_STRINGS = {
   bn: {
     joinRoom: 'নিলাম রুমে যোগ দিন',
     myTeam: 'আমার দল',
+    myTournaments: 'আমার টুর্নামেন্ট',
+    newTournament: 'নতুন টুর্নামেন্ট',
+    adminConsole: 'অ্যাডমিন কনসোল',
     logout: 'লগ আউট',
     login: 'লগইন',
     register: 'রেজিস্টার',
@@ -283,7 +313,7 @@ const SHELL_STRINGS = {
     footerFacts: '৳ টাকা · ক্রিকেট ও ফুটবল · রুম কোড দিয়ে যোগদান',
     noAccess: 'ওই পেজে আপনার প্রবেশাধিকার নেই — এই আপনার ড্যাশবোর্ড।',
   },
-} satisfies Strings<Record<'joinRoom' | 'myTeam' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'noAccess', string>>
+} satisfies Strings<Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'noAccess', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {

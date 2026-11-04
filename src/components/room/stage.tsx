@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PlayerAvatar, TeamAvatar } from '@/components/shared/avatars'
+import { Arena } from '@/components/shared/arena'
 import { CountdownRing } from './countdown-ring'
 import { ResultOverlay } from './result-overlay'
 import { type Strings, useStrings } from '@/lib/i18n'
@@ -198,12 +199,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
   const leaderColor = state.currentBid?.teamColor || '#2DD4BF'
 
   return (
-    <section className="dark relative isolate overflow-hidden rounded-2xl border border-white/10 bg-[#0a1517] text-foreground shadow-xl shadow-teal-950/25">
-      {/* arena lighting */}
-      <div
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_90%_70%_at_15%_0%,rgba(45,212,191,0.16),transparent_60%),radial-gradient(ellipse_60%_55%_at_100%_100%,rgba(245,158,11,0.09),transparent_70%)]"
-        aria-hidden
-      />
+    <Arena>
       {active ? (
         <motion.div
           className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 via-amber-300 to-emerald-400"
@@ -420,7 +416,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
           ) : null}
         </AnimatePresence>
       </div>
-    </section>
+    </Arena>
   )
 }
 
