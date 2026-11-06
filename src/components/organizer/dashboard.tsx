@@ -24,54 +24,233 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Arena } from '@/components/shared/arena'
 import { TournamentCard, copyRoomCode } from '@/components/organizer/tournament-card'
 import { useCachedGet } from '@/lib/api-cache'
+import { LoadError } from '@/components/shared/load-error'
 import { TOURNAMENTS_URL, prefetchTournamentProps } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { useAppStore } from '@/lib/store'
 import { formatAuctionWhen } from '@/lib/format'
-import { byUrgency, isDone, isLive, plural, urgency } from '@/lib/tournament-status'
+import { byUrgency, isDone, isLive, urgency } from '@/lib/tournament-status'
 import { cn } from '@/lib/utils'
 import { sportLabel, type TournamentSummary } from '@/lib/types'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
+
+type DashboardStrings = {
+  guideSteps: string[]
+  players: string
+  teams: string
+  auction: string
+  eyebrows: string[]
+  enterLive: string
+  openAuctionRoom: string
+  continueSetup: string
+  viewResults: string
+  biddingUnderWay: string
+  heldAt: (when: string) => string
+  wasSetFor: (when: string) => string
+  auctionAt: (when: string) => string
+  noTimeYet: string
+  playerCount: (n: number) => string
+  teamCount: (n: number) => string
+  tournamentCount: (n: number) => string
+  soldCount: (n: number) => string
+  manage: string
+  copyCode: (code: string) => string
+  roomCode: string
+  managersJoin: string
+  beforeRoomOpens: string
+  done: string
+  toDo: string
+  doneOf: (done: number, total: number) => string
+  auctionPaused: string
+  auctionLive: string
+  enterRoom: string
+  noPlayers: string
+  addPlayers: string
+  noTeams: string
+  createTeams: string
+  readyForAuction: string
+  setUp: string
+  wasDue: (when: string) => string
+  openRoom: string
+  needsAttention: string
+  allClear: string
+  moreBelow: (n: number) => string
+  firstAuction: string
+  firstTitle: string
+  firstBody: string
+  createFirst: string
+  organizer: string
+  greeting: (name: string) => string
+  letsSetUp: string
+  newTournament: string
+  loadWhat: string
+  yourTournaments: string
+  all: (n: number) => string
+  results: string
+}
+
+const STRINGS = {
+  en: {
+    guideSteps: [
+      'Create a tournament — sport, format and venue',
+      'Add players by hand or from a CSV',
+      'Create teams with budgets and squad limits',
+      'Set up the auction to get a room code',
+      'Share the room code with team managers',
+      'Run the live auction, then export the results',
+    ],
+    players: 'Players',
+    teams: 'Teams',
+    auction: 'Auction',
+    eyebrows: ['Live now', 'Room ready', 'Being set up', 'Last auction'],
+    enterLive: 'Enter live room',
+    openAuctionRoom: 'Open auction room',
+    continueSetup: 'Continue setup',
+    viewResults: 'View results',
+    biddingUnderWay: 'Bidding is under way',
+    heldAt: (when) => `Held ${when}`,
+    wasSetFor: (when) => `Was set for ${when} — start it or change the date`,
+    auctionAt: (when) => `Auction ${when}`,
+    noTimeYet: 'No auction time set yet',
+    playerCount: (n) => `${n} player${n === 1 ? '' : 's'}`,
+    teamCount: (n) => `${n} team${n === 1 ? '' : 's'}`,
+    tournamentCount: (n) => `${n} tournament${n === 1 ? '' : 's'}`,
+    soldCount: (n) => `${n} sold`,
+    manage: 'Manage',
+    copyCode: (code) => `Copy room code ${code}`,
+    roomCode: 'Room code',
+    managersJoin: 'Managers join with this code · tap to copy',
+    beforeRoomOpens: 'Before the room opens',
+    done: 'done',
+    toDo: 'to do',
+    doneOf: (done, total) => `${done} of ${total} done`,
+    auctionPaused: 'Auction is paused',
+    auctionLive: 'Auction is live',
+    enterRoom: 'Enter room',
+    noPlayers: 'No players yet',
+    addPlayers: 'Add players',
+    noTeams: 'No teams yet',
+    createTeams: 'Create teams',
+    readyForAuction: 'Players and teams are in — set up the auction',
+    setUp: 'Set up',
+    wasDue: (when) => `Was due ${when}`,
+    openRoom: 'Open room',
+    needsAttention: 'Needs your attention',
+    allClear: 'Nothing is waiting on you. Every tournament is set up or finished.',
+    moreBelow: (n) => `+${n} more in your tournaments below`,
+    firstAuction: 'Your first auction',
+    firstTitle: 'From a list of names to a live room',
+    firstBody:
+      'Start with the tournament. Players, teams and the room code all hang off it, and you can come back to any step later.',
+    createFirst: 'Create your first tournament',
+    organizer: 'Organizer',
+    greeting: (name) => `Assalamu alaikum, ${name}`,
+    letsSetUp: 'Let’s set up your first auction.',
+    newTournament: 'New tournament',
+    loadWhat: 'your tournaments',
+    yourTournaments: 'Your tournaments',
+    all: (n) => `All ${n}`,
+    results: 'Results',
+  },
+  bn: {
+    guideSteps: [
+      'টুর্নামেন্ট তৈরি করুন — খেলা, ফরম্যাট আর ভেন্যু',
+      'হাতে লিখে বা CSV থেকে খেলোয়াড় যোগ করুন',
+      'বাজেট আর স্কোয়াড লিমিট দিয়ে দল তৈরি করুন',
+      'নিলাম সেট আপ করে রুম কোড নিন',
+      'টিম ম্যানেজারদের সাথে রুম কোড শেয়ার করুন',
+      'লাইভ নিলাম চালান, তারপর ফলাফল এক্সপোর্ট করুন',
+    ],
+    players: 'খেলোয়াড়',
+    teams: 'দল',
+    auction: 'নিলাম',
+    eyebrows: ['এখন লাইভ', 'রুম প্রস্তুত', 'সেট আপ চলছে', 'শেষ নিলাম'],
+    enterLive: 'লাইভ রুমে ঢুকুন',
+    openAuctionRoom: 'নিলাম রুম খুলুন',
+    continueSetup: 'সেট আপ চালিয়ে যান',
+    viewResults: 'ফলাফল দেখুন',
+    biddingUnderWay: 'বিড চলছে',
+    heldAt: (when) => `অনুষ্ঠিত: ${when}`,
+    wasSetFor: (when) => `নির্ধারিত ছিল ${when} — শুরু করুন বা তারিখ বদলান`,
+    auctionAt: (when) => `নিলাম: ${when}`,
+    noTimeYet: 'নিলামের সময় এখনো ঠিক হয়নি',
+    playerCount: (n) => `${n} জন খেলোয়াড়`,
+    teamCount: (n) => `${n}টি দল`,
+    tournamentCount: (n) => `${n}টি টুর্নামেন্ট`,
+    soldCount: (n) => `${n} জন বিক্রি`,
+    manage: 'ম্যানেজ করুন',
+    copyCode: (code) => `রুম কোড ${code} কপি করুন`,
+    roomCode: 'রুম কোড',
+    managersJoin: 'ম্যানেজাররা এই কোড দিয়ে যোগ দেবেন · কপি করতে ট্যাপ করুন',
+    beforeRoomOpens: 'রুম খোলার আগে',
+    done: 'হয়ে গেছে',
+    toDo: 'বাকি',
+    doneOf: (done, total) => `${total}টির মধ্যে ${done}টি হয়েছে`,
+    auctionPaused: 'নিলামে বিরতি চলছে',
+    auctionLive: 'নিলাম লাইভ চলছে',
+    enterRoom: 'রুমে ঢুকুন',
+    noPlayers: 'এখনো কোনো খেলোয়াড় নেই',
+    addPlayers: 'খেলোয়াড় যোগ করুন',
+    noTeams: 'এখনো কোনো দল নেই',
+    createTeams: 'দল তৈরি করুন',
+    readyForAuction: 'খেলোয়াড় আর দল তৈরি — এবার নিলাম সেট আপ করুন',
+    setUp: 'সেট আপ',
+    wasDue: (when) => `নির্ধারিত ছিল: ${when}`,
+    openRoom: 'রুম খুলুন',
+    needsAttention: 'আপনার মনোযোগ দরকার',
+    allClear: 'আপনার জন্য কিছু অপেক্ষায় নেই। সব টুর্নামেন্ট সেট আপ করা বা শেষ।',
+    moreBelow: (n) => `নিচে আপনার টুর্নামেন্টে আরও ${n}টি`,
+    firstAuction: 'আপনার প্রথম নিলাম',
+    firstTitle: 'নামের তালিকা থেকে লাইভ রুম',
+    firstBody:
+      'টুর্নামেন্ট দিয়ে শুরু করুন। খেলোয়াড়, দল আর রুম কোড সবই এর সাথে যুক্ত, আর যেকোনো ধাপে পরে ফিরে আসতে পারবেন।',
+    createFirst: 'প্রথম টুর্নামেন্ট তৈরি করুন',
+    organizer: 'আয়োজক',
+    greeting: (name) => `আসসালামু আলাইকুম, ${name}`,
+    letsSetUp: 'চলুন আপনার প্রথম নিলাম সেট আপ করি।',
+    newTournament: 'নতুন টুর্নামেন্ট',
+    loadWhat: 'আপনার টুর্নামেন্ট',
+    yourTournaments: 'আপনার টুর্নামেন্ট',
+    all: (n) => `সব ${n}টি`,
+    results: 'ফলাফল',
+  },
+} satisfies Strings<DashboardStrings>
 
 /** The order a first auction is actually built in — shown only to organizers with none yet. */
-const GUIDE_STEPS = [
-  { icon: ClipboardList, text: 'Create a tournament — sport, format and venue' },
-  { icon: Users, text: 'Add players by hand or from a CSV' },
-  { icon: Wallet, text: 'Create teams with budgets and squad limits' },
-  { icon: Gavel, text: 'Set up the auction to get a room code' },
-  { icon: Share2, text: 'Share the room code with team managers' },
-  { icon: Radio, text: 'Run the live auction, then export the results' },
-]
+const GUIDE_ICONS: LucideIcon[] = [ClipboardList, Users, Wallet, Gavel, Share2, Radio]
 
-function setupSteps(t: TournamentSummary) {
+function setupSteps(t: TournamentSummary, s: DashboardStrings) {
   return [
-    { label: 'Players', done: t.playerCount > 0 },
-    { label: 'Teams', done: t.teamCount > 0 },
-    { label: 'Auction', done: !!t.roomCode },
+    { label: s.players, done: t.playerCount > 0 },
+    { label: s.teams, done: t.teamCount > 0 },
+    { label: s.auction, done: !!t.roomCode },
   ]
 }
 
-const SPOTLIGHT: Record<number, { eyebrow: string; tone: string }> = {
-  0: { eyebrow: 'Live now', tone: 'bg-amber-400/15 text-amber-300 ring-amber-300/30' },
-  1: { eyebrow: 'Room ready', tone: 'bg-teal-400/15 text-teal-200 ring-teal-300/30' },
-  2: { eyebrow: 'Being set up', tone: 'bg-white/10 text-slate-200 ring-white/15' },
-  3: { eyebrow: 'Last auction', tone: 'bg-white/10 text-slate-200 ring-white/15' },
+const SPOTLIGHT_TONE: Record<number, string> = {
+  0: 'bg-amber-400/15 text-amber-300 ring-amber-300/30',
+  1: 'bg-teal-400/15 text-teal-200 ring-teal-300/30',
+  2: 'bg-white/10 text-slate-200 ring-white/15',
+  3: 'bg-white/10 text-slate-200 ring-white/15',
 }
 
 /** The one tournament that needs the organizer most, staged like the auction room itself. */
 function Spotlight({ t }: { t: TournamentSummary }) {
+  const lang = useLang()
+  const s = useStrings(STRINGS)
   const level = urgency(t)
-  const meta = SPOTLIGHT[level]
+  const meta = { eyebrow: s.eyebrows[level], tone: SPOTLIGHT_TONE[level] }
   const when = formatAuctionWhen(t.auctionAt)
-  const steps = setupSteps(t)
+  const steps = setupSteps(t, s)
 
   const primary: { label: string; icon: LucideIcon; href: string } =
     level === 0
-      ? { label: 'Enter live room', icon: Radio, href: `/room/${t.roomCode}` }
+      ? { label: s.enterLive, icon: Radio, href: `/room/${t.roomCode}` }
       : level === 1
-        ? { label: 'Open auction room', icon: DoorOpen, href: `/room/${t.roomCode}` }
+        ? { label: s.openAuctionRoom, icon: DoorOpen, href: `/room/${t.roomCode}` }
         : level === 2
-          ? { label: 'Continue setup', icon: ArrowRight, href: `/tournaments/${t.id}` }
-          : { label: 'View results', icon: Trophy, href: `/results/${t.id}` }
+          ? { label: s.continueSetup, icon: ArrowRight, href: `/tournaments/${t.id}` }
+          : { label: s.viewResults, icon: Trophy, href: `/results/${t.id}` }
 
   return (
     <Arena>
@@ -83,7 +262,7 @@ function Spotlight({ t }: { t: TournamentSummary }) {
               {meta.eyebrow}
             </span>
             <span className="truncate text-xs font-medium text-muted-foreground">
-              {sportLabel(t.sport, 'en', t.sportName)}
+              {sportLabel(t.sport, lang, t.sportName)}
               {t.tournamentType ? ` · ${t.tournamentType}` : ''}
               {t.location ? ` · ${t.location}` : ''}
             </span>
@@ -94,19 +273,19 @@ function Spotlight({ t }: { t: TournamentSummary }) {
           <p className={cn('mt-3 flex items-center gap-1.5 text-sm', when?.past && level > 0 && level < 3 ? 'text-amber-300' : 'text-foreground/80')}>
             <CalendarClock className="h-4 w-4 shrink-0" aria-hidden />
             {level === 0
-              ? 'Bidding is under way'
+              ? s.biddingUnderWay
               : when
                 ? level === 3
-                  ? `Held ${when.text}`
+                  ? s.heldAt(when.text)
                   : when.past
-                    ? `Was set for ${when.text} — start it or change the date`
-                    : `Auction ${when.text}`
-                : 'No auction time set yet'}
+                    ? s.wasSetFor(when.text)
+                    : s.auctionAt(when.text)
+                : s.noTimeYet}
           </p>
 
           <p className="mt-1.5 text-sm tabular-nums text-muted-foreground">
-            {plural(t.playerCount, 'player')} · {plural(t.teamCount, 'team')}
-            {t.soldCount > 0 ? ` · ${t.soldCount} sold` : ''}
+            {s.playerCount(t.playerCount)} · {s.teamCount(t.teamCount)}
+            {t.soldCount > 0 ? ` · ${s.soldCount(t.soldCount)}` : ''}
           </p>
 
           <div className="mt-6 flex flex-wrap gap-2 md:mt-auto md:pt-6">
@@ -115,7 +294,7 @@ function Spotlight({ t }: { t: TournamentSummary }) {
             </Button>
             {level !== 2 ? (
               <Button variant="ghost" className="h-11" onClick={() => navigate(`/tournaments/${t.id}`)} {...prefetchTournamentProps(t.id)}>
-                Manage
+                {s.manage}
               </Button>
             ) : null}
           </div>
@@ -126,39 +305,39 @@ function Spotlight({ t }: { t: TournamentSummary }) {
           {t.roomCode ? (
             <button
               type="button"
-              onClick={() => copyRoomCode(t.roomCode as string)}
+              onClick={() => copyRoomCode(t.roomCode as string, lang)}
               className="group flex h-full w-full flex-col justify-between gap-4 rounded-xl border-2 border-dashed border-white/20 bg-white/[0.04] p-4 text-left transition-colors hover:border-teal-300/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300"
-              aria-label={`Copy room code ${t.roomCode}`}
+              aria-label={s.copyCode(t.roomCode)}
             >
               <span className="flex items-center justify-between text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                Room code
+                {s.roomCode}
                 <ClipboardCopy className="h-4 w-4 transition-colors group-hover:text-teal-200" aria-hidden />
               </span>
               <span className="font-mono text-3xl font-black tracking-[0.12em] text-teal-200 sm:text-[2rem]">{t.roomCode}</span>
-              <span className="text-xs text-muted-foreground">Managers join with this code · tap to copy</span>
+              <span className="text-xs text-muted-foreground">{s.managersJoin}</span>
             </button>
           ) : (
             <div className="flex h-full flex-col justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Before the room opens</span>
+              <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{s.beforeRoomOpens}</span>
               <ul className="space-y-2.5">
-                {steps.map((s) => (
-                  <li key={s.label} className="flex items-center gap-2.5 text-sm">
+                {steps.map((step) => (
+                  <li key={step.label} className="flex items-center gap-2.5 text-sm">
                     <span
                       className={cn(
                         'flex h-5 w-5 items-center justify-center rounded-full border',
-                        s.done ? 'border-teal-300 bg-teal-300 text-[#0a1517]' : 'border-white/25'
+                        step.done ? 'border-teal-300 bg-teal-300 text-[#0a1517]' : 'border-white/25'
                       )}
                       aria-hidden
                     >
-                      {s.done ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                      {step.done ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
                     </span>
-                    <span className={s.done ? 'text-muted-foreground line-through decoration-white/30' : ''}>{s.label}</span>
-                    <span className="sr-only">{s.done ? 'done' : 'to do'}</span>
+                    <span className={step.done ? 'text-muted-foreground line-through decoration-white/30' : ''}>{step.label}</span>
+                    <span className="sr-only">{step.done ? s.done : s.toDo}</span>
                   </li>
                 ))}
               </ul>
               <span className="text-xs text-muted-foreground">
-                {steps.filter((s) => s.done).length} of {steps.length} done
+                {s.doneOf(steps.filter((step) => step.done).length, steps.length)}
               </span>
             </div>
           )}
@@ -178,7 +357,7 @@ interface ActionItem {
 }
 
 /** Concrete to-dos across every unfinished tournament, most urgent first. */
-function actionItems(tournaments: TournamentSummary[], spotlightId: string): ActionItem[] {
+function actionItems(tournaments: TournamentSummary[], spotlightId: string, s: DashboardStrings): ActionItem[] {
   const items: ActionItem[] = []
   for (const t of [...tournaments].sort(byUrgency)) {
     if (isDone(t)) continue
@@ -186,32 +365,33 @@ function actionItems(tournaments: TournamentSummary[], spotlightId: string): Act
     const when = formatAuctionWhen(t.auctionAt)
     if (isLive(t)) {
       // The spotlight already puts a live room front and centre.
-      if (t.id !== spotlightId) items.push({ ...base, key: `${t.id}-live`, text: t.auctionStatus === 'PAUSED' ? 'Auction is paused' : 'Auction is live', action: 'Enter room', href: `/room/${t.roomCode}` })
+      if (t.id !== spotlightId) items.push({ ...base, key: `${t.id}-live`, text: t.auctionStatus === 'PAUSED' ? s.auctionPaused : s.auctionLive, action: s.enterRoom, href: `/room/${t.roomCode}` })
       continue
     }
     if (t.playerCount === 0) {
-      items.push({ ...base, key: `${t.id}-players`, text: 'No players yet', action: 'Add players', href: `/tournaments/${t.id}` })
+      items.push({ ...base, key: `${t.id}-players`, text: s.noPlayers, action: s.addPlayers, href: `/tournaments/${t.id}` })
     }
     if (t.teamCount === 0) {
-      items.push({ ...base, key: `${t.id}-teams`, text: 'No teams yet', action: 'Create teams', href: `/tournaments/${t.id}` })
+      items.push({ ...base, key: `${t.id}-teams`, text: s.noTeams, action: s.createTeams, href: `/tournaments/${t.id}` })
     }
     if (!t.roomCode && t.playerCount > 0 && t.teamCount > 0) {
-      items.push({ ...base, key: `${t.id}-auction`, text: 'Players and teams are in — set up the auction', action: 'Set up', href: `/tournaments/${t.id}` })
+      items.push({ ...base, key: `${t.id}-auction`, text: s.readyForAuction, action: s.setUp, href: `/tournaments/${t.id}` })
     }
     if (t.roomCode && when?.past) {
-      items.push({ ...base, key: `${t.id}-overdue`, text: `Was due ${when.text}`, action: 'Open room', href: `/room/${t.roomCode}` })
+      items.push({ ...base, key: `${t.id}-overdue`, text: s.wasDue(when.text), action: s.openRoom, href: `/room/${t.roomCode}` })
     }
   }
   return items
 }
 
 function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentSummary[]; spotlightId: string }) {
-  const items = actionItems(tournaments, spotlightId)
+  const s = useStrings(STRINGS)
+  const items = actionItems(tournaments, spotlightId, s)
   return (
     <Card className="gap-3">
       <CardHeader className="pb-0">
         <CardTitle className="flex items-center justify-between text-base">
-          Needs your attention
+          {s.needsAttention}
           {items.length > 0 ? <span className="text-sm font-semibold tabular-nums text-muted-foreground">{items.length}</span> : null}
         </CardTitle>
       </CardHeader>
@@ -221,7 +401,7 @@ function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentS
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden>
               <Check className="h-4 w-4" />
             </span>
-            <span className="text-muted-foreground">Nothing is waiting on you. Every tournament is set up or finished.</span>
+            <span className="text-muted-foreground">{s.allClear}</span>
           </div>
         ) : (
           <ul className="-mx-2 divide-y">
@@ -247,7 +427,7 @@ function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentS
           </ul>
         )}
         {items.length > 5 ? (
-          <p className="mt-2 text-xs text-muted-foreground">+{items.length - 5} more in your tournaments below</p>
+          <p className="mt-2 text-xs text-muted-foreground">{s.moreBelow(items.length - 5)}</p>
         ) : null}
       </CardContent>
     </Card>
@@ -256,25 +436,26 @@ function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentS
 
 /** First visit: the empty dashboard becomes the guide, in the order the work is actually done. */
 function FirstAuction() {
+  const s = useStrings(STRINGS)
   return (
     <Arena>
       <div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-widest text-amber-300">Your first auction</p>
-          <h2 className="mt-3 text-3xl font-black leading-[1.05] tracking-tight sm:text-4xl">From a list of names to a live room</h2>
+          <p className="text-[11px] font-black uppercase tracking-widest text-amber-300">{s.firstAuction}</p>
+          <h2 className="mt-3 text-3xl font-black leading-[1.05] tracking-tight sm:text-4xl">{s.firstTitle}</h2>
           <p className="mt-3 max-w-md text-sm text-muted-foreground sm:text-base">
-            Start with the tournament. Players, teams and the room code all hang off it, and you can come back to any step later.
+            {s.firstBody}
           </p>
           <Button className="mt-6 h-11 px-5 font-bold" onClick={() => navigate('/tournaments/new')}>
-            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> Create your first tournament
+            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.createFirst}
           </Button>
         </div>
         <ol className="space-y-2">
-          {GUIDE_STEPS.map((step, i) => (
-            <li key={step.text} className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5">
+          {GUIDE_ICONS.map((Icon, i) => (
+            <li key={i} className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5">
               <span className="w-5 shrink-0 text-right font-mono text-xs font-bold tabular-nums text-muted-foreground">{i + 1}</span>
-              <step.icon className="h-4 w-4 shrink-0 text-teal-200" aria-hidden />
-              <span className="text-sm">{step.text}</span>
+              <Icon className="h-4 w-4 shrink-0 text-teal-200" aria-hidden />
+              <span className="text-sm">{s.guideSteps[i]}</span>
             </li>
           ))}
         </ol>
@@ -284,12 +465,15 @@ function FirstAuction() {
 }
 
 export default function OrganizerDashboard() {
-  const user = useAppStore((s) => s.user)
+  const user = useAppStore((st) => st.user)
+  const s = useStrings(STRINGS)
   // Shares its cache with the tournaments page — opening either after the other is instant.
-  const { data, loading } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)
+  const { data, loading, error, refetch } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)
+  // A failed load must not look like "you have no tournaments yet".
+  const failed = !data && !!error
   const tournaments = [...(data?.tournaments ?? [])].sort(byUrgency)
 
-  const firstName = (user?.name ?? 'Organizer').split(/\s+/)[0]
+  const firstName = (user?.name ?? s.organizer).split(/\s+/)[0]
   const totalPlayers = tournaments.reduce((n, t) => n + t.playerCount, 0)
   const totalTeams = tournaments.reduce((n, t) => n + t.teamCount, 0)
   const spotlight = tournaments[0]
@@ -299,20 +483,20 @@ export default function OrganizerDashboard() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">Assalamu alaikum, {firstName}</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{s.greeting(firstName)}</h1>
           {loading ? (
             <Skeleton className="mt-2 h-4 w-56" />
-          ) : (
+          ) : failed ? null : (
             <p className="mt-1 text-sm tabular-nums text-muted-foreground">
               {tournaments.length === 0
-                ? 'Let’s set up your first auction.'
-                : `${plural(tournaments.length, 'tournament')} · ${plural(totalPlayers, 'player')} · ${plural(totalTeams, 'team')}`}
+                ? s.letsSetUp
+                : `${s.tournamentCount(tournaments.length)} · ${s.playerCount(totalPlayers)} · ${s.teamCount(totalTeams)}`}
             </p>
           )}
         </div>
         {!loading && tournaments.length > 0 ? (
           <Button size="lg" className="min-h-11" onClick={() => navigate('/tournaments/new')}>
-            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> New tournament
+            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
           </Button>
         ) : null}
       </div>
@@ -322,6 +506,8 @@ export default function OrganizerDashboard() {
           <Skeleton className="h-72 rounded-2xl" />
           <Skeleton className="h-72 rounded-xl" />
         </div>
+      ) : failed ? (
+        <LoadError className="mt-6" what={s.loadWhat} error={error} onRetry={refetch} />
       ) : !spotlight ? (
         <div className="mt-6">
           <FirstAuction />
@@ -333,12 +519,12 @@ export default function OrganizerDashboard() {
             <NeedsAttention tournaments={tournaments} spotlightId={spotlight.id} />
           </div>
 
-          <section className="mt-10" aria-label="Your tournaments">
+          <section className="mt-10" aria-label={s.yourTournaments}>
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-bold">Your tournaments</h2>
+              <h2 className="text-lg font-bold">{s.yourTournaments}</h2>
               {tournaments.length > 6 ? (
                 <Button variant="ghost" size="sm" onClick={() => navigate('/tournaments')}>
-                  All {tournaments.length} <ArrowRight className="ml-1 h-4 w-4" aria-hidden />
+                  {s.all(tournaments.length)} <ArrowRight className="ml-1 h-4 w-4" aria-hidden />
                 </Button>
               ) : null}
             </div>
@@ -350,10 +536,10 @@ export default function OrganizerDashboard() {
                   actions={
                     <>
                       <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
-                        <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> Manage
+                        <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> {s.manage}
                       </Button>
                       <Button variant="outline" className="min-h-10 flex-1" onClick={() => navigate(`/results/${t.id}`)}>
-                        <History className="mr-1.5 h-4 w-4" aria-hidden /> Results
+                        <History className="mr-1.5 h-4 w-4" aria-hidden /> {s.results}
                       </Button>
                     </>
                   }

@@ -1,7 +1,7 @@
 // Run: npm test (node --test).
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeRoomState } from './room-state.ts'
+import { mergeRoomState, seatBelongsTo } from './room-state.ts'
 import type { RoomState, RoomStateWire } from './types.ts'
 
 const full = (over: Partial<RoomState> = {}): RoomState =>
@@ -55,5 +55,24 @@ describe('mergeRoomState', () => {
 
   it('ignores a delta that arrives before the first snapshot', () => {
     assert.deepEqual(mergeRoomState(null, delta(full(), ['players'])), { state: null, needsResync: false })
+  })
+})
+
+describe('seatBelongsTo', () => {
+  it('reuses a seat only for the account it was issued to', () => {
+    assert.equal(seatBelongsTo({ role: 'MANAGER', userId: 'u1' }, 'u1'), true)
+    assert.equal(seatBelongsTo({ role: 'MANAGER', userId: 'u1' }, 'u2'), false)
+    assert.equal(seatBelongsTo({ role: 'ORGANIZER', userId: 'u1' }, null), false) // logged out
+  })
+
+  it('drops organizer/manager seats saved without an owner', () => {
+    assert.equal(seatBelongsTo({ role: 'MANAGER' }, 'u1'), false)
+    assert.equal(seatBelongsTo({ role: 'ORGANIZER', userId: null }, 'u1'), false)
+  })
+
+  it('keeps anonymous viewer seats usable', () => {
+    assert.equal(seatBelongsTo({ role: 'VIEWER', userId: null }, null), true)
+    assert.equal(seatBelongsTo({ role: 'VIEWER' }, 'u1'), true)
+    assert.equal(seatBelongsTo({ role: 'VIEWER', userId: 'u1' }, 'u2'), false)
   })
 })

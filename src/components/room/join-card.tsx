@@ -156,7 +156,7 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
   const t = useStrings(STRINGS)
   const user = useAppStore((s) => s.user)
   const myManagedTeam = user
-    ? info.teams.find((team) => team.managerUserId === user.id)
+    ? info.teams.find((team) => team.isMine)
     : undefined
 
   const [roleTab, setRoleTab] = useState<'MANAGER' | 'VIEWER'>('MANAGER')
@@ -226,11 +226,11 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
           </div>
 
           {/* role segmented control */}
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label={t.joinAs}>
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label={t.joinAs}>
             <button
               type="button"
-              role="tab"
-              aria-selected={roleTab === 'MANAGER'}
+              role="radio"
+              aria-checked={roleTab === 'MANAGER'}
               onClick={() => setRoleTab('MANAGER')}
               className={cn(
                 'flex min-h-11 items-center justify-center gap-1.5 rounded-lg text-sm font-bold transition-all',
@@ -241,8 +241,8 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={roleTab === 'VIEWER'}
+              role="radio"
+              aria-checked={roleTab === 'VIEWER'}
               onClick={() => setRoleTab('VIEWER')}
               className={cn(
                 'flex min-h-11 items-center justify-center gap-1.5 rounded-lg text-sm font-bold transition-all',
@@ -291,16 +291,16 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
                       <SelectItem
                         key={team.id}
                         value={team.id}
-                        disabled={team.managerUserId ? team.managerUserId !== user?.id : !info.allowOpenClaim}
+                        disabled={team.claimed ? !team.isMine : !info.allowOpenClaim}
                       >
                         <span className="flex items-center gap-2">
                           {team.name}
                           <span className="text-xs text-muted-foreground tabular-nums">
                             {t.budget(formatNumber(team.budget))}
                           </span>
-                          {team.managerUserId === user?.id ? (
+                          {team.isMine ? (
                             <span className="text-[10px] font-bold uppercase text-teal-700">{t.tagYourTeam}</span>
-                          ) : team.managerUserId ? (
+                          ) : team.claimed ? (
                             <span className="text-[10px] font-bold uppercase text-muted-foreground">{t.tagTaken}</span>
                           ) : !info.allowOpenClaim ? (
                             <span className="text-[10px] font-bold uppercase text-muted-foreground">{t.tagInviteOnly}</span>

@@ -132,17 +132,49 @@ export async function insertPlayersNumbered(tournamentId: string, rows: NewPlaye
 
 export const PLAYER_NUMBER_CONFLICT = 'Another player upload for this tournament finished at the same moment. Please try again.'
 
+/** A unique-constraint violation (P2002) — e.g. a second team for the same manager in one tournament. */
+export function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+}
+
+export const ONE_TEAM_PER_MANAGER = 'You already manage a team in this tournament — a manager can run only one team.'
+
 // ---------- Coercion / validation ----------
 /** Strict integer coercion (number or numeric string). Returns null when not an integer. */
 export function coerceInt(value: unknown): number | null {
-  if (typeof value === 'number') return Number.isInteger(value) ? value : null
-  if (typeof value === 'string') {
+  let n: number | null = null
+  if (typeof value === 'number') n = Number.isInteger(value) ? value : null
+  else if (typeof value === 'string') {
     const s = value.trim()
-    if (!/^-?\d+$/.test(s)) return null
-    return Number.parseInt(s, 10)
+    if (/^-?\d+$/.test(s)) n = Number.parseInt(s, 10)
   }
-  return null
+  // Prisma Int columns are Postgres int4 (max 2,147,483,647): anything larger
+  // used to crash the write with a 500 instead of a validation error.
+  return n !== null && Math.abs(n) <= MAX_AMOUNT ? n : null
 }
+
+/** Our own uploaded images (re-encoded WebP, served from /api/uploads/:id). */
+export const UPLOAD_URL_RE = /^\/api\/uploads\/[a-z0-9]{20,40}$/i
+export const IMAGE_URL_ERROR = 'Upload the image here instead of pasting a link to another site'
+
+/**
+ * Image fields (logos, banners, player photos) are shown to anonymous room
+ * viewers, so only our own uploads are accepted — an arbitrary URL could be a
+ * tracking pixel that logs every viewer's IP address.
+ * undefined = not provided · null = clear it · string = valid · false = rejected
+ */
+export function parseImageUrl(value: unknown): string | null | undefined | false {
+  if (value === undefined) return undefined
+  if (value === null || value === '') return null
+  if (typeof value !== 'string') return false
+  const s = value.trim()
+  if (s === '') return null
+  return UPLOAD_URL_RE.test(s) ? s : false
+}
+
+/** Largest amount / count accepted from clients: ৳100 crore. */
+export const MAX_AMOUNT = 1_000_000_000
+export const MAX_AMOUNT_LABEL = '৳1,000,000,000'
 
 export function coercePositiveInt(value: unknown): number | null {
   const n = coerceInt(value)

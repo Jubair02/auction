@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
 import { mergeRoomState } from '@/lib/room-state'
+export { seatBelongsTo } from '@/lib/room-state'
 import type { OrganizerAction, RoomNotification, RoomState, RoomStateWire } from '@/lib/types'
 
 export interface AuctionSocketApi {
@@ -34,6 +35,14 @@ function auctionEndpoint(): { url: string; path: string } {
   if (configured) return { url: configured, path: '/' }
   const { protocol, hostname, port } = window.location
   if (port === '3000') return { url: `${protocol}//${hostname}:3003`, path: '/' }
+  // Hosted without a gateway (e.g. Vercel) the gateway route below can't work —
+  // say so in the console instead of failing silently. See DEPLOY.md.
+  if (process.env.NODE_ENV === 'production' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    console.warn(
+      '[auction] NEXT_PUBLIC_AUCTION_URL is not set; trying the same-origin gateway route. ' +
+        'If the room never connects, set NEXT_PUBLIC_AUCTION_URL to the auction service URL and redeploy.',
+    )
+  }
   return { url: '/?XTransformPort=3003', path: '/' }
 }
 
@@ -135,6 +144,14 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       if (e?.message) toast.error(e.message)
     })
 
+    // The server re-checks organizer/manager seats while connected (blocked
+    // account, password reset, lost ownership). Surface it as a join error so
+    // the room page can re-seat or send the user back to the join card.
+    socket.on('seat_revoked', (e: { message?: string }) => {
+      setJoined(false)
+      setJoinError(e?.message || 'Your seat is no longer valid — log in again.')
+    })
+
     return () => {
       socket.disconnect()
       socketRef.current = null
@@ -185,6 +202,8 @@ export interface StoredIdentity {
   teamName?: string
   socketToken: string
   at: number
+  /** Account the seat was issued to (null for an anonymous viewer). A seat is only reused by that account. */
+  userId?: string | null
 }
 
 export function saveRoomIdentity(roomCode: string, identity: StoredIdentity) {
@@ -211,6 +230,15 @@ export function loadRoomIdentity(roomCode: string): StoredIdentity | null {
 export function clearRoomIdentity(roomCode: string) {
   try {
     sessionStorage.removeItem(`ng_room_${roomCode.toUpperCase()}`)
+  } catch {
+    // ignore
+  }
+}
+
+/** Drops every saved room seat in this tab — on logout, so the next person can't bid with them. */
+export function clearAllRoomIdentities() {
+  try {
+    for (const key of Object.keys(sessionStorage)) if (key.startsWith('ng_room_')) sessionStorage.removeItem(key)
   } catch {
     // ignore
   }

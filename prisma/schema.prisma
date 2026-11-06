@@ -26,6 +26,7 @@ model User {
   tournaments         Tournament[]
   managedTeams        Team[]
   passwordResetTokens PasswordResetToken[]
+  sessions            Session[]
 }
 
 // Single-use password reset links. Only the SHA-256 of the token is stored,
@@ -131,6 +132,10 @@ model Team {
   players    Player[]   @relation("soldPlayers")
   bids       Bid[]
 
+  // One team per manager per tournament. Enforced here because the "already
+  // manages a team" check in the API can't stop two simultaneous requests.
+  // Unassigned teams (NULL manager) are unaffected — Postgres treats NULLs as distinct.
+  @@unique([tournamentId, managerUserId])
   @@index([tournamentId])
   @@index([managerUserId])
 }
@@ -267,4 +272,30 @@ model Upload {
   createdAt  DateTime @default(now())
 
   @@index([uploaderId])
+}
+
+// Request counters for rate limits on public endpoints (login, password reset,
+// room-code lookups, joins, uploads…). In the database rather than in memory
+// because the website runs on many short-lived serverless instances.
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
+// One row per login. The session cookie names its row, so logging out revokes
+// exactly that session (other devices stay signed in), and a copied cookie stops
+// working the moment its session is revoked or expires.
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

@@ -7,6 +7,8 @@ import {
   readJson,
   requireSession,
   serializeTeam,
+  IMAGE_URL_ERROR,
+  parseImageUrl,
 } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -57,10 +59,10 @@ export async function POST(req: Request, { params }: RouteParams) {
     }
 
     const budget = coercePositiveInt(t.budget)
-    if (!budget) return jsonError(`Team ${i + 1}: budget must be a positive integer (taka)`, 400)
+    if (!budget) return jsonError(`Team ${i + 1}: budget must be a whole amount from ৳1 to ৳1,000,000,000`, 400)
 
     const maxSquad = coercePositiveInt(t.maxSquad)
-    if (!maxSquad) return jsonError(`Team ${i + 1}: maxSquad must be a positive integer`, 400)
+    if (!maxSquad) return jsonError(`Team ${i + 1}: maxSquad must be a positive whole number`, 400)
 
     const minSquad = coerceIntNonNegative(t.minSquad)
     if (minSquad === null) return jsonError(`Team ${i + 1}: minSquad must be a non-negative integer`, 400)
@@ -71,8 +73,9 @@ export async function POST(req: Request, { params }: RouteParams) {
       typeof t.captainName === 'string' && t.captainName.trim() !== ''
         ? t.captainName.trim().slice(0, 60)
         : null
-    const logoUrl =
-      typeof t.logoUrl === 'string' && t.logoUrl.trim() !== '' ? t.logoUrl.trim().slice(0, 500) : null
+    const parsedLogo = parseImageUrl(t.logoUrl)
+    if (parsedLogo === false) return jsonError(`Team ${i + 1}: ${IMAGE_URL_ERROR.toLowerCase()}`, 400)
+    const logoUrl = parsedLogo ?? null
 
     valid.push({ name: name.slice(0, 60), color, captainName, logoUrl, budget, maxSquad, minSquad })
   }

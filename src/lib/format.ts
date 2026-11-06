@@ -75,3 +75,14 @@ export const TOURNAMENT_STATUS_COLORS: Record<string, string> = {
 export const TEAM_PALETTE = [
   '#0F766E', '#B45309', '#7C3AED', '#BE123C', '#1D4ED8', '#15803D', '#B91C1C', '#A16207', '#0E7490', '#6D28D9',
 ]
+
+/** File-name-safe slug for downloads, e.g. "Mirpur Corporate Cup 2026" → "mirpur-corporate-cup-2026". */
+export function slugify(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'tournament'
+  )
+}

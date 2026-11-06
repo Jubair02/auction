@@ -1,5 +1,8 @@
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import { db } from '@/lib/db'
+import { headerClientKey } from '@/lib/rate-limit'
+import { rateLimit } from '@/lib/rate-limit-shared'
 import { sportLabel } from '@/lib/types'
 import ClientApp from '@/components/client-app'
 
@@ -17,6 +20,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const [head, arg] = (await params).slug ?? []
   if (!head) return {}
   const noindex: Metadata = PRIVATE.has(head) ? { robots: { index: false, follow: false } } : {}
+
+  // The preview lookups below reveal whether a room / registration code exists,
+  // so they share a per-IP budget — otherwise this page would sidestep the
+  // wrong-code limit on /api/rooms/:code. Over budget → just no rich preview.
+  if ((head === 'room' || head === 'register-player') && arg) {
+    const h = await headers()
+    const key = headerClientKey((name) => h.get(name) ?? undefined, 'preview-lookup')
+    if ((await rateLimit(key, 60, 10 * 60 * 1000)) !== null) return noindex
+  }
 
   try {
     if (head === 'room' && arg) {

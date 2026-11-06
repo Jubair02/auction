@@ -128,7 +128,8 @@ type StageStrings = (typeof STRINGS)['en']
 interface StageProps {
   state: RoomState
   clockOffset: number
-  onViewResults: () => void
+  /** Omitted for viewer seats: results need the organizer's or a team manager's login. */
+  onViewResults?: () => void
 }
 
 /**
@@ -223,9 +224,11 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
               <h2 className="text-3xl font-black tracking-tight sm:text-4xl">{t.auctionComplete}</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground sm:text-base">{t.completeBody}</p>
             </div>
-            <Button onClick={onViewResults} className="h-11 px-6 font-bold">
-              <Flag className="mr-2 h-4 w-4" /> {t.viewResults}
-            </Button>
+            {onViewResults ? (
+              <Button onClick={onViewResults} className="h-11 px-6 font-bold">
+                <Flag className="mr-2 h-4 w-4" /> {t.viewResults}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 

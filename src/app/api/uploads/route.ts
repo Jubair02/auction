@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { getSessionUser, jsonError } from '@/lib/auth'
 import { InvalidImageError, MAX_UPLOAD_BYTES, isImageKind, processImage } from '@/lib/images'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 
 export const runtime = 'nodejs'
 
@@ -35,8 +35,8 @@ export async function POST(req: Request) {
   }
 
   const retryAfter = staff
-    ? rateLimit(`upload:${user!.id}`, 120, 60 * 60 * 1000)
-    : rateLimit(clientKey(req, 'upload-anon'), 10, 60 * 60 * 1000)
+    ? await rateLimit(`upload:${user!.id}`, 120, 60 * 60 * 1000)
+    : await rateLimit(clientKey(req, 'upload-anon'), 10, 60 * 60 * 1000)
   if (retryAfter !== null) return jsonError(`Too many uploads. Please try again in ${retryAfter} seconds.`, 429)
 
   const file = form.get('file')

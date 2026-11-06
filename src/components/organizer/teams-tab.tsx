@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Copy, Crown, Link2, Loader2, Pencil, Plus, Search, Trash2, UserCheck, UserPlus, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { copyText } from '@/lib/clipboard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -35,6 +36,225 @@ import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { TEAM_PALETTE } from '@/lib/format'
 import type { TeamDTO } from '@/lib/types'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    lookupFailed: 'Could not look up that manager',
+    inviteFailed: 'Could not create the invite link',
+    inviteCopied: 'Invite link copied',
+    nameMin: 'Team name must be at least 2 characters.',
+    budgetAboveZero: 'Budget must be above ৳0.',
+    maxMin: 'Max squad size must be at least 1.',
+    minNegative: 'Min squad size cannot be negative.',
+    minOverMax: 'Min squad size cannot exceed max squad size.',
+    created: (name: string) => `${name} created`,
+    createFailed: 'Could not create team',
+    linkedManager: 'Linked manager',
+    teamUpdated: 'Team updated',
+    updateFailed: 'Could not update team',
+    removed: (name: string) => `${name} removed`,
+    deleteFailed: 'Delete failed',
+    teamsRegistered: (n: number) => `${n} team${n === 1 ? '' : 's'} registered`,
+    addTeam: 'Add team',
+    noTeamsTitle: 'No teams yet',
+    noTeamsDesc:
+      'Create the teams that will bid in your auction. Give each a purse and squad limits — the engine enforces them live.',
+    addFirstTeam: 'Add your first team',
+    noCaptain: 'No captain set',
+    editAria: (name: string) => `Edit ${name}`,
+    deleteAria: (name: string) => `Delete ${name}`,
+    budget: 'Budget',
+    remaining: 'Remaining',
+    spent: (amount: string) => `Spent ${amount}`,
+    spentAria: (name: string, pct: number) => `${name} has spent ${pct}% of budget`,
+    squad: (count: number, max: number) => `Squad ${count} / ${max}`,
+    managerLinked: 'Manager linked',
+    noManagerYet: 'No manager yet',
+    newInviteLink: 'New manager invite link',
+    inviteManager: 'Invite manager',
+    inviteTitle: (team: string) => `Invite a manager for ${team}`,
+    inviteDesc:
+      'Send this link to the team’s manager. They log in (or sign up) as a team manager and the team is linked to their account. It works once and expires in 7 days; making a new link cancels this one.',
+    inviteReplaces: ' Accepting it replaces the current manager.',
+    inviteLinkAria: 'Manager invite link',
+    aTeam: 'a team',
+    whatsappText: (team: string, url: string) => `You're invited to manage ${team} on NeelamGhor. Accept here: ${url}`,
+    shareWhatsapp: 'Share on WhatsApp',
+    copyLink: 'Copy link',
+    editTitle: (name: string) => `Edit ${name}`,
+    editDesc:
+      'Budget can be raised any time; lowering below spent is blocked. While the auction is running, budgets and squad caps can only go up.',
+    teamManager: 'Team manager',
+    unlinkAria: 'Unlink manager',
+    unlink: 'Unlink',
+    link: 'Link',
+    linkedHelp: 'This account bids for the team from its own login and sees the squad under “My team”. Save to apply.',
+    unlinkedHelp: 'No manager linked. Enter the email they registered with, or send an invite link from the team card.',
+    cancel: 'Cancel',
+    saveChanges: 'Save changes',
+    deleteTitle: 'Delete team?',
+    deleteDesc: (name: string | null) =>
+      `${name ? `"${name}"` : 'This team'} will be removed. A team that has bought players or placed bids can’t be deleted — its bids are part of the auction record — and no team can be deleted while the auction is running.`,
+    deleting: 'Deleting…',
+    deleteTeam: 'Delete team',
+    logoOptional: 'Team logo (optional)',
+    teamName: 'Team name',
+    teamNamePlaceholder: 'e.g. Dhaka Dominators',
+    captainName: 'Captain name',
+    captainPlaceholder: 'e.g. Rakib Hasan',
+    teamColor: 'Team color',
+    colorPickerAria: 'Team color picker',
+    colorHexAria: 'Team color hex',
+    budgetTaka: 'Budget (৳)',
+    maxSquad: 'Max squad',
+    minSquad: 'Min squad',
+    addDesc: 'Every team gets a purse and squad limits — bids that break them are rejected automatically.',
+    createTeam: 'Create team',
+  },
+  bn: {
+    lookupFailed: 'এই ম্যানেজারকে খুঁজে পাওয়া যায়নি',
+    inviteFailed: 'আমন্ত্রণ লিংক তৈরি করা যায়নি',
+    inviteCopied: 'আমন্ত্রণ লিংক কপি হয়েছে',
+    nameMin: 'দলের নাম অন্তত ২ অক্ষরের হতে হবে।',
+    budgetAboveZero: 'বাজেট ৳0-এর বেশি হতে হবে।',
+    maxMin: 'সর্বোচ্চ স্কোয়াড অন্তত ১ জনের হতে হবে।',
+    minNegative: 'সর্বনিম্ন স্কোয়াড ঋণাত্মক হতে পারে না।',
+    minOverMax: 'সর্বনিম্ন স্কোয়াড সর্বোচ্চ স্কোয়াডের চেয়ে বেশি হতে পারে না।',
+    created: (name: string) => `${name} তৈরি হয়েছে`,
+    createFailed: 'দল তৈরি করা যায়নি',
+    linkedManager: 'যুক্ত ম্যানেজার',
+    teamUpdated: 'দলের তথ্য আপডেট হয়েছে',
+    updateFailed: 'দলের তথ্য আপডেট করা যায়নি',
+    removed: (name: string) => `${name} মুছে ফেলা হয়েছে`,
+    deleteFailed: 'মুছে ফেলা যায়নি',
+    teamsRegistered: (n: number) => `${n}টি দল নিবন্ধিত`,
+    addTeam: 'দল যোগ করুন',
+    noTeamsTitle: 'এখনো কোনো দল নেই',
+    noTeamsDesc:
+      'যে দলগুলো আপনার নিলামে বিড করবে সেগুলো তৈরি করুন। প্রতিটি দলকে বাজেট ও স্কোয়াডের সীমা দিন — নিলাম চলার সময় সিস্টেম নিজেই তা মেনে চলবে।',
+    addFirstTeam: 'প্রথম দল যোগ করুন',
+    noCaptain: 'অধিনায়ক ঠিক করা হয়নি',
+    editAria: (name: string) => `${name} সম্পাদনা`,
+    deleteAria: (name: string) => `${name} মুছুন`,
+    budget: 'বাজেট',
+    remaining: 'বাকি',
+    spent: (amount: string) => `খরচ ${amount}`,
+    spentAria: (name: string, pct: number) => `${name} বাজেটের ${pct}% খরচ করেছে`,
+    squad: (count: number, max: number) => `স্কোয়াড ${count} / ${max}`,
+    managerLinked: 'ম্যানেজার যুক্ত',
+    noManagerYet: 'এখনো ম্যানেজার নেই',
+    newInviteLink: 'ম্যানেজারের নতুন আমন্ত্রণ লিংক',
+    inviteManager: 'ম্যানেজারকে আমন্ত্রণ',
+    inviteTitle: (team: string) => `${team}-এর জন্য ম্যানেজারকে আমন্ত্রণ`,
+    inviteDesc:
+      'এই লিংকটি দলের ম্যানেজারকে পাঠান। তিনি টিম ম্যানেজার হিসেবে লগইন (বা সাইন আপ) করলে দলটি তার অ্যাকাউন্টে যুক্ত হয়ে যাবে। লিংকটি একবারই কাজ করে এবং ৭ দিন পর মেয়াদ শেষ হয়; নতুন লিংক বানালে এটি বাতিল হয়ে যাবে।',
+    inviteReplaces: ' এটি গ্রহণ করলে বর্তমান ম্যানেজার বদলে যাবে।',
+    inviteLinkAria: 'ম্যানেজারের আমন্ত্রণ লিংক',
+    aTeam: 'একটি দল',
+    whatsappText: (team: string, url: string) =>
+      `NeelamGhor-এ ${team} পরিচালনার জন্য আপনাকে আমন্ত্রণ জানানো হয়েছে। এখানে গ্রহণ করুন: ${url}`,
+    shareWhatsapp: 'WhatsApp-এ শেয়ার করুন',
+    copyLink: 'লিংক কপি করুন',
+    editTitle: (name: string) => `${name} সম্পাদনা`,
+    editDesc:
+      'বাজেট যেকোনো সময় বাড়ানো যায়; খরচের চেয়ে কমানো যায় না। নিলাম চলার সময় বাজেট ও স্কোয়াডের সীমা শুধু বাড়ানো যায়।',
+    teamManager: 'টিম ম্যানেজার',
+    unlinkAria: 'ম্যানেজারকে সরিয়ে দিন',
+    unlink: 'সরিয়ে দিন',
+    link: 'যুক্ত করুন',
+    linkedHelp: 'এই অ্যাকাউন্ট নিজের লগইন থেকে দলের হয়ে বিড করবে এবং “আমার দল”-এ স্কোয়াড দেখতে পাবে। চালু করতে সংরক্ষণ করুন।',
+    unlinkedHelp: 'কোনো ম্যানেজার যুক্ত নেই। তিনি যে ইমেইল দিয়ে নিবন্ধন করেছেন সেটি লিখুন, অথবা দলের কার্ড থেকে আমন্ত্রণ লিংক পাঠান।',
+    cancel: 'বাতিল',
+    saveChanges: 'পরিবর্তন সংরক্ষণ',
+    deleteTitle: 'দল মুছে ফেলবেন?',
+    deleteDesc: (name: string | null) =>
+      `${name ? `"${name}"` : 'এই দল'} মুছে ফেলা হবে। যে দল খেলোয়াড় কিনেছে বা বিড করেছে তা মোছা যায় না — তার বিডগুলো নিলামের রেকর্ডের অংশ — আর নিলাম চলার সময় কোনো দলই মোছা যায় না।`,
+    deleting: 'মুছে ফেলা হচ্ছে…',
+    deleteTeam: 'দল মুছুন',
+    logoOptional: 'দলের লোগো (ঐচ্ছিক)',
+    teamName: 'দলের নাম',
+    teamNamePlaceholder: 'যেমন: Dhaka Dominators',
+    captainName: 'অধিনায়কের নাম',
+    captainPlaceholder: 'যেমন: Rakib Hasan',
+    teamColor: 'দলের রং',
+    colorPickerAria: 'দলের রং বাছাই',
+    colorHexAria: 'দলের রঙের হেক্স কোড',
+    budgetTaka: 'বাজেট (৳)',
+    maxSquad: 'সর্বোচ্চ স্কোয়াড',
+    minSquad: 'সর্বনিম্ন স্কোয়াড',
+    addDesc: 'প্রতিটি দল একটি বাজেট ও স্কোয়াডের সীমা পায় — সীমা ভাঙে এমন বিড নিজে থেকেই বাতিল হয়।',
+    createTeam: 'দল তৈরি করুন',
+  },
+} satisfies Strings<{
+  lookupFailed: string
+  inviteFailed: string
+  inviteCopied: string
+  nameMin: string
+  budgetAboveZero: string
+  maxMin: string
+  minNegative: string
+  minOverMax: string
+  created: (name: string) => string
+  createFailed: string
+  linkedManager: string
+  teamUpdated: string
+  updateFailed: string
+  removed: (name: string) => string
+  deleteFailed: string
+  teamsRegistered: (n: number) => string
+  addTeam: string
+  noTeamsTitle: string
+  noTeamsDesc: string
+  addFirstTeam: string
+  noCaptain: string
+  editAria: (name: string) => string
+  deleteAria: (name: string) => string
+  budget: string
+  remaining: string
+  spent: (amount: string) => string
+  spentAria: (name: string, pct: number) => string
+  squad: (count: number, max: number) => string
+  managerLinked: string
+  noManagerYet: string
+  newInviteLink: string
+  inviteManager: string
+  inviteTitle: (team: string) => string
+  inviteDesc: string
+  inviteReplaces: string
+  inviteLinkAria: string
+  aTeam: string
+  whatsappText: (team: string, url: string) => string
+  shareWhatsapp: string
+  copyLink: string
+  editTitle: (name: string) => string
+  editDesc: string
+  teamManager: string
+  unlinkAria: string
+  unlink: string
+  link: string
+  linkedHelp: string
+  unlinkedHelp: string
+  cancel: string
+  saveChanges: string
+  deleteTitle: string
+  deleteDesc: (name: string | null) => string
+  deleting: string
+  deleteTeam: string
+  logoOptional: string
+  teamName: string
+  teamNamePlaceholder: string
+  captainName: string
+  captainPlaceholder: string
+  teamColor: string
+  colorPickerAria: string
+  colorHexAria: string
+  budgetTaka: string
+  maxSquad: string
+  minSquad: string
+  addDesc: string
+  createTeam: string
+}>
 
 interface TeamFormState {
   name: string
@@ -66,6 +286,7 @@ export function TeamsTab({
   /** An "Others" tournament's players per team: pre-fills new teams' max squad. */
   defaultMaxSquad?: number | null
 }) {
+  const tx = useStrings(STRINGS)
   const [addOpen, setAddOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editTarget, setEditTarget] = useState<TeamDTO | null>(null)
@@ -86,7 +307,7 @@ export function TeamsTab({
       setEditManager(res.manager)
       setManagerEmail('')
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not look up that manager')
+      toast.error(ex instanceof ApiError ? ex.message : tx.lookupFailed)
     } finally {
       setFindingManager(false)
     }
@@ -102,20 +323,14 @@ export function TeamsTab({
       const res = await apiPost<{ token: string; expiresAt: string }>(`/api/teams/${t.id}/invite`, {})
       setInvite({ team: t, url: `${window.location.origin}/invite#${res.token}`, expiresAt: res.expiresAt })
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not create the invite link')
+      toast.error(ex instanceof ApiError ? ex.message : tx.inviteFailed)
     } finally {
       setInvitingId(null)
     }
   }
 
-  const copyInvite = async () => {
-    if (!invite) return
-    try {
-      await navigator.clipboard.writeText(invite.url)
-      toast.success('Invite link copied')
-    } catch {
-      toast.error('Copy failed — select the link and copy it manually')
-    }
+  const copyInvite = () => {
+    if (invite) copyText(invite.url, tx.inviteCopied)
   }
 
   // Suggest a palette color not already used by an existing team.
@@ -125,14 +340,14 @@ export function TeamsTab({
   }, [teams])
 
   const validate = (f: TeamFormState): string | null => {
-    if (f.name.trim().length < 2) return 'Team name must be at least 2 characters.'
+    if (f.name.trim().length < 2) return tx.nameMin
     const budget = parseInt(f.budget, 10)
-    if (!Number.isFinite(budget) || budget <= 0) return 'Budget must be above ৳0.'
+    if (!Number.isFinite(budget) || budget <= 0) return tx.budgetAboveZero
     const max = parseInt(f.maxSquad, 10)
     const min = parseInt(f.minSquad, 10)
-    if (!Number.isFinite(max) || max <= 0) return 'Max squad size must be at least 1.'
-    if (!Number.isFinite(min) || min < 0) return 'Min squad size cannot be negative.'
-    if (min > max) return 'Min squad size cannot exceed max squad size.'
+    if (!Number.isFinite(max) || max <= 0) return tx.maxMin
+    if (!Number.isFinite(min) || min < 0) return tx.minNegative
+    if (min > max) return tx.minOverMax
     return null
   }
 
@@ -157,11 +372,11 @@ export function TeamsTab({
           },
         ],
       })
-      toast.success(`${f.name.trim()} created`)
+      toast.success(tx.created(f.name.trim()))
       setAddOpen(false)
       await refetch()
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not create team')
+      toast.error(ex instanceof ApiError ? ex.message : tx.createFailed)
     } finally {
       setSaving(false)
     }
@@ -170,7 +385,7 @@ export function TeamsTab({
   const openEdit = (t: TeamDTO) => {
     setEditTarget(t)
     setEditManager(
-      t.managerUserId ? { id: t.managerUserId, name: t.managerName ?? 'Linked manager', email: t.managerEmail ?? '' } : null,
+      t.managerUserId ? { id: t.managerUserId, name: t.managerName ?? tx.linkedManager, email: t.managerEmail ?? '' } : null,
     )
     setManagerEmail('')
     setEditForm({
@@ -203,12 +418,12 @@ export function TeamsTab({
         minSquad: parseInt(editForm.minSquad, 10),
         managerUserId: editManager?.id ?? null,
       })
-      toast.success('Team updated')
+      toast.success(tx.teamUpdated)
       setEditTarget(null)
       setEditForm(null)
       await refetch()
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not update team')
+      toast.error(ex instanceof ApiError ? ex.message : tx.updateFailed)
     } finally {
       setSaving(false)
     }
@@ -219,11 +434,11 @@ export function TeamsTab({
     setDeleting(true)
     try {
       await apiDelete(`/api/teams/${deleteTarget.id}`)
-      toast.success(`${deleteTarget.name} removed`)
+      toast.success(tx.removed(deleteTarget.name))
       setDeleteTarget(null)
       await refetch()
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Delete failed')
+      toast.error(ex instanceof ApiError ? ex.message : tx.deleteFailed)
     } finally {
       setDeleting(false)
     }
@@ -243,21 +458,21 @@ export function TeamsTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          {teams.length} team{teams.length === 1 ? '' : 's'} registered
+          {tx.teamsRegistered(teams.length)}
         </p>
         <Button className="min-h-10" onClick={() => setAddOpen(true)}>
-          <Plus className="mr-1.5 h-4 w-4" aria-hidden /> Add team
+          <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {tx.addTeam}
         </Button>
       </div>
 
       {teams.length === 0 ? (
         <EmptyState
           icon={UserCheck}
-          title="No teams yet"
-          description="Create the teams that will bid in your auction. Give each a purse and squad limits — the engine enforces them live."
+          title={tx.noTeamsTitle}
+          description={tx.noTeamsDesc}
           action={
             <Button onClick={() => setAddOpen(true)}>
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> Add your first team
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {tx.addFirstTeam}
             </Button>
           }
         />
@@ -279,20 +494,20 @@ export function TeamsTab({
                               <Crown className="h-3 w-3 shrink-0 text-amber-600" aria-hidden /> {t.captainName}
                             </span>
                           ) : (
-                            'No captain set'
+                            tx.noCaptain
                           )}
                         </p>
                       </div>
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Edit ${t.name}`} onClick={() => openEdit(t)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={tx.editAria(t.name)} onClick={() => openEdit(t)}>
                         <Pencil className="h-3.5 w-3.5" aria-hidden />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-rose-600 hover:text-rose-700"
-                        aria-label={`Delete ${t.name}`}
+                        aria-label={tx.deleteAria(t.name)}
                         onClick={() => setDeleteTarget(t)}
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden />
@@ -302,26 +517,26 @@ export function TeamsTab({
 
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Budget</p>
+                      <p className="text-xs text-muted-foreground">{tx.budget}</p>
                       <p className="font-semibold tabular-nums">{formatBDT(t.budget)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Remaining</p>
+                      <p className="text-xs text-muted-foreground">{tx.remaining}</p>
                       <p className="font-semibold tabular-nums text-emerald-700">{formatBDT(t.remaining)}</p>
                     </div>
                   </div>
 
                   <div>
                     <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Spent {formatBDT(t.spent)}</span>
+                      <span>{tx.spent(formatBDT(t.spent))}</span>
                       <span className="font-semibold tabular-nums">{spentPct}%</span>
                     </div>
-                    <Progress value={spentPct} aria-label={`${t.name} has spent ${spentPct}% of budget`} />
+                    <Progress value={spentPct} aria-label={tx.spentAria(t.name, spentPct)} />
                   </div>
 
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <Badge variant="outline" className="text-xs">
-                      Squad {t.squadCount} / {t.maxSquad}
+                      {tx.squad(t.squadCount, t.maxSquad)}
                     </Badge>
                     {t.managerUserId ? (
                       <Badge
@@ -329,11 +544,11 @@ export function TeamsTab({
                         title={t.managerEmail ?? undefined}
                       >
                         <UserCheck className="mr-1 h-3 w-3 shrink-0" aria-hidden />
-                        <span className="truncate">{t.managerName ?? 'Manager linked'}</span>
+                        <span className="truncate">{t.managerName ?? tx.managerLinked}</span>
                       </Badge>
                     ) : (
                       <Badge variant="secondary" className="text-xs">
-                        No manager yet
+                        {tx.noManagerYet}
                       </Badge>
                     )}
                   </div>
@@ -349,7 +564,7 @@ export function TeamsTab({
                     ) : (
                       <Link2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     )}
-                    {t.managerUserId ? 'New manager invite link' : 'Invite manager'}
+                    {t.managerUserId ? tx.newInviteLink : tx.inviteManager}
                   </Button>
                 </CardContent>
               </Card>
@@ -362,30 +577,29 @@ export function TeamsTab({
       <Dialog open={!!invite} onOpenChange={(open) => !open && setInvite(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Invite a manager for {invite?.team.name}</DialogTitle>
+            <DialogTitle>{tx.inviteTitle(invite?.team.name ?? '')}</DialogTitle>
             <DialogDescription>
-              Send this link to the team&apos;s manager. They log in (or sign up) as a team manager and the team is
-              linked to their account. It works once and expires in 7 days; making a new link cancels this one.
+              {tx.inviteDesc}
               {invite?.team.managerUserId
-                ? ' Accepting it replaces the current manager.'
+                ? tx.inviteReplaces
                 : ''}
             </DialogDescription>
           </DialogHeader>
-          <Input readOnly value={invite?.url ?? ''} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
+          <Input readOnly aria-label={tx.inviteLinkAria} value={invite?.url ?? ''} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" asChild>
               <a
                 href={`https://wa.me/?text=${encodeURIComponent(
-                  `You're invited to manage ${invite?.team.name ?? 'a team'} on NeelamGhor. Accept here: ${invite?.url ?? ''}`,
+                  tx.whatsappText(invite?.team.name ?? tx.aTeam, invite?.url ?? ''),
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Share on WhatsApp
+                {tx.shareWhatsapp}
               </a>
             </Button>
-            <Button onClick={() => void copyInvite()}>
-              <Copy className="mr-1.5 h-4 w-4" aria-hidden /> Copy link
+            <Button onClick={copyInvite}>
+              <Copy className="mr-1.5 h-4 w-4" aria-hidden /> {tx.copyLink}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -406,17 +620,16 @@ export function TeamsTab({
       <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit {editTarget?.name}</DialogTitle>
+            <DialogTitle>{tx.editTitle(editTarget?.name ?? '')}</DialogTitle>
             <DialogDescription>
-              Budget can be raised any time; lowering below spent is blocked. While the auction is running, budgets
-              and squad caps can only go up.
+              {tx.editDesc}
             </DialogDescription>
           </DialogHeader>
           {editForm ? <TeamFormFields form={editForm} onChange={setEditForm} /> : null}
 
           <div className="space-y-1.5">
             <Label htmlFor="tm-manager" className="flex items-center gap-1.5">
-              <UserPlus className="h-3.5 w-3.5 text-primary" aria-hidden /> Team manager
+              <UserPlus className="h-3.5 w-3.5 text-primary" aria-hidden /> {tx.teamManager}
             </Label>
             {editManager ? (
               <div className="flex min-h-10 items-center justify-between gap-2 rounded-md border px-3 py-2">
@@ -430,9 +643,9 @@ export function TeamsTab({
                   size="sm"
                   className="h-8 shrink-0"
                   onClick={() => setEditManager(null)}
-                  aria-label="Unlink manager"
+                  aria-label={tx.unlinkAria}
                 >
-                  <X className="mr-1 h-3.5 w-3.5" aria-hidden /> Unlink
+                  <X className="mr-1 h-3.5 w-3.5" aria-hidden /> {tx.unlink}
                 </Button>
               </div>
             ) : (
@@ -463,24 +676,24 @@ export function TeamsTab({
                   ) : (
                     <Search className="mr-1.5 h-4 w-4" aria-hidden />
                   )}
-                  Link
+                  {tx.link}
                 </Button>
               </div>
             )}
             <p className="text-xs text-muted-foreground">
               {editManager
-                ? 'This account bids for the team from its own login and sees the squad under “My team”. Save to apply.'
-                : 'No manager linked. Enter the email they registered with, or send an invite link from the team card.'}
+                ? tx.linkedHelp
+                : tx.unlinkedHelp}
             </p>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>
-              Cancel
+              {tx.cancel}
             </Button>
             <Button onClick={() => void saveEdit()} disabled={saving} className="min-h-10">
               {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
-              Save changes
+              {tx.saveChanges}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -490,14 +703,13 @@ export function TeamsTab({
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete team?</AlertDialogTitle>
+            <AlertDialogTitle>{tx.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `"${deleteTarget.name}"` : 'This team'} and its bid history will be removed. Teams
-              that have already bought players cannot be deleted.
+              {tx.deleteDesc(deleteTarget?.name ?? null)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{tx.cancel}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-rose-600 text-white hover:bg-rose-700"
               disabled={deleting}
@@ -506,7 +718,7 @@ export function TeamsTab({
                 void confirmDelete()
               }}
             >
-              {deleting ? 'Deleting…' : 'Delete team'}
+              {deleting ? tx.deleting : tx.deleteTeam}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -518,40 +730,41 @@ export function TeamsTab({
 /* ------------------------------------------------------------------ */
 
 function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f: TeamFormState) => void }) {
+  const tx = useStrings(STRINGS)
   const set = (patch: Partial<TeamFormState>) => onChange({ ...form, ...patch })
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <ImageUpload
         className="sm:col-span-2"
-        label="Team logo (optional)"
+        label={tx.logoOptional}
         kind="LOGO"
         value={form.logoUrl}
         onChange={(url) => set({ logoUrl: url })}
       />
       <div className="space-y-1.5 sm:col-span-2">
         <Label htmlFor="tm-name">
-          Team name <span className="text-rose-600">*</span>
+          {tx.teamName} <span className="text-rose-600">*</span>
         </Label>
         <Input
           id="tm-name"
           value={form.name}
           onChange={(e) => set({ name: e.target.value })}
-          placeholder="e.g. Dhaka Dominators"
+          placeholder={tx.teamNamePlaceholder}
           className="h-10"
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="tm-captain">Captain name</Label>
+        <Label htmlFor="tm-captain">{tx.captainName}</Label>
         <Input
           id="tm-captain"
           value={form.captainName}
           onChange={(e) => set({ captainName: e.target.value })}
-          placeholder="e.g. Rakib Hasan"
+          placeholder={tx.captainPlaceholder}
           className="h-10"
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="tm-color">Team color</Label>
+        <Label htmlFor="tm-color">{tx.teamColor}</Label>
         <div className="flex items-center gap-2">
           <input
             id="tm-color"
@@ -559,13 +772,13 @@ function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f:
             value={form.color}
             onChange={(e) => set({ color: e.target.value })}
             className="h-10 w-12 cursor-pointer rounded-md border bg-transparent p-1"
-            aria-label="Team color picker"
+            aria-label={tx.colorPickerAria}
           />
-          <Input value={form.color} onChange={(e) => set({ color: e.target.value })} className="h-10 font-mono text-xs" aria-label="Team color hex" />
+          <Input value={form.color} onChange={(e) => set({ color: e.target.value })} className="h-10 font-mono text-xs" aria-label={tx.colorHexAria} />
         </div>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="tm-budget">Budget (৳)</Label>
+        <Label htmlFor="tm-budget">{tx.budgetTaka}</Label>
         <Input
           id="tm-budget"
           type="number"
@@ -578,7 +791,7 @@ function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f:
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="tm-max">Max squad</Label>
+          <Label htmlFor="tm-max">{tx.maxSquad}</Label>
           <Input
             id="tm-max"
             type="number"
@@ -590,7 +803,7 @@ function TeamFormFields({ form, onChange }: { form: TeamFormState; onChange: (f:
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="tm-min">Min squad</Label>
+          <Label htmlFor="tm-min">{tx.minSquad}</Label>
           <Input
             id="tm-min"
             type="number"
@@ -621,6 +834,7 @@ function AddTeamDialog({
   saving: boolean
   onSubmit: (f: TeamFormState) => Promise<void>
 }) {
+  const tx = useStrings(STRINGS)
   const [form, setForm] = useState<TeamFormState>(() => ({
     name: '',
     color: suggestedColor,
@@ -635,19 +849,19 @@ function AddTeamDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add team</DialogTitle>
+          <DialogTitle>{tx.addTeam}</DialogTitle>
           <DialogDescription>
-            Every team gets a purse and squad limits — bids that break them are rejected automatically.
+            {tx.addDesc}
           </DialogDescription>
         </DialogHeader>
         <TeamFormFields form={form} onChange={setForm} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
+            {tx.cancel}
           </Button>
           <Button onClick={() => void onSubmit(form)} disabled={saving} className="min-h-10">
             {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Plus className="mr-1.5 h-4 w-4" aria-hidden />}
-            Create team
+            {tx.createTeam}
           </Button>
         </DialogFooter>
       </DialogContent>

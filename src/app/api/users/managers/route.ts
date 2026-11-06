@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { rateLimit } from '@/lib/rate-limit'
+import { rateLimit } from '@/lib/rate-limit-shared'
 import { EMAIL_RE, requireSessionRole } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   const auth = await requireSessionRole('ORGANIZER', 'ADMIN')
   if ('response' in auth) return auth.response
 
-  const retryAfter = rateLimit(`manager-lookup:${auth.user.id}`, LOOKUPS_PER_MINUTE, 60 * 1000)
+  const retryAfter = await rateLimit(`manager-lookup:${auth.user.id}`, LOOKUPS_PER_MINUTE, 60 * 1000)
   if (retryAfter !== null) return jsonError(`Too many lookups. Please try again in ${retryAfter} seconds.`, 429)
 
   const email = (new URL(req.url).searchParams.get('email') ?? '').trim().toLowerCase()

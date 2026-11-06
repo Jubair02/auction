@@ -28,3 +28,14 @@ export function mergeRoomState(prev: RoomState | null, next: RoomStateWire): Mer
 
   return { state: { ...next, players, participants }, needsResync: false }
 }
+
+/**
+ * A seat saved in this browser tab may only be reused by the account it was
+ * issued to (shared phones at a venue). Organizer and manager seats without an
+ * owner — saved before this check existed — are rejected; anonymous viewer
+ * seats stay usable by anyone in the tab.
+ */
+export function seatBelongsTo(seat: { role: string; userId?: string | null }, currentUserId: string | null): boolean {
+  if (seat.role === 'VIEWER' && !seat.userId) return true
+  return !!seat.userId && seat.userId === currentUserId
+}

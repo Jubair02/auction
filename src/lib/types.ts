@@ -71,6 +71,8 @@ export interface SocketIdentity {
   role: RoomRole
   name: string
   userId?: string
+  /** The account's session version when the pass was issued; a later password reset invalidates the pass. */
+  sv?: number
   teamId?: string
   teamName?: string
   exp?: number
@@ -176,7 +178,10 @@ export interface RoomTeamInfo {
   maxSquad: number
   minSquad: number
   captainName: string | null
-  managerUserId: string | null
+  /** A manager account is linked to this team. (The account id itself is never sent to the public.) */
+  claimed: boolean
+  /** The team is linked to the logged-in viewer of this response. */
+  isMine: boolean
 }
 
 export interface RoomInfo {
@@ -362,6 +367,8 @@ export interface ResultsData {
   summary: ResultsSummary
   teams: (TeamDTO & { players: PlayerDTO[] })[]
   recentBids: { playerName: string; teamName: string; amount: number; createdAt: string }[]
+  /** The viewer is the organizer (or an admin) — may export CSVs. Team managers see results only. */
+  canManage: boolean
 }
 
 // ---------- Audit trail ----------

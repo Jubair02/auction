@@ -1,21 +1,12 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { toCsv } from '@/lib/csv'
+import { slugify } from '@/lib/format'
 import { loadTournamentForOwner, requireSession } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
-
-function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'tournament'
-  )
-}
 
 function csvResponse(filename: string, body: string): Response {
   // UTF-8 BOM so Excel opens Bangla/Unicode content correctly

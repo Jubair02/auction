@@ -28,6 +28,153 @@ import { apiDownload, apiGet, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate, formatTime } from '@/lib/format'
 import type { AuctionEventDTO, PlayerSaleChain, ResultsData } from '@/lib/types'
+import { type Strings, useLangStore, useStrings } from '@/lib/i18n'
+
+const BN_PLAYER_STATUS: Record<string, string> = {
+  AVAILABLE: 'নিলাম বাকি',
+  LIVE: 'লাইভ',
+  SOLD: 'বিক্রি',
+  UNSOLD: 'অবিক্রিত',
+  SKIPPED: 'বাদ',
+}
+
+const STRINGS = {
+  en: {
+    loadFailed: 'Could not load auction history',
+    exportedFull: 'Full bid history exported',
+    exportFailed: 'Export failed',
+    unavailable: 'History unavailable',
+    unavailableDesc: 'The auction history could not be loaded.',
+    backToTournaments: 'Back to tournaments',
+    backToTournament: 'Back to tournament',
+    title: 'Auction history',
+    print: 'Print',
+    downloadCsv: 'Download full CSV',
+    totalBids: 'Total bids',
+    soldPlayers: 'Sold players',
+    unsold: 'Unsold',
+    totalValue: 'Total value',
+    bidLadderAria: 'Bid ladder by player',
+    bidsByPlayer: 'Bids by player',
+    recentShown: (n: number) => `Most recent ${n} bids shown`,
+    noBids: 'No bids recorded yet',
+    noBidsDesc: 'Once your auction goes live and managers start bidding, the full bid ladder appears here.',
+    openAuctionRoom: 'Open auction room',
+    bidsTopBid: (n: number) => `${n} bid${n === 1 ? '' : 's'} · top bid`,
+    noSaleInView: 'No sale in view',
+    won: 'Won',
+    finalSold: (team: React.ReactNode, price: React.ReactNode) => (
+      <>
+        Final: sold to {team} for {price}
+      </>
+    ),
+    latestNote: 'The results feed keeps the latest 50 bids. For the complete audit trail, download the full CSV.',
+    eventLabels: { SALE: 'Sale', RE_AUCTION: 'Re-auction', REFUND: 'Refund', UNSOLD: 'Unsold', SKIPPED: 'Skipped' },
+    saleHistoryAria: 'Sale history by player',
+    saleHistory: 'Sale history',
+    withRecord: (n: number) => `${n} player${n === 1 ? '' : 's'} with a record`,
+    reauctioned: (n: number) => ` · ${n} re-auctioned`,
+    salesCount: (n: number) => `${n} sale${n === 1 ? '' : 's'}`,
+    reauctionCount: (n: number) => ` · ${n} re-auction${n === 1 ? '' : 's'}`,
+    playerStatus: (status: string) => status.toLowerCase(),
+    saleNo: (n: number | null) => `Sale #${n}`,
+    returned: (amount: string) => `${amount} returned`,
+    roundOpened: (round: number, actor: string | null) => `Round ${round} opened${actor ? ` by ${actor}` : ''}`,
+    noBidsBy: (actor: string | null) => `No bids${actor ? ` · ${actor}` : ''}`,
+    currentOwner: 'Current owner:',
+    noOwner: (status: string) => `none — ${status}`,
+    chainsNote:
+      'Sales are never deleted. A re-auction refunds the previous team and opens a new round — only the latest sale counts towards squads and purses.',
+  },
+  bn: {
+    loadFailed: 'নিলামের ইতিহাস লোড করা যায়নি',
+    exportedFull: 'পুরো বিডের ইতিহাস এক্সপোর্ট হয়েছে',
+    exportFailed: 'এক্সপোর্ট করা যায়নি',
+    unavailable: 'ইতিহাস পাওয়া যাচ্ছে না',
+    unavailableDesc: 'নিলামের ইতিহাস লোড করা যায়নি।',
+    backToTournaments: 'টুর্নামেন্টে ফিরে যান',
+    backToTournament: 'টুর্নামেন্টে ফিরে যান',
+    title: 'নিলামের ইতিহাস',
+    print: 'প্রিন্ট',
+    downloadCsv: 'পুরো CSV ডাউনলোড করুন',
+    totalBids: 'মোট বিড',
+    soldPlayers: 'বিক্রি হওয়া খেলোয়াড়',
+    unsold: 'অবিক্রিত',
+    totalValue: 'মোট মূল্য',
+    bidLadderAria: 'খেলোয়াড় অনুযায়ী বিডের ধাপ',
+    bidsByPlayer: 'খেলোয়াড় অনুযায়ী বিড',
+    recentShown: (n: number) => `সাম্প্রতিক ${n}টি বিড দেখানো হচ্ছে`,
+    noBids: 'এখনো কোনো বিড হয়নি',
+    noBidsDesc: 'নিলাম লাইভ হলে আর ম্যানেজাররা বিড শুরু করলে পুরো বিডের ধাপ এখানে দেখা যাবে।',
+    openAuctionRoom: 'নিলাম রুম খুলুন',
+    bidsTopBid: (n: number) => `${n}টি বিড · সর্বোচ্চ বিড`,
+    noSaleInView: 'এখানে কোনো বিক্রি নেই',
+    won: 'জিতেছে',
+    finalSold: (team: React.ReactNode, price: React.ReactNode) => (
+      <>
+        চূড়ান্ত: {team}-এর কাছে {price}-এ বিক্রি
+      </>
+    ),
+    latestNote: 'ফলাফলে শুধু সর্বশেষ 50টি বিড থাকে। পুরো অডিট ট্রেইলের জন্য পুরো CSV ডাউনলোড করুন।',
+    eventLabels: { SALE: 'বিক্রি', RE_AUCTION: 'রি-অকশন', REFUND: 'রিফান্ড', UNSOLD: 'অবিক্রিত', SKIPPED: 'বাদ' },
+    saleHistoryAria: 'খেলোয়াড় অনুযায়ী বিক্রির ইতিহাস',
+    saleHistory: 'বিক্রির ইতিহাস',
+    withRecord: (n: number) => `${n} জন খেলোয়াড়ের রেকর্ড আছে`,
+    reauctioned: (n: number) => ` · ${n} জন রি-অকশনে`,
+    salesCount: (n: number) => `${n} বার বিক্রি`,
+    reauctionCount: (n: number) => ` · ${n} বার রি-অকশন`,
+    playerStatus: (status: string) => BN_PLAYER_STATUS[status] ?? status.toLowerCase(),
+    saleNo: (n: number | null) => `বিক্রি #${n}`,
+    returned: (amount: string) => `${amount} ফেরত দেওয়া হয়েছে`,
+    roundOpened: (round: number, actor: string | null) => `রাউন্ড ${round} শুরু হয়েছে${actor ? ` · ${actor}` : ''}`,
+    noBidsBy: (actor: string | null) => `কোনো বিড নেই${actor ? ` · ${actor}` : ''}`,
+    currentOwner: 'বর্তমান মালিক:',
+    noOwner: (status: string) => `কেউ নেই — ${status}`,
+    chainsNote:
+      'বিক্রির রেকর্ড কখনো মোছা হয় না। রি-অকশনে আগের দলকে টাকা ফেরত দিয়ে নতুন রাউন্ড শুরু হয় — স্কোয়াড আর বাজেটে শুধু সর্বশেষ বিক্রিই গোনা হয়।',
+  },
+} satisfies Strings<{
+  loadFailed: string
+  exportedFull: string
+  exportFailed: string
+  unavailable: string
+  unavailableDesc: string
+  backToTournaments: string
+  backToTournament: string
+  title: string
+  print: string
+  downloadCsv: string
+  totalBids: string
+  soldPlayers: string
+  unsold: string
+  totalValue: string
+  bidLadderAria: string
+  bidsByPlayer: string
+  recentShown: (n: number) => string
+  noBids: string
+  noBidsDesc: string
+  openAuctionRoom: string
+  bidsTopBid: (n: number) => string
+  noSaleInView: string
+  won: string
+  finalSold: (team: React.ReactNode, price: React.ReactNode) => React.ReactNode
+  latestNote: string
+  eventLabels: Record<AuctionEventDTO['type'], string>
+  saleHistoryAria: string
+  saleHistory: string
+  withRecord: (n: number) => string
+  reauctioned: (n: number) => string
+  salesCount: (n: number) => string
+  reauctionCount: (n: number) => string
+  playerStatus: (status: string) => string
+  saleNo: (n: number | null) => string
+  returned: (amount: string) => string
+  roundOpened: (round: number, actor: string | null) => string
+  noBidsBy: (actor: string | null) => string
+  currentOwner: string
+  noOwner: (status: string) => string
+  chainsNote: string
+}>
 
 interface BidEntry {
   playerName: string
@@ -37,6 +184,7 @@ interface BidEntry {
 }
 
 export default function AuctionHistory({ tournamentId }: { tournamentId: string }) {
+  const s = useStrings(STRINGS)
   const [data, setData] = useState<ResultsData | null>(null)
   const [chains, setChains] = useState<PlayerSaleChain[]>([])
   const [loading, setLoading] = useState(true)
@@ -55,7 +203,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
       setData(res)
       setChains(audit.chains)
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not load auction history')
+      toast.error(ex instanceof ApiError ? ex.message : STRINGS[useLangStore.getState().lang].loadFailed)
     } finally {
       setLoading(false)
     }
@@ -101,9 +249,9 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
         `/api/tournaments/${tournamentId}/export?type=bids`,
         `neelamghor-bids-${tournamentId.slice(0, 8)}.csv`,
       )
-      toast.success('Full bid history exported')
+      toast.success(s.exportedFull)
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Export failed')
+      toast.error(ex instanceof ApiError ? ex.message : s.exportFailed)
     } finally {
       setDownloading(false)
     }
@@ -126,10 +274,10 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
   if (!data) {
     return (
       <div className="container mx-auto max-w-lg px-4 py-16 text-center">
-        <p className="text-lg font-bold">History unavailable</p>
-        <p className="mt-1 text-sm text-muted-foreground">The auction history could not be loaded.</p>
+        <p className="text-lg font-bold">{s.unavailable}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{s.unavailableDesc}</p>
         <Button variant="outline" className="mt-4" onClick={() => navigate('/tournaments')}>
-          Back to tournaments
+          {s.backToTournaments}
         </Button>
       </div>
     )
@@ -148,10 +296,10 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
             className="-ml-2 mb-1 text-muted-foreground print:hidden"
             onClick={() => navigate(`/tournaments/${tournamentId}`)}
           >
-            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> Back to tournament
+            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {s.backToTournament}
           </Button>
           <h1 className="flex flex-wrap items-center gap-2 text-2xl font-extrabold tracking-tight">
-            <Gavel className="h-6 w-6 text-primary" aria-hidden /> Auction history
+            <Gavel className="h-6 w-6 text-primary" aria-hidden /> {s.title}
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <span className="font-semibold text-foreground">{tournament.name}</span>
@@ -162,42 +310,42 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
         </div>
         <div className="flex shrink-0 gap-2 print:hidden">
           <Button variant="outline" className="min-h-10" onClick={() => window.print()}>
-            <Printer className="mr-1.5 h-4 w-4" aria-hidden /> Print
+            <Printer className="mr-1.5 h-4 w-4" aria-hidden /> {s.print}
           </Button>
           <Button className="min-h-10" onClick={() => void downloadCsv()} disabled={downloading}>
             {downloading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Download className="mr-1.5 h-4 w-4" aria-hidden />}
-            Download full CSV
+            {s.downloadCsv}
           </Button>
         </div>
       </div>
 
       {/* Summary */}
       <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total bids" value={summary.totalBids} icon={Gavel} />
-        <StatCard label="Sold players" value={summary.sold} icon={Trophy} tone="success" />
-        <StatCard label="Unsold" value={summary.unsold} icon={Gavel} tone="danger" />
-        <StatCard label="Total value" value={formatBDT(summary.totalValue)} icon={Trophy} tone="primary" />
+        <StatCard label={s.totalBids} value={summary.totalBids} icon={Gavel} />
+        <StatCard label={s.soldPlayers} value={summary.sold} icon={Trophy} tone="success" />
+        <StatCard label={s.unsold} value={summary.unsold} icon={Gavel} tone="danger" />
+        <StatCard label={s.totalValue} value={formatBDT(summary.totalValue)} icon={Trophy} tone="primary" />
       </div>
 
       {/* Sale chain per player — the permanent ownership record */}
       <SaleChains chains={chains} openChains={openChains} setOpenChains={setOpenChains} />
 
       {/* Bid ladder per player */}
-      <section className="mt-8" aria-label="Bid ladder by player">
+      <section className="mt-8" aria-label={s.bidLadderAria}>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-bold">Bids by player</h2>
-          <p className="text-xs text-muted-foreground">Most recent {data.recentBids.length} bids shown</p>
+          <h2 className="text-lg font-bold">{s.bidsByPlayer}</h2>
+          <p className="text-xs text-muted-foreground">{s.recentShown(data.recentBids.length)}</p>
         </div>
 
         {grouped.length === 0 ? (
           <EmptyState
             className="mt-4"
             icon={Gavel}
-            title="No bids recorded yet"
-            description="Once your auction goes live and managers start bidding, the full bid ladder appears here."
+            title={s.noBids}
+            description={s.noBidsDesc}
             action={
               tournament.roomCode ? (
-                <Button onClick={() => navigate(`/room/${tournament.roomCode}`)}>Open auction room</Button>
+                <Button onClick={() => navigate(`/room/${tournament.roomCode}`)}>{s.openAuctionRoom}</Button>
               ) : undefined
             }
           />
@@ -222,7 +370,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                         <div className="min-w-0">
                           <p className="truncate font-bold">{g.playerName}</p>
                           <p className="text-xs text-muted-foreground">
-                            {g.ladder.length} bid{g.ladder.length === 1 ? '' : 's'} · top bid{' '}
+                            {s.bidsTopBid(g.ladder.length)}{' '}
                             <span className="font-semibold tabular-nums">{formatBDT(g.topBid)}</span>
                           </p>
                         </div>
@@ -233,7 +381,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-muted-foreground">
-                              No sale in view
+                              {s.noSaleInView}
                             </Badge>
                           )}
                           <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
@@ -258,7 +406,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                                   </span>
                                   {b.teamName}
                                   {isFinal ? (
-                                    <Badge className="bg-teal-600 text-white hover:bg-teal-600">Won</Badge>
+                                    <Badge className="bg-teal-600 text-white hover:bg-teal-600">{s.won}</Badge>
                                   ) : null}
                                 </span>
                                 <span className="flex items-center gap-3 whitespace-nowrap">
@@ -273,8 +421,10 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                         </ol>
                         {winner ? (
                           <p className="mt-3 text-xs text-muted-foreground">
-                            Final: sold to <span className="font-semibold">{winner.teamName}</span> for{' '}
-                            <span className="font-semibold">{formatBDT(winner.price)}</span>
+                            {s.finalSold(
+                              <span className="font-semibold">{winner.teamName}</span>,
+                              <span className="font-semibold">{formatBDT(winner.price)}</span>
+                            )}
                           </p>
                         ) : null}
                       </CardContent>
@@ -287,7 +437,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
         )}
 
         <p className="mt-3 text-xs text-muted-foreground">
-          The results feed keeps the latest 50 bids. For the complete audit trail, download the full CSV.
+          {s.latestNote}
         </p>
       </section>
     </div>
@@ -296,12 +446,12 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
 
 /* ------------------------------------------------------------------ */
 
-const EVENT_META: Record<AuctionEventDTO['type'], { label: string; dot: string; tone: string }> = {
-  SALE: { label: 'Sale', dot: 'bg-teal-500', tone: 'text-teal-900' },
-  RE_AUCTION: { label: 'Re-auction', dot: 'bg-amber-500', tone: 'text-amber-900' },
-  REFUND: { label: 'Refund', dot: 'bg-sky-500', tone: 'text-sky-900' },
-  UNSOLD: { label: 'Unsold', dot: 'bg-rose-400', tone: 'text-rose-900' },
-  SKIPPED: { label: 'Skipped', dot: 'bg-slate-400', tone: 'text-slate-700' },
+const EVENT_META: Record<AuctionEventDTO['type'], { dot: string; tone: string }> = {
+  SALE: { dot: 'bg-teal-500', tone: 'text-teal-900' },
+  RE_AUCTION: { dot: 'bg-amber-500', tone: 'text-amber-900' },
+  REFUND: { dot: 'bg-sky-500', tone: 'text-sky-900' },
+  UNSOLD: { dot: 'bg-rose-400', tone: 'text-rose-900' },
+  SKIPPED: { dot: 'bg-slate-400', tone: 'text-slate-700' },
 }
 
 /**
@@ -318,16 +468,17 @@ function SaleChains({
   openChains: Record<string, boolean>
   setOpenChains: (fn: (prev: Record<string, boolean>) => Record<string, boolean>) => void
 }) {
+  const s = useStrings(STRINGS)
   if (chains.length === 0) return null
   const reauctioned = chains.filter((c) => c.reauctions > 0).length
 
   return (
-    <section className="mt-8" aria-label="Sale history by player">
+    <section className="mt-8" aria-label={s.saleHistoryAria}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-bold">Sale history</h2>
+        <h2 className="text-lg font-bold">{s.saleHistory}</h2>
         <p className="text-xs text-muted-foreground">
-          {chains.length} player{chains.length === 1 ? '' : 's'} with a record
-          {reauctioned > 0 ? ` · ${reauctioned} re-auctioned` : ''}
+          {s.withRecord(chains.length)}
+          {reauctioned > 0 ? s.reauctioned(reauctioned) : ''}
         </p>
       </div>
 
@@ -356,8 +507,8 @@ function SaleChains({
                         {c.playerName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {sales.length} sale{sales.length === 1 ? '' : 's'}
-                        {c.reauctions > 0 ? ` · ${c.reauctions} re-auction${c.reauctions === 1 ? '' : 's'}` : ''}
+                        {s.salesCount(sales.length)}
+                        {c.reauctions > 0 ? s.reauctionCount(c.reauctions) : ''}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -373,7 +524,7 @@ function SaleChains({
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="text-muted-foreground">
-                          {c.status.toLowerCase()}
+                          {s.playerStatus(c.status)}
                         </Badge>
                       )}
                       <ChevronDown
@@ -397,7 +548,7 @@ function SaleChains({
                             />
                             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                               <p className={`text-sm font-semibold ${meta.tone}`}>
-                                {e.type === 'SALE' ? `Sale #${saleNo}` : meta.label}
+                                {e.type === 'SALE' ? s.saleNo(saleNo) : s.eventLabels[e.type]}
                                 {e.teamName ? <span className="font-normal"> · {e.teamName}</span> : null}
                               </p>
                               <p className="text-xs tabular-nums text-muted-foreground">
@@ -408,16 +559,16 @@ function SaleChains({
                               {e.type === 'REFUND' ? (
                                 <span className="inline-flex items-center gap-1">
                                   <Undo2 className="h-3 w-3" aria-hidden />
-                                  {formatBDT(e.refundAmount ?? 0)} returned
+                                  {s.returned(formatBDT(e.refundAmount ?? 0))}
                                 </span>
                               ) : e.type === 'RE_AUCTION' ? (
-                                `Round ${e.cycle + 1} opened${e.actorName ? ` by ${e.actorName}` : ''}`
+                                s.roundOpened(e.cycle + 1, e.actorName ?? null)
                               ) : e.amount != null ? (
                                 <span className="font-semibold tabular-nums text-foreground">
                                   {formatBDT(e.amount)}
                                 </span>
                               ) : (
-                                `No bids${e.actorName ? ` · ${e.actorName}` : ''}`
+                                s.noBidsBy(e.actorName ?? null)
                               )}
                               {e.reason ? ` — ${e.reason}` : ''}
                             </p>
@@ -430,7 +581,7 @@ function SaleChains({
                           aria-hidden
                         />
                         <p className="text-sm font-bold">
-                          Current owner:{' '}
+                          {s.currentOwner}{' '}
                           {c.currentTeamName ? (
                             <>
                               {c.currentTeamName}{' '}
@@ -439,7 +590,7 @@ function SaleChains({
                               </span>
                             </>
                           ) : (
-                            <span className="text-muted-foreground">none — {c.status.toLowerCase()}</span>
+                            <span className="text-muted-foreground">{s.noOwner(s.playerStatus(c.status))}</span>
                           )}
                         </p>
                       </li>
@@ -452,8 +603,7 @@ function SaleChains({
         })}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        Sales are never deleted. A re-auction refunds the previous team and opens a new round — only the latest
-        sale counts towards squads and purses.
+        {s.chainsNote}
       </p>
     </section>
   )

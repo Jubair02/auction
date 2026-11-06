@@ -87,5 +87,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       amount: b.amount,
       createdAt: b.createdAt.toISOString(),
     })),
+    // Exports are owner/ADMIN-only on the server; tell the UI so it can hide them.
+    canManage: isOwnerOrAdmin(tournament, user),
   })
 }

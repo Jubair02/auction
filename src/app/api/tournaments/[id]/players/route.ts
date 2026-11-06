@@ -8,6 +8,8 @@ import {
   readJson,
   requireSession,
   serializePlayer,
+  IMAGE_URL_ERROR,
+  parseImageUrl,
 } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -39,13 +41,16 @@ function validatePlayerInput(raw: unknown, label: string): ValidatedPlayer | str
   if (category === false) return `${label}: category must be one of A, B, C, D, E`
 
   const basePrice = coercePositiveInt(p.basePrice)
-  if (!basePrice) return `${label}: basePrice must be a positive integer (taka)`
+  if (!basePrice) return `${label}: basePrice must be a whole amount from ৳1 to ৳1,000,000,000`
 
   const str = (v: unknown, max: number): string | null => {
     if (typeof v !== 'string') return null
     const s = v.trim()
     return s === '' ? null : s.slice(0, max)
   }
+
+  const photoUrl = parseImageUrl(p.photoUrl)
+  if (photoUrl === false) return `${label}: ${IMAGE_URL_ERROR.toLowerCase()}`
 
   return {
     name: name.slice(0, 80),
@@ -54,7 +59,7 @@ function validatePlayerInput(raw: unknown, label: string): ValidatedPlayer | str
     category,
     basePrice,
     previousTeam: str(p.previousTeam, 80),
-    photoUrl: str(p.photoUrl, 500),
+    photoUrl: photoUrl ?? null,
   }
 }
 

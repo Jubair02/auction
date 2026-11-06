@@ -9,6 +9,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# npm is the single package manager (package-lock.json). Bun is installed by
+# npm as a dev dependency and only runs the auction service.
 jobs:
   check:
     name: Lint, typecheck, test, build
@@ -17,26 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.4
-
       # Unit tests use Node's built-in runner (type stripping needs Node >= 22.18).
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
 
-      - run: bun install --frozen-lockfile
-      - run: bunx prisma generate
+      - run: npm ci
+      - run: npx prisma generate
 
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run test
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
 
       - name: Build
-        run: bun run build
+        run: npm run build
         env:
-          # Build never connects; the URL only has to parse.
+          # The build never connects (and never migrates); the URL only has to parse.
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
   migrations:
@@ -61,19 +60,20 @@ jobs:
       SHADOW_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_shadow
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: 1.3.4
-      - run: bun install --frozen-lockfile
+          node-version: 24
+          cache: npm
+      - run: npm ci
 
       - name: Apply all migrations to an empty database
-        run: bunx prisma migrate deploy
+        run: npm run db:deploy
 
       # Fails when schema.prisma changed without a matching migration.
       - name: Check schema drift
         run: |
           PGPASSWORD=ci psql -h localhost -U ci -d ci -c 'CREATE DATABASE ci_shadow'
-          bunx prisma migrate diff \
+          npx prisma migrate diff \
             --from-migrations prisma/migrations \
             --to-schema-datamodel prisma/schema.prisma \
             --shadow-database-url "$SHADOW_DATABASE_URL" \

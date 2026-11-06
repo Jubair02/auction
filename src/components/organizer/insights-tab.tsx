@@ -7,6 +7,98 @@ import { EmptyState, StatCard } from '@/components/shared/empty-state'
 import { ApiError } from '@/lib/api'
 import { useCachedGet } from '@/lib/api-cache'
 import { formatBDT } from '@/lib/format'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    unavailable: 'Insights unavailable',
+    loadFailed: 'Could not load insights',
+    noActivity: 'No auction activity yet',
+    noActivityDesc:
+      'Insights appear here once bidding starts — spending by team, the most contested players and the biggest bargains and splurges.',
+    totalSpent: 'Total spent',
+    playersSold: (n: number) => `${n} players sold`,
+    avgPrice: 'Average price',
+    sellThrough: 'Sell-through',
+    sellThroughHint: 'Sold, of players put up',
+    topSale: 'Top sale',
+    spendingByTeam: 'Spending by team',
+    spendingNote: 'Filled bar = spent; the full track is the team’s budget.',
+    squadLine: (count: number, max: number) => `${count}/${max} players`,
+    shortOfMin: (n: number) => ` · ${n} short of minimum`,
+    spentOf: (spent: string, budget: string) => `${spent} of ${budget}`,
+    avgByCategory: 'Average sale price by category',
+    categoryLabel: (code: string) => `Category ${code}`,
+    categorySub: (sold: number, players: number, total: string) => `${sold} of ${players} sold · ${total} total`,
+    noneSold: 'none sold',
+    mostContested: 'Most contested players',
+    totalBids: (n: number) => `${n} bids in total.`,
+    noBids: 'No bids yet.',
+    notSold: 'Not sold',
+    bidsCount: (n: number) => `${n} bids`,
+    biggestPremiums: 'Biggest premiums over base price',
+    noSales: 'No sales yet.',
+    premiumSub: (base: string, sold: string, team: string) => `${base} base → ${sold} · ${team}`,
+  },
+  bn: {
+    unavailable: 'বিশ্লেষণ পাওয়া যাচ্ছে না',
+    loadFailed: 'বিশ্লেষণ লোড করা যায়নি',
+    noActivity: 'এখনো নিলামের কোনো কার্যক্রম নেই',
+    noActivityDesc:
+      'বিড শুরু হলেই এখানে বিশ্লেষণ দেখা যাবে — দল অনুযায়ী খরচ, সবচেয়ে বেশি লড়াই হওয়া খেলোয়াড়, আর সবচেয়ে সস্তা ও সবচেয়ে দামি কেনা।',
+    totalSpent: 'মোট খরচ',
+    playersSold: (n: number) => `${n} জন খেলোয়াড় বিক্রি`,
+    avgPrice: 'গড় দাম',
+    sellThrough: 'বিক্রির হার',
+    sellThroughHint: 'নিলামে ওঠা খেলোয়াড়দের মধ্যে বিক্রি',
+    topSale: 'সর্বোচ্চ বিক্রি',
+    spendingByTeam: 'দল অনুযায়ী খরচ',
+    spendingNote: 'ভরা অংশ = খরচ; পুরো দাগটা দলের বাজেট।',
+    squadLine: (count: number, max: number) => `${count}/${max} জন খেলোয়াড়`,
+    shortOfMin: (n: number) => ` · সর্বনিম্ন থেকে ${n} জন কম`,
+    spentOf: (spent: string, budget: string) => `${budget}-এর মধ্যে ${spent}`,
+    avgByCategory: 'ক্যাটাগরি অনুযায়ী গড় বিক্রয়মূল্য',
+    categoryLabel: (code: string) => `ক্যাটাগরি ${code}`,
+    categorySub: (sold: number, players: number, total: string) => `${players} জনের ${sold} জন বিক্রি · মোট ${total}`,
+    noneSold: 'কেউ বিক্রি হয়নি',
+    mostContested: 'সবচেয়ে বেশি বিড পাওয়া খেলোয়াড়',
+    totalBids: (n: number) => `মোট ${n}টি বিড।`,
+    noBids: 'এখনো কোনো বিড নেই।',
+    notSold: 'বিক্রি হয়নি',
+    bidsCount: (n: number) => `${n}টি বিড`,
+    biggestPremiums: 'বেস প্রাইসের চেয়ে সবচেয়ে বেশি দামে বিক্রি',
+    noSales: 'এখনো কোনো বিক্রি নেই।',
+    premiumSub: (base: string, sold: string, team: string) => `বেস ${base} → ${sold} · ${team}`,
+  },
+} satisfies Strings<{
+  unavailable: string
+  loadFailed: string
+  noActivity: string
+  noActivityDesc: string
+  totalSpent: string
+  playersSold: (n: number) => string
+  avgPrice: string
+  sellThrough: string
+  sellThroughHint: string
+  topSale: string
+  spendingByTeam: string
+  spendingNote: string
+  squadLine: (count: number, max: number) => string
+  shortOfMin: (n: number) => string
+  spentOf: (spent: string, budget: string) => string
+  avgByCategory: string
+  categoryLabel: (code: string) => string
+  categorySub: (sold: number, players: number, total: string) => string
+  noneSold: string
+  mostContested: string
+  totalBids: (n: number) => string
+  noBids: string
+  notSold: string
+  bidsCount: (n: number) => string
+  biggestPremiums: string
+  noSales: string
+  premiumSub: (base: string, sold: string, team: string) => string
+}>
 
 interface PlayerStat {
   id: string
@@ -35,6 +127,7 @@ interface Analytics {
 
 /** Post-auction insights for the organizer (complete bid history, computed server-side). */
 export function InsightsTab({ tournamentId }: { tournamentId: string }) {
+  const s = useStrings(STRINGS)
   // Reopening the tab shows the last insights at once while fresh ones load.
   const { data, error } = useCachedGet<Analytics>(`/api/tournaments/${tournamentId}/analytics`)
 
@@ -42,8 +135,8 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
     return (
       <EmptyState
         icon={BarChart3}
-        title="Insights unavailable"
-        description={error instanceof ApiError ? error.message : 'Could not load insights'}
+        title={s.unavailable}
+        description={error instanceof ApiError ? error.message : s.loadFailed}
       />
     )
   }
@@ -62,8 +155,8 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
     return (
       <EmptyState
         icon={BarChart3}
-        title="No auction activity yet"
-        description="Insights appear here once bidding starts — spending by team, the most contested players and the biggest bargains and splurges."
+        title={s.noActivity}
+        description={s.noActivityDesc}
       />
     )
   }
@@ -73,16 +166,16 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total spent" value={formatBDT(summary.totalSpend)} icon={Wallet} hint={`${summary.soldCount} players sold`} />
-        <StatCard label="Average price" value={formatBDT(summary.avgPrice)} icon={Gavel} />
+        <StatCard label={s.totalSpent} value={formatBDT(summary.totalSpend)} icon={Wallet} hint={s.playersSold(summary.soldCount)} />
+        <StatCard label={s.avgPrice} value={formatBDT(summary.avgPrice)} icon={Gavel} />
         <StatCard
-          label="Sell-through"
+          label={s.sellThrough}
           value={summary.sellThrough == null ? '—' : `${Math.round(summary.sellThrough * 100)}%`}
           icon={Percent}
-          hint="Sold, of players put up"
+          hint={s.sellThroughHint}
         />
         <StatCard
-          label="Top sale"
+          label={s.topSale}
           value={summary.topSale ? formatBDT(summary.topSale.price) : '—'}
           icon={Trophy}
           tone="primary"
@@ -90,33 +183,33 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
         />
       </div>
 
-      <ChartCard title="Spending by team" note="Filled bar = spent; the full track is the team's budget.">
+      <ChartCard title={s.spendingByTeam} note={s.spendingNote}>
         <BarList
           rows={data.teams.map((t) => ({
             key: t.id,
             label: t.name,
-            sub: `${t.squadCount}/${t.maxSquad} players${t.squadCount < t.minSquad ? ` · ${t.minSquad - t.squadCount} short of minimum` : ''}`,
+            sub: `${s.squadLine(t.squadCount, t.maxSquad)}${t.squadCount < t.minSquad ? s.shortOfMin(t.minSquad - t.squadCount) : ''}`,
             value: t.spent,
             track: t.budget / maxBudget,
             fill: t.spent / maxBudget,
-            display: `${formatBDT(t.spent)} of ${formatBDT(t.budget)}`,
+            display: s.spentOf(formatBDT(t.spent), formatBDT(t.budget)),
           }))}
         />
       </ChartCard>
 
       {data.categories.length > 0 ? (
-        <ChartCard title="Average sale price by category">
+        <ChartCard title={s.avgByCategory}>
           <BarList
             rows={(() => {
               const max = Math.max(...data.categories.map((c) => c.avgPrice), 1)
               return data.categories.map((c) => ({
                 key: c.code,
-                label: `Category ${c.code}`,
-                sub: `${c.sold} of ${c.players} sold · ${formatBDT(c.spend)} total`,
+                label: s.categoryLabel(c.code),
+                sub: s.categorySub(c.sold, c.players, formatBDT(c.spend)),
                 value: c.avgPrice,
                 track: 1,
                 fill: c.avgPrice / max,
-                display: c.sold ? formatBDT(c.avgPrice) : 'none sold',
+                display: c.sold ? formatBDT(c.avgPrice) : s.noneSold,
               }))
             })()}
           />
@@ -124,9 +217,9 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Most contested players" icon={Flame} note={`${summary.totalBids} bids in total.`}>
+        <ChartCard title={s.mostContested} icon={Flame} note={s.totalBids(summary.totalBids)}>
           {data.mostContested.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No bids yet.</p>
+            <p className="text-sm text-muted-foreground">{s.noBids}</p>
           ) : (
             <BarList
               rows={(() => {
@@ -134,20 +227,20 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
                 return data.mostContested.map((p) => ({
                   key: p.id,
                   label: `#${p.playerNumber} ${p.name}`,
-                  sub: p.soldPrice != null ? `${formatBDT(p.soldPrice)} → ${p.teamName ?? '—'}` : 'Not sold',
+                  sub: p.soldPrice != null ? `${formatBDT(p.soldPrice)} → ${p.teamName ?? '—'}` : s.notSold,
                   value: p.bids,
                   track: 1,
                   fill: p.bids / max,
-                  display: `${p.bids} bids`,
+                  display: s.bidsCount(p.bids),
                 }))
               })()}
             />
           )}
         </ChartCard>
 
-        <ChartCard title="Biggest premiums over base price" icon={Trophy}>
+        <ChartCard title={s.biggestPremiums} icon={Trophy}>
           {data.biggestPremiums.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sales yet.</p>
+            <p className="text-sm text-muted-foreground">{s.noSales}</p>
           ) : (
             <BarList
               rows={(() => {
@@ -156,7 +249,7 @@ export function InsightsTab({ tournamentId }: { tournamentId: string }) {
                 return data.biggestPremiums.map((p) => ({
                   key: p.id,
                   label: `#${p.playerNumber} ${p.name}`,
-                  sub: `${formatBDT(p.basePrice)} base → ${formatBDT(p.soldPrice)} · ${p.teamName ?? '—'}`,
+                  sub: s.premiumSub(formatBDT(p.basePrice), formatBDT(p.soldPrice), p.teamName ?? '—'),
                   value: ratio(p),
                   track: 1,
                   fill: ratio(p) / max,

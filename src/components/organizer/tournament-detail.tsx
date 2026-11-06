@@ -50,33 +50,137 @@ import { apiDelete, apiDownload, ApiError } from '@/lib/api'
 import { invalidateCached, peekCached, useCachedGet } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
-import { formatDate } from '@/lib/format'
+import { formatDate, slugify } from '@/lib/format'
 import { sportLabel, type TournamentDetail as TournamentDetailDTO, type TournamentSummary } from '@/lib/types'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
-const EXPORT_TYPES: { type: string; label: string }[] = [
-  { type: 'players', label: 'Players' },
-  { type: 'sold', label: 'Sold' },
-  { type: 'unsold', label: 'Unsold' },
-  { type: 'squads', label: 'Squads' },
-  { type: 'bids', label: 'History' },
-  { type: 'spending', label: 'Spending' },
-  { type: 'audit', label: 'Audit log' },
-]
+// CSV export types — these keys go to the API and into the file name.
+const EXPORT_TYPES = ['players', 'sold', 'unsold', 'squads', 'bids', 'spending', 'audit'] as const
+type ExportType = (typeof EXPORT_TYPES)[number]
 
-function slugify(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'tournament'
-}
+const STRINGS = {
+  en: {
+    exportLabels: { players: 'Players', sold: 'Sold', unsold: 'Unsold', squads: 'Squads', bids: 'History', spending: 'Spending', audit: 'Audit log' },
+    loadingTournament: 'Loading tournament',
+    loadFailed: 'Could not load tournament',
+    exported: (type: string) => `Exported ${type} CSV`,
+    exportFailed: 'Export failed',
+    deleted: 'Tournament deleted',
+    deleteFailed: 'Delete failed',
+    unavailable: 'Tournament unavailable',
+    unavailableDesc: 'It may have been deleted, or you may not have access.',
+    backToTournaments: 'Back to tournaments',
+    bannerAlt: (name: string) => `${name} banner`,
+    logoAlt: (name: string) => `${name} logo`,
+    allTournaments: 'All tournaments',
+    starts: (date: string) => `Starts ${date}`,
+    auctionAt: (date: string) => `Auction ${date}`,
+    categoryMode: 'Category A–E',
+    normalMode: 'Normal mode',
+    edit: 'Edit',
+    moreActions: 'More actions',
+    export: 'Export',
+    results: 'Results',
+    auctionHistory: 'Auction history',
+    deleteEndFirst: 'Delete tournament (end the auction first)',
+    deleteTournament: 'Delete tournament',
+    tabOverview: 'Overview',
+    tabPlayers: 'Players',
+    tabTeams: 'Teams',
+    tabRegistrations: 'Registrations',
+    tabInsights: 'Insights',
+    tabAuction: 'Auction Setup',
+    deleteTitle: 'Delete tournament?',
+    deleteDesc: (name: string) =>
+      `“${name}” and all its players, teams and bid history will be permanently removed. This cannot be undone.`,
+    cancel: 'Cancel',
+    deleting: 'Deleting…',
+  },
+  bn: {
+    exportLabels: { players: 'খেলোয়াড়', sold: 'বিক্রি', unsold: 'অবিক্রিত', squads: 'স্কোয়াড', bids: 'ইতিহাস', spending: 'খরচ', audit: 'অডিট লগ' },
+    loadingTournament: 'টুর্নামেন্ট লোড হচ্ছে',
+    loadFailed: 'টুর্নামেন্ট লোড করা যায়নি',
+    exported: (type: string) => `${type} CSV এক্সপোর্ট হয়েছে`,
+    exportFailed: 'এক্সপোর্ট করা যায়নি',
+    deleted: 'টুর্নামেন্ট মুছে ফেলা হয়েছে',
+    deleteFailed: 'মুছে ফেলা যায়নি',
+    unavailable: 'টুর্নামেন্ট পাওয়া যাচ্ছে না',
+    unavailableDesc: 'হয়তো এটি মুছে ফেলা হয়েছে, অথবা আপনার অ্যাক্সেস নেই।',
+    backToTournaments: 'টুর্নামেন্টে ফিরে যান',
+    bannerAlt: (name: string) => `${name} ব্যানার`,
+    logoAlt: (name: string) => `${name} লোগো`,
+    allTournaments: 'সব টুর্নামেন্ট',
+    starts: (date: string) => `শুরু: ${date}`,
+    auctionAt: (date: string) => `নিলাম: ${date}`,
+    categoryMode: 'ক্যাটাগরি A–E',
+    normalMode: 'নরমাল মোড',
+    edit: 'সম্পাদনা',
+    moreActions: 'আরও অপশন',
+    export: 'এক্সপোর্ট',
+    results: 'ফলাফল',
+    auctionHistory: 'নিলামের ইতিহাস',
+    deleteEndFirst: 'টুর্নামেন্ট মুছুন (আগে নিলাম শেষ করুন)',
+    deleteTournament: 'টুর্নামেন্ট মুছুন',
+    tabOverview: 'সংক্ষেপ',
+    tabPlayers: 'খেলোয়াড়',
+    tabTeams: 'দল',
+    tabRegistrations: 'নিবন্ধন',
+    tabInsights: 'বিশ্লেষণ',
+    tabAuction: 'নিলাম সেট আপ',
+    deleteTitle: 'টুর্নামেন্ট মুছবেন?',
+    deleteDesc: (name: string) =>
+      `“${name}” আর এর সব খেলোয়াড়, দল ও বিডের ইতিহাস চিরতরে মুছে যাবে। এটা আর ফেরানো যাবে না।`,
+    cancel: 'বাতিল',
+    deleting: 'মুছে ফেলা হচ্ছে…',
+  },
+} satisfies Strings<{
+  exportLabels: Record<ExportType, string>
+  loadingTournament: string
+  loadFailed: string
+  exported: (type: string) => string
+  exportFailed: string
+  deleted: string
+  deleteFailed: string
+  unavailable: string
+  unavailableDesc: string
+  backToTournaments: string
+  bannerAlt: (name: string) => string
+  logoAlt: (name: string) => string
+  allTournaments: string
+  starts: (date: string) => string
+  auctionAt: (date: string) => string
+  categoryMode: string
+  normalMode: string
+  edit: string
+  moreActions: string
+  export: string
+  results: string
+  auctionHistory: string
+  deleteEndFirst: string
+  deleteTournament: string
+  tabOverview: string
+  tabPlayers: string
+  tabTeams: string
+  tabRegistrations: string
+  tabInsights: string
+  tabAuction: string
+  deleteTitle: string
+  deleteDesc: (name: string) => string
+  cancel: string
+  deleting: string
+}>
 
 /**
  * Same shape as the loaded page (header, tabs, stat cards) so nothing jumps when
  * data arrives. Coming from the tournaments list, the name is already known.
  */
 function TournamentDetailSkeleton({ tournamentId }: { tournamentId: string }) {
+  const s = useStrings(STRINGS)
   const summary = peekCached<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)?.tournaments.find(
     (t) => t.id === tournamentId
   )
   return (
-    <div className="container mx-auto max-w-7xl px-4 py-8" aria-busy="true" aria-label="Loading tournament">
+    <div className="container mx-auto max-w-7xl px-4 py-8" aria-busy="true" aria-label={s.loadingTournament}>
       <Skeleton className="h-8 w-40 rounded-lg" />
       <div className="mt-3">
         {summary ? (
@@ -104,8 +208,10 @@ function TournamentDetailSkeleton({ tournamentId }: { tournamentId: string }) {
 }
 
 export default function TournamentDetail({ tournamentId }: { tournamentId: string }) {
+  const lang = useLang()
+  const s = useStrings(STRINGS)
   const { data, loading, refetch } = useCachedGet<TournamentDetailDTO>(tournamentDetailUrl(tournamentId), (ex) =>
-    toast.error(ex instanceof ApiError ? ex.message : 'Could not load tournament')
+    toast.error(ex instanceof ApiError ? ex.message : s.loadFailed)
   )
   // Called after every save on this page: the list's counts / name / status
   // may have changed too, so its cached copy must not be shown again.
@@ -118,13 +224,13 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
   const [deleting, setDeleting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
 
-  const downloadExport = async (type: string) => {
+  const downloadExport = async (type: ExportType) => {
     if (!data) return
     try {
       await apiDownload(`/api/tournaments/${tournamentId}/export?type=${type}`, `${slugify(data.tournament.name)}-${type}.csv`)
-      toast.success(`Exported ${type} CSV`)
+      toast.success(s.exported(lang === 'en' ? type : s.exportLabels[type]))
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Export failed')
+      toast.error(ex instanceof ApiError ? ex.message : s.exportFailed)
     }
   }
 
@@ -133,10 +239,10 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
     try {
       await apiDelete(`/api/tournaments/${tournamentId}`)
       invalidateCached(TOURNAMENTS_URL, tournamentDetailUrl(tournamentId))
-      toast.success('Tournament deleted')
+      toast.success(s.deleted)
       navigate('/tournaments')
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Delete failed')
+      toast.error(ex instanceof ApiError ? ex.message : s.deleteFailed)
       setDeleting(false)
     }
   }
@@ -147,24 +253,24 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
   if (!data) {
     return (
       <div className="container mx-auto max-w-lg px-4 py-16 text-center">
-        <p className="text-lg font-bold">Tournament unavailable</p>
-        <p className="mt-1 text-sm text-muted-foreground">It may have been deleted, or you may not have access.</p>
+        <p className="text-lg font-bold">{s.unavailable}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{s.unavailableDesc}</p>
         <Button variant="outline" className="mt-4" onClick={() => navigate('/tournaments')}>
-          Back to tournaments
+          {s.backToTournaments}
         </Button>
       </div>
     )
   }
 
   const { tournament: t, players, teams, auction } = data
-  const step = nextStep(data)
+  const step = nextStep(data, lang)
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8">
       {/* Banner */}
       {t.bannerUrl ? (
         <div className="mb-4 overflow-hidden rounded-xl border">
-          <img src={t.bannerUrl} alt={`${t.name} banner`} className="h-32 w-full object-cover sm:h-44" />
+          <img src={t.bannerUrl} alt={s.bannerAlt(t.name)} className="h-32 w-full object-cover sm:h-44" />
         </div>
       ) : null}
 
@@ -177,23 +283,23 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
             className="-ml-2 mb-1 text-muted-foreground"
             onClick={() => navigate('/tournaments')}
           >
-            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> All tournaments
+            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {s.allTournaments}
           </Button>
           <h1 className="flex flex-wrap items-center gap-2.5 text-2xl font-extrabold tracking-tight">
             {t.logoUrl ? (
-              <img src={t.logoUrl} alt={`${t.name} logo`} className="h-9 w-9 rounded-lg border object-cover" />
+              <img src={t.logoUrl} alt={s.logoAlt(t.name)} className="h-9 w-9 rounded-lg border object-cover" />
             ) : null}
             <span className="break-words">{t.name}</span>
             <TournamentStatusBadge status={t.status} />
           </h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span>{sportLabel(t.sport, 'en', t.sportName)}</span>
+            <span>{sportLabel(t.sport, lang, t.sportName)}</span>
             {t.tournamentType ? <span>{t.tournamentType}</span> : null}
             {t.location ? <span>{t.location}</span> : null}
-            <span>Starts {formatDate(t.startDate)}</span>
-            <span>Auction {formatDate(t.auctionAt, true)}</span>
+            <span>{s.starts(formatDate(t.startDate))}</span>
+            <span>{s.auctionAt(formatDate(t.auctionAt, true))}</span>
             <Badge variant="secondary" className="text-xs">
-              {t.auctionMode === 'CATEGORY' ? 'Category A–E' : 'Normal mode'}
+              {t.auctionMode === 'CATEGORY' ? s.categoryMode : s.normalMode}
             </Badge>
           </div>
           {t.description ? <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{t.description}</p> : null}
@@ -209,36 +315,42 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
             {step.label}
           </Button>
           <Button variant="outline" className="min-h-10" onClick={() => setEditOpen(true)}>
-            <Pencil className="mr-1.5 h-4 w-4" aria-hidden /> Edit
+            <Pencil className="mr-1.5 h-4 w-4" aria-hidden /> {s.edit}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-10 w-10" aria-label="More actions">
+              <Button variant="outline" size="icon" className="h-10 w-10" aria-label={s.moreActions}>
                 <MoreVertical className="h-4 w-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
-                  <Download className="mr-2 h-4 w-4" /> Export
+                  <Download className="mr-2 h-4 w-4" /> {s.export}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
-                  {EXPORT_TYPES.map((e) => (
-                    <DropdownMenuItem key={e.type} onClick={() => void downloadExport(e.type)}>
-                      <FileSpreadsheet className="mr-2 h-4 w-4" /> {e.label}
+                  {EXPORT_TYPES.map((type) => (
+                    <DropdownMenuItem key={type} onClick={() => void downloadExport(type)}>
+                      <FileSpreadsheet className="mr-2 h-4 w-4" /> {s.exportLabels[type]}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuItem onClick={() => navigate(`/results/${tournamentId}`)}>
-                <Trophy className="mr-2 h-4 w-4" /> Results
+                <Trophy className="mr-2 h-4 w-4" /> {s.results}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate(`/tournaments/${tournamentId}/history`)}>
-                <History className="mr-2 h-4 w-4" /> Auction history
+                <History className="mr-2 h-4 w-4" /> {s.auctionHistory}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="mr-2 h-4 w-4" /> Delete tournament
+              {/* The server refuses while the auction runs — say so instead of failing. */}
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={auction?.status === 'LIVE' || auction?.status === 'PAUSED'}
+                onClick={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                {auction?.status === 'LIVE' || auction?.status === 'PAUSED' ? s.deleteEndFirst : s.deleteTournament}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -248,17 +360,17 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
       {/* Tabs */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="mt-6">
         <TabsList className="h-auto w-full flex-wrap justify-start gap-0 sm:w-auto">
-          <TabsTrigger value="overview" className="min-h-11">Overview</TabsTrigger>
+          <TabsTrigger value="overview" className="min-h-11">{s.tabOverview}</TabsTrigger>
           <TabsTrigger value="players" className="min-h-11">
-            Players <span className="ml-1 text-xs text-muted-foreground">({players.length})</span>
+            {s.tabPlayers} <span className="ml-1 text-xs text-muted-foreground">({players.length})</span>
           </TabsTrigger>
           <TabsTrigger value="teams" className="min-h-11">
-            Teams <span className="ml-1 text-xs text-muted-foreground">({teams.length})</span>
+            {s.tabTeams} <span className="ml-1 text-xs text-muted-foreground">({teams.length})</span>
           </TabsTrigger>
-          <TabsTrigger value="registrations" className="min-h-11">Registrations</TabsTrigger>
-          <TabsTrigger value="insights" className="min-h-11">Insights</TabsTrigger>
+          <TabsTrigger value="registrations" className="min-h-11">{s.tabRegistrations}</TabsTrigger>
+          <TabsTrigger value="insights" className="min-h-11">{s.tabInsights}</TabsTrigger>
           <TabsTrigger value="auction" className="min-h-11">
-            Auction Setup
+            {s.tabAuction}
             {auction ? (
               <span className="ml-1.5 flex h-2 w-2">
                 <span className={`h-2 w-2 rounded-full ${auction.status === 'LIVE' ? 'bg-amber-500' : 'bg-teal-500'}`} />
@@ -338,14 +450,11 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete tournament?</AlertDialogTitle>
-            <AlertDialogDescription>
-              &ldquo;{t.name}&rdquo; and all its players, teams and bid history will be permanently removed. This
-              cannot be undone.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{s.deleteTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{s.deleteDesc(t.name)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{s.cancel}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-rose-600 text-white hover:bg-rose-700"
               disabled={deleting}
@@ -356,10 +465,10 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
             >
               {deleting ? (
                 <>
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> Deleting…
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> {s.deleting}
                 </>
               ) : (
-                'Delete tournament'
+                s.deleteTournament
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

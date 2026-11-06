@@ -94,15 +94,26 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   let basePrice: number
   if (body.basePrice !== undefined && body.basePrice !== null && body.basePrice !== '') {
     const parsed = coercePositiveInt(body.basePrice)
-    if (!parsed) return jsonError('Base price must be a positive amount in taka', 400)
+    if (!parsed) return jsonError('Base price must be a whole amount from ৳1 to ৳1,000,000,000', 400)
     basePrice = parsed
   } else {
     basePrice = (category && DEFAULT_CATEGORY_BASE_PRICES[category]) || tournament.basePrice
   }
 
+  // Claim first, atomically: a double-click or a second organizer tab can't
+  // both read the same PENDING rows and create every player twice — each row
+  // flips to APPROVED for exactly one request.
+  const claimedRows = await db.$queryRaw<{ id: string }[]>`
+    UPDATE "PlayerRegistration" SET "status" = 'APPROVED'
+    WHERE "id" = ANY(${pending.map((r) => r.id)}::text[]) AND "tournamentId" = ${id} AND "status" = 'PENDING'
+    RETURNING "id"`
+  const claimedIds = new Set(claimedRows.map((r) => r.id))
+  const claimed = pending.filter((r) => claimedIds.has(r.id))
+  if (claimed.length === 0) return jsonError('Those registrations were already handled', 409)
+
   const inserted = await insertPlayersNumbered(
     id,
-    pending.map((r) => ({
+    claimed.map((r) => ({
       name: r.name,
       phone: r.phone,
       role: r.role,
@@ -111,14 +122,19 @@ export async function PATCH(req: Request, { params }: RouteParams) {
       previousTeam: r.previousTeam,
       photoUrl: r.photoUrl,
     })),
-  )
-  if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)
+  ).catch((err) => {
+    console.error('[registrations] creating players failed:', err)
+    return null
+  })
+  if (!inserted) {
+    // Give the claimed rows back so the organizer can simply retry.
+    await db.playerRegistration.updateMany({ where: { id: { in: [...claimedIds] } }, data: { status: 'PENDING' } })
+    return jsonError(PLAYER_NUMBER_CONFLICT, 409)
+  }
 
-  // insertPlayersNumbered preserves input order, so rows line up with `pending`.
+  // insertPlayersNumbered preserves input order, so rows line up with `claimed`.
   await db.$transaction(
-    pending.map((r, i) =>
-      db.playerRegistration.update({ where: { id: r.id }, data: { status: 'APPROVED', playerId: inserted[i]?.id ?? null } }),
-    ),
+    claimed.map((r, i) => db.playerRegistration.update({ where: { id: r.id }, data: { playerId: inserted[i]?.id ?? null } })),
   )
   return Response.json({ approved: inserted.length })
 }

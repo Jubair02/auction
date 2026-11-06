@@ -3,6 +3,7 @@ import { isSport, type TournamentDetail } from '@/lib/types'
 import { jsonError } from '@/lib/auth'
 import {
   clampInt,
+  MAX_AMOUNT,
   coercePositiveInt,
   parseDateInput,
   readJson,
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
 
   if (body.basePrice !== undefined && body.basePrice !== null && body.basePrice !== '') {
     const basePrice = coercePositiveInt(body.basePrice)
-    if (!basePrice) return jsonError('Base price must be a positive integer (taka)', 400)
+    if (!basePrice) return jsonError('Base price must be a whole amount from ৳1 to ৳1,000,000,000', 400)
   }
 
   const optionalString = (v: unknown, max: number): string | null => {
@@ -109,7 +110,7 @@ export async function POST(req: Request) {
       startDate,
       auctionAt,
       auctionMode: auctionMode ?? 'CATEGORY',
-      basePrice: clampInt(body.basePrice ?? 10000, 1, Number.MAX_SAFE_INTEGER, 10000),
+      basePrice: clampInt(body.basePrice ?? 10000, 1, MAX_AMOUNT, 10000),
       status: 'DRAFT',
       organizerId: user.id,
     },

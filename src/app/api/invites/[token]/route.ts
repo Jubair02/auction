@@ -1,7 +1,8 @@
 import { db } from '@/lib/db'
 import { getSessionUser, jsonError } from '@/lib/auth'
 import { hashOneTimeToken } from '@/lib/crypto'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
+import { isUniqueViolation, ONE_TEAM_PER_MANAGER } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
@@ -10,7 +11,7 @@ type RouteParams = { params: Promise<{ token: string }> }
 const INVALID = 'This invite link is invalid or has expired. Ask the organizer for a new one.'
 
 async function findInvite(req: Request, token: string) {
-  const retryAfter = rateLimit(clientKey(req, 'invite'), 60, 10 * 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'invite'), 60, 10 * 60 * 1000)
   if (retryAfter !== null) return { response: jsonError(`Too many attempts. Please try again in ${retryAfter} seconds.`, 429) }
   if (token.length < 20 || token.length > 200) return { response: jsonError(INVALID, 404) }
 
@@ -63,10 +64,17 @@ export async function POST(req: Request, { params }: RouteParams) {
 
   // Single use, and the organizer's invite wins over any earlier claim — the
   // previous manager's seat is revoked by the socket service on their next bid.
-  const accepted = await db.team.updateMany({
-    where: { id: team.id, inviteTokenHash: hashOneTimeToken(token) },
-    data: { managerUserId: user.id, inviteTokenHash: null, inviteExpiresAt: null },
-  })
+  let accepted: { count: number }
+  try {
+    accepted = await db.team.updateMany({
+      where: { id: team.id, inviteTokenHash: hashOneTimeToken(token) },
+      data: { managerUserId: user.id, inviteTokenHash: null, inviteExpiresAt: null },
+    })
+  } catch (err) {
+    // Unique (tournamentId, managerUserId): two invites accepted at once by one manager.
+    if (isUniqueViolation(err)) return jsonError(ONE_TEAM_PER_MANAGER, 409)
+    throw err
+  }
   if (accepted.count !== 1) return jsonError(INVALID, 404)
 
   return Response.json({

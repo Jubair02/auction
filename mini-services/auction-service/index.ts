@@ -82,6 +82,54 @@ function throttled(socket: Socket, scope: keyof typeof LIMITS): boolean {
   return true
 }
 
+// ---------- seat re-validation ----------
+// Seat passes live for hours, so the account behind an organizer or manager
+// seat is re-checked on join and — at most every SEAT_RECHECK_MS — before each
+// bid and organizer action. A blocked account, a password reset (sessionVersion
+// bump) or an organizer who no longer owns the tournament is cut off within
+// seconds, even on a connection that was already open.
+const SEAT_RECHECK_MS = 5_000
+// Contains "pass": the room page treats that as a stale seat and re-seats a
+// still-valid organizer automatically, or sends others back to the join card.
+const SEAT_REVOKED = 'Your seat pass is no longer valid — log in again to rejoin.'
+
+async function seatRevokedReason(identity: SocketIdentity, tournamentId: string): Promise<string | null> {
+  if (identity.role !== 'MANAGER' && identity.role !== 'ORGANIZER') return null
+  const user = identity.userId
+    ? await db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true, sessionVersion: true } })
+    : null
+  if (!user || user.status !== 'ACTIVE') return SEAT_REVOKED
+  // Passes issued before session versions carry none and count as 0.
+  if ((identity.sv ?? 0) !== user.sessionVersion) return SEAT_REVOKED
+  if (identity.role === 'ORGANIZER' && user.role !== 'ADMIN') {
+    const tournament = await db.tournament.findUnique({ where: { id: tournamentId }, select: { organizerId: true } })
+    if (tournament?.organizerId !== identity.userId) return SEAT_REVOKED
+  }
+  return null
+}
+
+/**
+ * True when the seat is no longer valid. The socket is unseated (no more
+ * actions, no more room broadcasts) and told via `seat_revoked`; the client
+ * shows it as a join error, which re-seats a still-valid organizer or returns
+ * others to the join card. (Not a server-side disconnect: socket.io clients
+ * deliberately don't reconnect after one, leaving "Connecting…" forever.)
+ */
+async function seatRevoked(socket: Socket, identity: SocketIdentity): Promise<boolean> {
+  const checkedAt = (socket.data.seatCheckedAt as number | undefined) ?? 0
+  if (Date.now() - checkedAt < SEAT_RECHECK_MS) return false
+  const reason = await seatRevokedReason(identity, socket.data.tournamentId as string)
+  if (!reason) {
+    socket.data.seatCheckedAt = Date.now()
+    return false
+  }
+  socket.data.identity = undefined
+  socket.leave(`auction:${identity.auctionId}`)
+  await engine.leave(socket)
+  socket.emit('seat_revoked', { message: reason })
+  return true
+}
+
 io.use((socket, next) => {
   const { limit, windowMs } = LIMITS.connect
   const key = headerClientKey((name) => socket.handshake.headers[name], 'socket-connect', socket.handshake.address)
@@ -131,25 +179,13 @@ io.on('connection', (socket) => {
         }
       }
 
-      // Socket tokens live for hours; re-check the account behind a privileged
-      // seat so a blocked user or a former organizer is cut off on (re)join.
-      if (identity.role === 'MANAGER' || identity.role === 'ORGANIZER') {
-        const user = identity.userId
-          ? await db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true } })
-          : null
-        const tournament =
-          identity.role === 'ORGANIZER'
-            ? await db.tournament.findUnique({ where: { id: auction.tournamentId }, select: { organizerId: true } })
-            : null
-        const allowed =
-          !!user &&
-          user.status === 'ACTIVE' &&
-          (identity.role === 'MANAGER' || user.role === 'ADMIN' || tournament?.organizerId === identity.userId)
-        if (!allowed) return ack?.({ ok: false, error: 'Your access to this seat has been revoked — log in again.' })
-      }
+      const revoked = await seatRevokedReason(identity, auction.tournamentId)
+      if (revoked) return ack?.({ ok: false, error: revoked })
 
       const state = await engine.joinRoom(socket, identity, auction.id)
       socket.data.identity = identity
+      socket.data.tournamentId = auction.tournamentId
+      socket.data.seatCheckedAt = Date.now()
       return ack?.({ ok: true, state })
     } catch (err) {
       console.error('[auction-service] join_room failed:', err)
@@ -163,6 +199,7 @@ io.on('connection', (socket) => {
       if (!identity) return emitError(socket, 'Join the room first')
       if (identity.role !== 'MANAGER') return emitError(socket, 'Only team managers can bid')
       if (throttled(socket, 'bid')) return
+      if (await seatRevoked(socket, identity)) return
       await engine.placeBid(socket, identity, data?.amount)
     } catch (err) {
       console.error('[auction-service] place_bid failed:', err)
@@ -176,6 +213,7 @@ io.on('connection', (socket) => {
       if (!identity) return emitError(socket, 'Join the room first')
       if (identity.role !== 'ORGANIZER') return emitError(socket, 'Only the organizer can perform this action')
       if (throttled(socket, 'action')) return
+      if (await seatRevoked(socket, identity)) return
       await engine.organizerAction(socket, identity, data?.action, data?.payload)
     } catch (err) {
       console.error('[auction-service] organizer_action failed:', err)
@@ -192,6 +230,16 @@ io.on('connection', (socket) => {
 const PORT = Number(process.env.PORT) || 3003
 httpServer.listen(PORT, () => {
   console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/")`)
+  // In production the website (e.g. on Vercel) is on another origin; without
+  // ALLOWED_ORIGINS every browser connection is refused and rooms never join.
+  if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS?.trim()) {
+    console.warn(
+      '[auction-service] WARNING: ALLOWED_ORIGINS is not set. Browsers on your website\'s domain will be refused ' +
+        '(only same-origin gateway setups work). Set ALLOWED_ORIGINS="https://your-site.example". See DEPLOY.md.',
+    )
+  } else if (ALLOWED_ORIGINS.length > 0) {
+    console.log(`[auction-service] allowed browser origins: ${ALLOWED_ORIGINS.join(', ')}`)
+  }
   // Must equal the "secret" value from the website's /api/health.
   console.log(`[auction-service] AUCTION_SECRET fingerprint: ${secretFingerprint()}`)
 })

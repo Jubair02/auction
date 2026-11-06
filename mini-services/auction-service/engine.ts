@@ -1479,8 +1479,11 @@ export class AuctionEngine {
    */
   private async resyncPool(room: Room): Promise<void> {
     try {
-      const [auctionRow, teams, players, squadGroups] = await Promise.all([
+      const [auctionRow, tournamentRow, teams, players, squadGroups] = await Promise.all([
         this.db.auction.findUnique({ where: { id: room.auctionId } }),
+        // The organizer may switch auction mode (or sport) through the REST
+        // API after the room was first opened but before the auction starts.
+        this.db.tournament.findUnique({ where: { id: room.tournament.id } }),
         this.db.team.findMany({ where: { tournamentId: room.tournament.id }, orderBy: { name: 'asc' } }),
         this.db.player.findMany({
           where: { tournamentId: room.tournament.id },
@@ -1496,6 +1499,7 @@ export class AuctionEngine {
       for (const g of squadGroups) if (g.soldToTeamId) counts.set(g.soldToTeamId, g._count._all)
       room.teams = teams.map((t) => ({ ...t, squadCount: counts.get(t.id) ?? 0 }))
       room.players = players
+      if (tournamentRow) room.tournament = tournamentRow
       if (auctionRow) this.applySettings(room, auctionRow)
     } catch {
       // keep the previous cache — a stale pool beats dropping the live room

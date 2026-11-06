@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { getSessionUser } from '@/lib/auth'
 import { DEMO_ROOM_CODE } from '@/lib/demo'
-import { clientKey, rateLimit, rateLimitBlocked } from '@/lib/rate-limit'
+import { clientKey, rateLimit, rateLimitBlocked } from '@/lib/rate-limit-shared'
 import type { RoomInfo, RoomTeamInfo } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -25,7 +25,7 @@ const tooMany = (seconds: number) =>
 export async function GET(req: Request, { params }: RouteParams) {
   const missKey = clientKey(req, 'room-miss')
   const blocked =
-    rateLimitBlocked(missKey, MISSES_PER_WINDOW) ?? rateLimit(clientKey(req, 'room-lookup'), LOOKUPS_PER_MINUTE, 60 * 1000)
+    await rateLimitBlocked(missKey, MISSES_PER_WINDOW) ?? await rateLimit(clientKey(req, 'room-lookup'), LOOKUPS_PER_MINUTE, 60 * 1000)
   if (blocked !== null) return tooMany(blocked)
 
   const { code } = await params
@@ -40,7 +40,7 @@ export async function GET(req: Request, { params }: RouteParams) {
   if (!auction) {
     // The join page asks for the demo room on every visit; in an unseeded
     // database that miss must not use up the visitor's wrong-code budget.
-    if (roomCode !== DEMO_ROOM_CODE) rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
+    if (roomCode !== DEMO_ROOM_CODE) await rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
     return Response.json({ error: 'Room not found. Check the code and try again.' }, { status: 404 })
   }
 
@@ -74,7 +74,9 @@ export async function GET(req: Request, { params }: RouteParams) {
       maxSquad: t.maxSquad,
       minSquad: t.minSquad,
       captainName: t.captainName,
-      managerUserId: t.managerUserId,
+      // Public endpoint: say whether a team is taken, never by which account.
+      claimed: t.managerUserId !== null,
+      isMine: !!sessionUser && t.managerUserId === sessionUser.id,
     })),
     myRole,
     allowOpenClaim: auction.allowOpenClaim,

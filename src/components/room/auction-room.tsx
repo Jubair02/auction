@@ -8,6 +8,7 @@ import { useAppStore } from '@/lib/store'
 import { useFullscreen } from '@/lib/use-fullscreen'
 import {
   clearRoomIdentity,
+  seatBelongsTo,
   loadRoomIdentity,
   saveRoomIdentity,
   useAuctionSocket,
@@ -15,6 +16,16 @@ import {
 } from '@/lib/use-auction-socket'
 import type { AuctionStatus, JoinResult, RoomInfo, RoomState, RoomTeam } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -55,6 +66,10 @@ const STRINGS = {
     status: { READY: 'Ready', LIVE: 'Live', PAUSED: 'Paused', ENDED: 'Ended' },
     role: { ORGANIZER: 'organizer', MANAGER: 'manager', VIEWER: 'viewer' },
     leave: 'Leave',
+    leaveTitle: 'Leave your bidding seat?',
+    leaveBody: 'You stop bidding for your team until you join the room again. The auction carries on without you.',
+    leaveConfirm: 'Leave seat',
+    cancel: 'Cancel',
     live: 'Live',
     joining: 'Joining…',
     connecting: 'Connecting…',
@@ -63,6 +78,13 @@ const STRINGS = {
     tabActivity: 'Activity',
     fullScreen: 'Full screen',
     exitFullScreen: 'Exit full screen',
+    poolCounts: 'Player pool counts',
+    kpiAvailable: 'Available',
+    kpiSold: 'Sold',
+    kpiUnsold: 'Unsold',
+    kpiSkipped: 'Skipped',
+    kpiTotal: 'Total',
+    organizerSeat: 'Organizer seat',
   },
   bn: {
     unreachable: 'রুমে পৌঁছানো যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।',
@@ -88,6 +110,10 @@ const STRINGS = {
     status: { READY: 'প্রস্তুত', LIVE: 'লাইভ', PAUSED: 'বিরতি', ENDED: 'শেষ' },
     role: { ORGANIZER: 'আয়োজক', MANAGER: 'ম্যানেজার', VIEWER: 'দর্শক' },
     leave: 'বের হন',
+    leaveTitle: 'বিডিং সিট ছেড়ে দেবেন?',
+    leaveBody: 'আবার রুমে যোগ না দেওয়া পর্যন্ত আপনি আপনার দলের হয়ে বিড করতে পারবেন না। নিলাম আপনাকে ছাড়াই চলবে।',
+    leaveConfirm: 'সিট ছাড়ুন',
+    cancel: 'বাতিল',
     live: 'লাইভ',
     joining: 'যোগ দিচ্ছে…',
     connecting: 'সংযোগ হচ্ছে…',
@@ -96,6 +122,13 @@ const STRINGS = {
     tabActivity: 'অ্যাক্টিভিটি',
     fullScreen: 'ফুল স্ক্রিন',
     exitFullScreen: 'ফুল স্ক্রিন বন্ধ করুন',
+    poolCounts: 'খেলোয়াড় পুলের হিসাব',
+    kpiAvailable: 'উপলব্ধ',
+    kpiSold: 'বিক্রি',
+    kpiUnsold: 'অবিক্রিত',
+    kpiSkipped: 'বাদ',
+    kpiTotal: 'মোট',
+    organizerSeat: 'আয়োজকের আসন',
   },
 } satisfies Strings<{
   unreachable: string
@@ -121,6 +154,10 @@ const STRINGS = {
   status: Record<AuctionStatus, string>
   role: Record<'ORGANIZER' | 'MANAGER' | 'VIEWER', string>
   leave: string
+  leaveTitle: string
+  leaveBody: string
+  leaveConfirm: string
+  cancel: string
   live: string
   joining: string
   connecting: string
@@ -129,6 +166,13 @@ const STRINGS = {
   tabActivity: string
   fullScreen: string
   exitFullScreen: string
+  poolCounts: string
+  kpiAvailable: string
+  kpiSold: string
+  kpiUnsold: string
+  kpiSkipped: string
+  kpiTotal: string
+  organizerSeat: string
 }>
 
 /** fatalError marker for a network failure — rendered in the viewer's language. */
@@ -177,7 +221,10 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         setInfo(res)
 
         const stored = loadRoomIdentity(roomCode)
-        if (stored) {
+        // Only the account the seat was issued to may reuse it (shared phones at a venue).
+        if (stored && !seatBelongsTo(stored, useAppStore.getState().user?.id ?? null)) {
+          clearRoomIdentity(roomCode)
+        } else if (stored) {
           setIdentity(stored)
           setToken(stored.socketToken)
           setPhase('live')
@@ -192,6 +239,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
               name: useAppStore.getState().user?.name ?? 'Organizer',
               socketToken: jr.socketToken,
               at: Date.now(),
+              userId: useAppStore.getState().user?.id ?? null,
             }
             saveRoomIdentity(roomCode, ident)
             setIdentity(ident)
@@ -228,6 +276,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
       teamName: result.identity?.teamName,
       socketToken: result.socketToken,
       at: Date.now(),
+      userId: useAppStore.getState().user?.id ?? null,
     }
     saveRoomIdentity(roomCode, ident)
     setIdentity(ident)
@@ -252,6 +301,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         name: useAppStore.getState().user?.name ?? 'Organizer',
         socketToken: jr.socketToken,
         at: Date.now(),
+        userId: useAppStore.getState().user?.id ?? null,
       }
       saveRoomIdentity(roomCode, ident)
       setIdentity(ident)
@@ -481,11 +531,8 @@ function ViewerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
   const t = useStrings(STRINGS)
   return (
     <div className="mt-4 space-y-5">
-      <AuctionStage
-        state={state}
-        clockOffset={sock.clockOffset}
-        onViewResults={() => navigate(`/results/${state.tournamentId}`)}
-      />
+      {/* No "View results" for viewers: the results page needs an organizer or team-manager login. */}
+      <AuctionStage state={state} clockOffset={sock.clockOffset} />
       <p className="flex items-center justify-center gap-1.5 rounded-full border border-dashed bg-muted/40 px-4 py-2 text-center text-sm text-muted-foreground">
         <Eye className="h-4 w-4" aria-hidden />
         {t.watchingNote}
@@ -558,15 +605,16 @@ function RoomSideTabs({
 }
 
 function PoolKpiStrip({ state }: { state: LiveState }) {
+  const t = useStrings(STRINGS)
   const items = [
-    { label: 'Available', value: state.pool.available, tone: 'text-emerald-700' },
-    { label: 'Sold', value: state.pool.sold, tone: 'text-teal-700' },
-    { label: 'Unsold', value: state.pool.unsold, tone: 'text-rose-700' },
-    { label: 'Skipped', value: state.pool.skipped, tone: 'text-slate-600' },
-    { label: 'Total', value: state.pool.total, tone: 'text-foreground' },
+    { label: t.kpiAvailable, value: state.pool.available, tone: 'text-emerald-700' },
+    { label: t.kpiSold, value: state.pool.sold, tone: 'text-teal-700' },
+    { label: t.kpiUnsold, value: state.pool.unsold, tone: 'text-rose-700' },
+    { label: t.kpiSkipped, value: state.pool.skipped, tone: 'text-slate-600' },
+    { label: t.kpiTotal, value: state.pool.total, tone: 'text-foreground' },
   ]
   return (
-    <div className="grid grid-cols-5 divide-x rounded-xl border bg-card" aria-label="Player pool counts">
+    <div className="grid grid-cols-5 divide-x rounded-xl border bg-card" aria-label={t.poolCounts}>
       {items.map((i) => (
         <div key={i.label} className="px-1 py-2.5 text-center">
           <p className={cn('text-lg font-black leading-tight tabular-nums sm:text-xl', i.tone)}>{i.value}</p>
@@ -596,6 +644,7 @@ function RoomHeader({
   onLeave?: () => void
 }) {
   const t = useStrings(STRINGS)
+  const [confirmLeave, setConfirmLeave] = useState(false)
   const fullscreen = useFullscreen()
   const status = liveStatus ?? info.status
   return (
@@ -657,12 +706,32 @@ function RoomHeader({
           </Button>
         ) : null}
         {onLeave ? (
-          <Button variant="ghost" size="sm" className="h-9 text-muted-foreground hover:text-foreground" onClick={onLeave}>
-            <LogOut className="mr-1.5 h-3.5 w-3.5" /> {t.leave}
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 text-muted-foreground hover:text-foreground"
+              // A manager leaving mid-auction loses their bidding seat — confirm first.
+              onClick={() => (role === 'MANAGER' ? setConfirmLeave(true) : onLeave())}
+            >
+              <LogOut className="mr-1.5 h-3.5 w-3.5" /> {t.leave}
+            </Button>
+            <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t.leaveTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>{t.leaveBody}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
+                  <AlertDialogAction onClick={onLeave}>{t.leaveConfirm}</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
         ) : (
           <span className="hidden items-center gap-1 text-xs font-semibold text-muted-foreground md:flex">
-            <Gavel className="h-3.5 w-3.5 text-primary" aria-hidden /> Organizer seat
+            <Gavel className="h-3.5 w-3.5 text-primary" aria-hidden /> {t.organizerSeat}
           </span>
         )}
       </div>

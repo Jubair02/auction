@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { apiGet, apiPost } from '@/lib/api'
 import { clearCached } from '@/lib/api-cache'
 import { navigate } from '@/lib/router'
+import { clearAllRoomIdentities } from '@/lib/use-auction-socket'
 import type { SafeUser } from '@/lib/types'
 
 interface AppState {
@@ -49,6 +50,8 @@ export const useAppStore = create<AppState>((set, get) => {
         // ignore
       }
       applyUser(null)
+      // Saved room seats belong to this account — never leave them for the next person in this tab.
+      clearAllRoomIdentities()
       if (typeof window !== 'undefined') navigate('/')
     },
   }

@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { verifyPassword } from '@/lib/crypto'
-import { createSessionToken, setSessionCookie, jsonError } from '@/lib/auth'
+import { createSession, setSessionCookie, jsonError } from '@/lib/auth'
 import { readJson, toSafeUser } from '../../_lib/helpers'
-import { clientKey, rateLimit, rateLimitReset } from '@/lib/rate-limit'
+import { clientKey, rateLimit, rateLimitReset } from '@/lib/rate-limit-shared'
 
 export const runtime = 'nodejs'
 
@@ -14,7 +14,7 @@ const loginSchema = z.object({
 
 export async function POST(req: Request) {
   const key = clientKey(req, 'login')
-  const retryAfter = rateLimit(key, 10, 5 * 60 * 1000)
+  const retryAfter = await rateLimit(key, 10, 5 * 60 * 1000)
   if (retryAfter !== null) {
     return jsonError(`Too many login attempts. Please try again in ${retryAfter} seconds.`, 429)
   }
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     return jsonError('Your account has been blocked. Please contact support.', 403)
   }
 
-  rateLimitReset(key)
-  await setSessionCookie(createSessionToken(user.id, user.role as 'ADMIN' | 'ORGANIZER' | 'MANAGER', user.sessionVersion))
+  await rateLimitReset(key)
+  await setSessionCookie(await createSession(user.id, user.role as 'ADMIN' | 'ORGANIZER' | 'MANAGER', user.sessionVersion))
   return Response.json({ user: toSafeUser(user) })
 }

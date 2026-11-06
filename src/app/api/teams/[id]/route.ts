@@ -4,6 +4,9 @@ import {
   auctionInProgress,
   coerceInt,
   coercePositiveInt,
+  IMAGE_URL_ERROR,
+  isUniqueViolation,
+  parseImageUrl,
   loadTeamForOwner,
   readJson,
   requireSession,
@@ -32,8 +35,11 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   // Mid-auction the engine has already validated bids against the current
   // purse and squad limits: only loosening them (more budget, more slots) is safe.
   if (await auctionInProgress(team.tournamentId)) {
-    const lowersBudget = body.budget !== undefined && (coercePositiveInt(body.budget) ?? 0) < team.budget
-    const lowersMax = body.maxSquad !== undefined && (coercePositiveInt(body.maxSquad) ?? 0) < team.maxSquad
+    // Invalid values (null) fall through to the normal validation below, which explains the allowed range.
+    const newBudget = body.budget !== undefined ? coercePositiveInt(body.budget) : null
+    const newMax = body.maxSquad !== undefined ? coercePositiveInt(body.maxSquad) : null
+    const lowersBudget = newBudget !== null && newBudget < team.budget
+    const lowersMax = newMax !== null && newMax < team.maxSquad
     const changesMin = body.minSquad !== undefined && coerceInt(body.minSquad) !== team.minSquad
     if (lowersBudget || lowersMax || changesMin) {
       return jsonError(
@@ -62,7 +68,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   if (body.budget !== undefined) {
     const budget = coercePositiveInt(body.budget)
-    if (!budget) return jsonError('Budget must be a positive integer (taka)', 400)
+    if (!budget) return jsonError('Budget must be a whole amount from ৳1 to ৳1,000,000,000', 400)
     if (budget < team.spent) {
       return jsonError('Budget cannot be lower than the amount already spent on players', 409)
     }
@@ -71,7 +77,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   const effectiveMax = body.maxSquad !== undefined ? coercePositiveInt(body.maxSquad) : team.maxSquad
   if (body.maxSquad !== undefined && !effectiveMax) {
-    return jsonError('maxSquad must be a positive integer', 400)
+    return jsonError('maxSquad must be a positive whole number', 400)
   }
   if (body.maxSquad !== undefined) {
     // A squad cap below the players already bought would leave the team in a
@@ -103,10 +109,10 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         ? body.captainName.trim().slice(0, 60)
         : null
   }
-  if (body.logoUrl !== undefined) {
-    data.logoUrl =
-      typeof body.logoUrl === 'string' && body.logoUrl.trim() !== '' ? body.logoUrl.trim().slice(0, 500) : null
-  }
+  const logoUrl = parseImageUrl(body.logoUrl)
+  // An old pasted link sent back unchanged is kept rather than blocking the save.
+  if (logoUrl === false && body.logoUrl !== team.logoUrl) return jsonError(IMAGE_URL_ERROR, 400)
+  if (logoUrl !== undefined && logoUrl !== false) data.logoUrl = logoUrl
 
   if (body.managerUserId !== undefined) {
     if (body.managerUserId === null || body.managerUserId === '') {
@@ -135,14 +141,21 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   if (Object.keys(data).length === 0) return jsonError('No valid fields to update', 400)
 
-  const updated = await db.team.update({
-    where: { id },
-    data,
-    include: {
-      _count: { select: { players: { where: { status: 'SOLD' } } } },
-      manager: { select: { name: true, email: true } },
-    },
-  })
+  let updated
+  try {
+    updated = await db.team.update({
+      where: { id },
+      data,
+      include: {
+        _count: { select: { players: { where: { status: 'SOLD' } } } },
+        manager: { select: { name: true, email: true } },
+      },
+    })
+  } catch (err) {
+    // Unique (tournamentId, managerUserId): that manager was linked to another team meanwhile.
+    if (isUniqueViolation(err)) return jsonError('That manager already runs another team in this tournament.', 409)
+    throw err
+  }
   return Response.json({ team: serializeTeam(updated) })
 }
 

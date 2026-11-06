@@ -11,6 +11,7 @@ import { TeamAvatar } from '@/components/shared/avatars'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
+import { DASHBOARD_PATH } from '@/lib/access'
 import { useAppStore } from '@/lib/store'
 import { type Strings, useStrings } from '@/lib/i18n'
 
@@ -102,7 +103,8 @@ export default function AcceptInvite({ token }: { token: string }) {
   }, [token])
 
   function goToAuth(to: '/login' | '/register') {
-    setReturnTo(`/invite/${token}`)
+    // Keep the secret in the fragment (never sent to the server) through the login round-trip.
+    setReturnTo(`/invite#${token}`)
     navigate(to)
   }
 
@@ -112,7 +114,7 @@ export default function AcceptInvite({ token }: { token: string }) {
     try {
       const res = await apiPost<AcceptResult>(`/api/invites/${encodeURIComponent(token)}`, {})
       toast.success(t.nowManage(res.teamName))
-      navigate(res.roomCode ? `/room/${res.roomCode}` : '/my-team')
+      navigate(res.roomCode ? `/room/${res.roomCode}` : DASHBOARD_PATH)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t.acceptFailed)
     } finally {

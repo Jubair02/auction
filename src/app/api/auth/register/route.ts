@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/crypto'
-import { createSessionToken, setSessionCookie, jsonError } from '@/lib/auth'
-import { readJson, toSafeUser, EMAIL_RE } from '../../_lib/helpers'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { createSession, setSessionCookie, jsonError } from '@/lib/auth'
+import { isUniqueViolation, readJson, toSafeUser, EMAIL_RE } from '../../_lib/helpers'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 
 export const runtime = 'nodejs'
 
@@ -16,7 +16,7 @@ const registerSchema = z.object({
 })
 
 export async function POST(req: Request) {
-  const retryAfter = rateLimit(clientKey(req, 'register'), 5, 60 * 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'register'), 5, 60 * 60 * 1000)
   if (retryAfter !== null) {
     return jsonError(`Too many accounts created from here. Please try again in ${retryAfter} seconds.`, 429)
   }
@@ -33,17 +33,24 @@ export async function POST(req: Request) {
   const existing = await db.user.findUnique({ where: { email } })
   if (existing) return jsonError('An account with this email already exists', 409)
 
-  const user = await db.user.create({
-    data: {
-      name,
-      email, // already lowercased
-      phone: phone || null,
-      passwordHash: hashPassword(password),
-      role,
-      status: 'ACTIVE',
-    },
-  })
+  let user
+  try {
+    user = await db.user.create({
+      data: {
+        name,
+        email, // already lowercased
+        phone: phone || null,
+        passwordHash: hashPassword(password),
+        role,
+        status: 'ACTIVE',
+      },
+    })
+  } catch (err) {
+    // Two sign-ups with the same email at the same moment: the check above can't catch it.
+    if (isUniqueViolation(err)) return jsonError('An account with this email already exists', 409)
+    throw err
+  }
 
-  await setSessionCookie(createSessionToken(user.id, user.role as 'ORGANIZER' | 'MANAGER', user.sessionVersion))
+  await setSessionCookie(await createSession(user.id, user.role as 'ORGANIZER' | 'MANAGER', user.sessionVersion))
   return Response.json({ user: toSafeUser(user) }, { status: 201 })
 }

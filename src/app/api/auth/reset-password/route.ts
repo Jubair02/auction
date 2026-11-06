@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { hashOneTimeToken, hashPassword } from '@/lib/crypto'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 import { readJson } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -17,7 +17,7 @@ const INVALID_LINK = 'This reset link is invalid or has expired. Request a new o
 
 // POST /api/auth/reset-password {token, password}
 export async function POST(req: Request) {
-  const retryAfter = rateLimit(clientKey(req, 'reset-password'), 10, 15 * 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'reset-password'), 10, 15 * 60 * 1000)
   if (retryAfter !== null) {
     return jsonError(`Too many attempts. Please try again in ${retryAfter} seconds.`, 429)
   }

@@ -14,9 +14,38 @@ export interface SessionUser {
   role: UserRole
 }
 
-/** `sessionVersion` is the user's current value — bumping it in the DB revokes this token. */
-export function createSessionToken(userId: string, role: UserRole, sessionVersion: number): string {
-  return signToken({ sub: userId, role, sv: sessionVersion }, SESSION_TTL)
+/**
+ * Starts a session: one Session row per login, named in the cookie (`sid`).
+ * Logging out revokes exactly that row, so a copied cookie stops working
+ * while the user's other devices stay signed in. `sessionVersion` is still
+ * embedded — a password reset bumps it and ends every session at once.
+ */
+export async function createSession(userId: string, role: UserRole, sessionVersion: number): Promise<string> {
+  const session = await db.session.create({
+    data: { userId, expiresAt: new Date(Date.now() + SESSION_TTL * 1000) },
+    select: { id: true },
+  })
+  // Occasionally drop long-dead rows so the table stays small.
+  if (Math.random() < 0.02) {
+    void db.session
+      .deleteMany({ where: { expiresAt: { lt: new Date(Date.now() - 24 * 3600 * 1000) } } })
+      .catch(() => undefined)
+  }
+  return signToken({ sub: userId, role, sv: sessionVersion, sid: session.id }, SESSION_TTL)
+}
+
+/** Logout: revokes the session named in the current cookie (if any), then clears the cookie. */
+export async function endCurrentSession(): Promise<void> {
+  try {
+    const token = (await cookies()).get(SESSION_COOKIE)?.value
+    const payload = token ? verifyToken<{ sid?: string }>(token) : null
+    if (payload?.sid) {
+      await db.session.updateMany({ where: { id: payload.sid, revokedAt: null }, data: { revokedAt: new Date() } })
+    }
+  } catch {
+    // still clear the cookie below
+  }
+  await clearSessionCookie()
 }
 
 export async function setSessionCookie(token: string) {
@@ -36,6 +65,15 @@ export async function clearSessionCookie() {
 }
 
 export async function getSessionUser(): Promise<SafeUser | null> {
+  return (await getSessionUserWithVersion())?.user ?? null
+}
+
+/**
+ * The session user plus their current session version — put into live-auction
+ * seat passes so the socket service can tell when the account was signed out
+ * everywhere (password reset) after the pass was issued. Server-side only.
+ */
+export async function getSessionUserWithVersion(): Promise<{ user: SafeUser; sessionVersion: number } | null> {
   // A missing AUCTION_SECRET must surface as a server error, not be swallowed
   // below and silently log everyone out.
   getAuctionSecret()
@@ -43,20 +81,27 @@ export async function getSessionUser(): Promise<SafeUser | null> {
     const store = await cookies()
     const token = store.get(SESSION_COOKIE)?.value
     if (!token) return null
-    const payload = verifyToken<{ sub: string; role: UserRole; sv?: number }>(token)
-    if (!payload?.sub) return null
-    const user = await db.user.findUnique({ where: { id: payload.sub } })
-    if (!user || user.status === 'BLOCKED') return null
+    const payload = verifyToken<{ sub: string; role: UserRole; sv?: number; sid?: string }>(token)
+    // Cookies from before server-side sessions carry no `sid`; they are no
+    // longer accepted (they could never be revoked) — the user just logs in again.
+    if (!payload?.sub || !payload.sid) return null
+    const session = await db.session.findUnique({ where: { id: payload.sid }, include: { user: true } })
+    if (!session || session.revokedAt || session.expiresAt <= new Date() || session.userId !== payload.sub) return null
+    const user = session.user
+    if (user.status === 'BLOCKED') return null
     // Cookies issued before session versioning carry no `sv` and count as 0.
     if ((payload.sv ?? 0) !== user.sessionVersion) return null
     return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role as UserRole,
-      status: user.status as SafeUser['status'],
-      createdAt: user.createdAt.toISOString(),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role as UserRole,
+        status: user.status as SafeUser['status'],
+        createdAt: user.createdAt.toISOString(),
+      },
+      sessionVersion: user.sessionVersion,
     }
   } catch {
     return null

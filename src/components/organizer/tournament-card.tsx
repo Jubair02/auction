@@ -1,27 +1,67 @@
 'use client'
 
 import { CalendarClock, Copy, Trophy, Users } from 'lucide-react'
-import { toast } from 'sonner'
+import { copyText } from '@/lib/clipboard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { formatAuctionWhen } from '@/lib/format'
-import { isDone, isLive, plural } from '@/lib/tournament-status'
+import { isDone, isLive } from '@/lib/tournament-status'
 import { cn } from '@/lib/utils'
 import { sportLabel, type TournamentSummary } from '@/lib/types'
+import { type Lang, type Strings, useLang, useStrings } from '@/lib/i18n'
 
-export const MODE_LABELS: Record<string, string> = {
-  CATEGORY: 'Category A–E',
-  NORMAL: 'Normal',
-}
+const STRINGS = {
+  en: {
+    codeCopied: 'Room code copied',
+    underWay: 'Auction under way',
+    held: (when: string) => `Held ${when}`,
+    wasDue: (when: string) => `Was due ${when}`,
+    auctionAt: (when: string) => `Auction ${when}`,
+    noTime: 'No auction time set',
+    teams: (n: number) => `${n} team${n === 1 ? '' : 's'}`,
+    noPlayers: 'No players yet',
+    soldOf: (sold: number, total: number) => `${sold} of ${total} player${total === 1 ? '' : 's'} sold`,
+    soldPct: (pct: number) => `${pct}% of players sold`,
+    roomCode: 'Room code',
+    copyCode: (code: string) => `Copy room code ${code}`,
+    noRoom: 'No room yet — set up auction',
+  },
+  bn: {
+    codeCopied: 'রুম কোড কপি হয়েছে',
+    underWay: 'নিলাম চলছে',
+    held: (when: string) => `অনুষ্ঠিত: ${when}`,
+    wasDue: (when: string) => `নির্ধারিত ছিল: ${when}`,
+    auctionAt: (when: string) => `নিলাম: ${when}`,
+    noTime: 'নিলামের সময় ঠিক হয়নি',
+    teams: (n: number) => `${n}টি দল`,
+    noPlayers: 'এখনো কোনো খেলোয়াড় নেই',
+    soldOf: (sold: number, total: number) => `${total} জন খেলোয়াড়ের ${sold} জন বিক্রি`,
+    soldPct: (pct: number) => `${pct}% খেলোয়াড় বিক্রি`,
+    roomCode: 'রুম কোড',
+    copyCode: (code: string) => `রুম কোড ${code} কপি করুন`,
+    noRoom: 'এখনো রুম নেই — নিলাম সেট আপ করুন',
+  },
+} satisfies Strings<{
+  codeCopied: string
+  underWay: string
+  held: (when: string) => string
+  wasDue: (when: string) => string
+  auctionAt: (when: string) => string
+  noTime: string
+  teams: (n: number) => string
+  noPlayers: string
+  soldOf: (sold: number, total: number) => string
+  soldPct: (pct: number) => string
+  roomCode: string
+  copyCode: (code: string) => string
+  noRoom: string
+}>
 
-export function copyRoomCode(code: string) {
-  void navigator.clipboard
-    .writeText(code)
-    .then(() => toast.success('Room code copied'))
-    .catch(() => toast.error('Could not copy — please copy manually'))
+export function copyRoomCode(code: string, lang: Lang = 'en') {
+  copyText(code, STRINGS[lang].codeCopied)
 }
 
 export function TournamentCard({
@@ -38,6 +78,8 @@ export function TournamentCard({
   const done = isDone(t)
   // A date that has passed while the auction never ran needs the organizer's attention.
   const overdue = !!when?.past && !live && !done
+  const lang = useLang()
+  const s = useStrings(STRINGS)
 
   return (
     <Card className="flex h-full flex-col transition-shadow hover:shadow-md">
@@ -50,7 +92,7 @@ export function TournamentCard({
             <div className="min-w-0">
               <h3 className="truncate text-base font-bold leading-tight">{t.name}</h3>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {sportLabel(t.sport, 'en', t.sportName)}
+                {sportLabel(t.sport, lang, t.sportName)}
                 {t.tournamentType ? ` · ${t.tournamentType}` : ''}
                 {t.location ? ` · ${t.location}` : ''}
               </p>
@@ -64,44 +106,44 @@ export function TournamentCard({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className={cn('inline-flex items-center gap-1', overdue && 'font-medium text-amber-700 dark:text-amber-400')}>
             <CalendarClock className="h-3 w-3" aria-hidden />
-            {live ? 'Auction under way' : when ? `${done ? 'Held' : overdue ? 'Was due' : 'Auction'} ${when.text}` : 'No auction time set'}
+            {live ? s.underWay : when ? (done ? s.held : overdue ? s.wasDue : s.auctionAt)(when.text) : s.noTime}
           </span>
           <span className="inline-flex items-center gap-1">
-            <Users className="h-3 w-3" aria-hidden /> {plural(t.teamCount, 'team')}
+            <Users className="h-3 w-3" aria-hidden /> {s.teams(t.teamCount)}
           </span>
         </div>
 
         {t.playerCount === 0 ? (
-          <p className="text-xs text-muted-foreground">No players yet</p>
+          <p className="text-xs text-muted-foreground">{s.noPlayers}</p>
         ) : (
           <div>
             <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-              <span>{`${t.soldCount} of ${plural(t.playerCount, 'player')} sold`}</span>
+              <span>{s.soldOf(t.soldCount, t.playerCount)}</span>
               <span className="font-semibold tabular-nums">{soldPct}%</span>
             </div>
-            <Progress value={soldPct} aria-label={`${soldPct}% of players sold`} />
+            <Progress value={soldPct} aria-label={s.soldPct(soldPct)} />
           </div>
         )}
 
         {t.roomCode ? (
           <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Room code</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{s.roomCode}</p>
               <p className="truncate font-mono text-sm font-bold">{t.roomCode}</p>
             </div>
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8 shrink-0"
-              aria-label={`Copy room code ${t.roomCode}`}
-              onClick={() => copyRoomCode(t.roomCode as string)}
+              aria-label={s.copyCode(t.roomCode)}
+              onClick={() => copyRoomCode(t.roomCode as string, lang)}
             >
               <Copy className="h-4 w-4" aria-hidden />
             </Button>
           </div>
         ) : (
           <Badge variant="outline" className="w-fit text-xs text-muted-foreground">
-            No room yet — set up auction
+            {s.noRoom}
           </Badge>
         )}
       </CardContent>

@@ -24,13 +24,22 @@ function upgradeLegacyHashUrl(): void {
   if (hash.startsWith('#/')) window.history.replaceState(null, '', hash.slice(1) || '/')
 }
 
-/** Current path segments, e.g. ['room', 'BD26-DEMO']. Empty until mounted. */
-export function useRoute(): { segs: string[]; fragment: string } {
-  const [route, setRoute] = useState<{ segs: string[]; fragment: string }>({ segs: [], fragment: '' })
+/**
+ * Current path segments, e.g. ['room', 'BD26-DEMO']. `ready` is false until
+ * the URL has been read after mount (the server render can't know it) — show
+ * a neutral loader until then, never the landing page or the app chrome.
+ */
+export function useRoute(): { segs: string[]; fragment: string; ready: boolean } {
+  const [route, setRoute] = useState<{ segs: string[]; fragment: string; ready: boolean }>({
+    segs: [],
+    fragment: '',
+    ready: false,
+  })
 
   useEffect(() => {
     upgradeLegacyHashUrl()
-    const update = () => setRoute({ segs: currentSegs(), fragment: window.location.hash.replace(/^#/, '') })
+    const update = () =>
+      setRoute({ segs: currentSegs(), fragment: window.location.hash.replace(/^#/, ''), ready: true })
     update()
     window.addEventListener('popstate', update)
     window.addEventListener(NAV_EVENT, update)
@@ -44,12 +53,14 @@ export function useRoute(): { segs: string[]; fragment: string } {
 }
 
 // Where to land after login/register (e.g. back into the auction room the
-// user was trying to bid in). Per-tab, consumed once.
+// user was trying to bid in). Per-tab, consumed once, and short-lived: an
+// abandoned login must not drop a much later, ordinary login into an old room.
 const RETURN_TO_KEY = 'ng_return_to'
+const RETURN_TO_TTL_MS = 15 * 60 * 1000
 
 export function setReturnTo(route: string) {
   try {
-    sessionStorage.setItem(RETURN_TO_KEY, route)
+    sessionStorage.setItem(RETURN_TO_KEY, JSON.stringify({ route, at: Date.now() }))
   } catch {
     // storage unavailable — the user just lands on the dashboard
   }
@@ -57,9 +68,14 @@ export function setReturnTo(route: string) {
 
 export function peekReturnTo(): string | null {
   try {
-    return typeof window === 'undefined' ? null : sessionStorage.getItem(RETURN_TO_KEY)
+    if (typeof window === 'undefined') return null
+    const raw = sessionStorage.getItem(RETURN_TO_KEY)
+    if (!raw) return null
+    const saved = JSON.parse(raw) as { route?: unknown; at?: unknown }
+    if (typeof saved.route !== 'string' || typeof saved.at !== 'number') return null
+    return Date.now() - saved.at <= RETURN_TO_TTL_MS ? saved.route : null
   } catch {
-    return null
+    return null // includes values saved by older versions (plain strings)
   }
 }
 
@@ -89,9 +105,4 @@ export function navigate(to: string, { replace = false }: { replace?: boolean } 
     window.dispatchEvent(new Event(NAV_EVENT))
   }
   window.scrollTo(0, 0)
-}
-
-/** Absolute URL for sharing (WhatsApp, invites, emails built client-side). */
-export function shareUrl(path: string): string {
-  return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`
 }

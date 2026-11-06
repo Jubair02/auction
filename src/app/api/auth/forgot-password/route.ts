@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { generateOneTimeToken, hashOneTimeToken } from '@/lib/crypto'
 import { passwordResetEmail, sendEmail } from '@/lib/email'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 import { readJson } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -34,7 +34,7 @@ function appBaseUrl(req: Request): string | null {
 
 // POST /api/auth/forgot-password {email} — emails a single-use reset link
 export async function POST(req: Request) {
-  const retryAfter = rateLimit(clientKey(req, 'forgot-password'), 5, 15 * 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'forgot-password'), 5, 15 * 60 * 1000)
   if (retryAfter !== null) {
     return jsonError(`Too many reset requests. Please try again in ${retryAfter} seconds.`, 429)
   }
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
   const { email } = parsed.data
 
   // Per-address cap too, so one inbox cannot be flooded from many IPs.
-  if (rateLimit(`forgot-password-email:${email}`, 3, 60 * 60 * 1000) !== null) {
+  if (await rateLimit(`forgot-password-email:${email}`, 3, 60 * 60 * 1000) !== null) {
     return Response.json(GENERIC_OK)
   }
 

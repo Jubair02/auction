@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 import { rolesForTournament } from '@/lib/types'
 import { readJson } from '../../_lib/helpers'
 
@@ -19,7 +19,7 @@ async function findTournament(code: string) {
 
 // GET /api/register/:code — public info for the sign-up page
 export async function GET(req: Request, { params }: RouteParams) {
-  const retryAfter = rateLimit(clientKey(req, 'register-player-view'), 120, 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'register-player-view'), 120, 60 * 1000)
   if (retryAfter !== null) return jsonError(`Too many requests. Please try again in ${retryAfter} seconds.`, 429)
 
   const { code } = await params
@@ -57,7 +57,7 @@ const schema = z.object({
 
 // POST /api/register/:code — a player signs up; lands as PENDING for the organizer
 export async function POST(req: Request, { params }: RouteParams) {
-  const retryAfter = rateLimit(clientKey(req, 'register-player'), 10, 60 * 60 * 1000)
+  const retryAfter = await rateLimit(clientKey(req, 'register-player'), 10, 60 * 60 * 1000)
   if (retryAfter !== null) return jsonError(`Too many sign-ups from here. Please try again in ${retryAfter} seconds.`, 429)
 
   const { code } = await params

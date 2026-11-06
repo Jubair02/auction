@@ -13,6 +13,8 @@ import {
   serializePlayer,
   serializeTeam,
   serializeTournamentFull,
+  IMAGE_URL_ERROR,
+  parseImageUrl,
 } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -139,7 +141,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   if (body.basePrice !== undefined) {
     const basePrice = coercePositiveInt(body.basePrice)
-    if (!basePrice) return jsonError('Base price must be a positive integer (taka)', 400)
+    if (!basePrice) return jsonError('Base price must be a whole amount from ৳1 to ৳1,000,000,000', 400)
     data.basePrice = basePrice
   }
 
@@ -157,8 +159,12 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   }
   nullableString('tournamentType', 60)
   nullableString('description', 2000)
-  nullableString('logoUrl', 500)
-  nullableString('bannerUrl', 500)
+  for (const key of ['logoUrl', 'bannerUrl'] as const) {
+    const url = parseImageUrl(body[key])
+    // An old pasted link sent back unchanged is kept rather than blocking the save.
+    if (url === false && body[key] !== tournament[key]) return jsonError(IMAGE_URL_ERROR, 400)
+    if (url !== undefined && url !== false) data[key] = url
+  }
   nullableString('location', 120)
 
   for (const key of ['startDate', 'auctionAt'] as const) {

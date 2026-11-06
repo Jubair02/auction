@@ -7,10 +7,12 @@ import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, 
 import { Toaster as SonnerToaster, toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { apiGet } from '@/lib/api'
+import { useCachedGet } from '@/lib/api-cache'
 import { navigate, setReturnTo, useRoute } from '@/lib/router'
 import { useFullscreen } from '@/lib/use-fullscreen'
 import { canOpen, DASHBOARD_PATH, pageAccess } from '@/lib/access'
 import { type Strings, useLang, useLangBootstrap, useLangStore, useStrings } from '@/lib/i18n'
+import type { UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -58,9 +60,10 @@ function Redirect({ to, returnTo, notice }: { to: string; returnTo?: string; not
 }
 
 function CenterLoader() {
+  const t = useStrings(SHELL_STRINGS)
   return (
     <div className="flex min-h-[50vh] items-center justify-center gap-2 text-muted-foreground">
-      <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> Loading…
+      <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> {t.loading}
     </div>
   )
 }
@@ -79,23 +82,25 @@ function AccessPanel({ title, description, action }: { title: string; descriptio
 }
 
 function NotFound() {
+  const t = useStrings(SHELL_STRINGS)
   return (
     <AccessPanel
-      title="Page not found"
-      description="The page you are looking for does not exist."
-      action={<Button variant="outline" onClick={() => navigate('/')}>Back to home</Button>}
+      title={t.notFoundTitle}
+      description={t.notFoundDescription}
+      action={<Button variant="outline" onClick={() => navigate('/')}>{t.backHome}</Button>}
     />
   )
 }
 
 export default function AppRoot() {
-  const { segs, fragment } = useRoute()
+  const { segs, fragment, ready: routeReady } = useRoute()
   const user = useAppStore((s) => s.user)
   const authLoading = useAppStore((s) => s.authLoading)
   const authChecked = useAppStore((s) => s.authChecked)
   const fetchMe = useAppStore((s) => s.fetchMe)
   const logout = useAppStore((s) => s.logout)
   useLangBootstrap()
+  const siteSettings = useSiteSettings()
   const t = useStrings(SHELL_STRINGS)
 
   useEffect(() => {
@@ -171,6 +176,11 @@ export default function AppRoot() {
     }
   }
 
+  // Until the URL is read (first client render), show only a neutral loader —
+  // otherwise a refreshed deep link flashes the landing page, and the OBS
+  // overlay briefly flashes the app header and footer.
+  if (!routeReady) return <div className="min-h-screen" aria-busy="true" />
+
   // Broadcast overlay: no header, footer, toasts or auth — just the overlay.
   if (head === 'overlay' && segs[1]) {
     return <StreamOverlay roomCode={segs[1].toUpperCase()} green={segs[2] === 'green'} />
@@ -191,7 +201,7 @@ export default function AppRoot() {
             <Badge variant="secondary" className="ml-1 hidden sm:inline-flex">BD</Badge>
           </div>
 
-          <nav className="flex items-center gap-1.5" aria-label="Main navigation">
+          <nav className="flex items-center gap-1.5" aria-label={t.mainNav}>
             <LangToggle />
             {user ? (
               <>
@@ -199,7 +209,7 @@ export default function AppRoot() {
                   <DropdownMenuTrigger asChild>
                     <button
                       className="flex items-center gap-2 rounded-full border px-2 py-1 hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                      aria-label="Account menu"
+                      aria-label={t.accountMenu}
                     >
                       <Avatar className="h-7 w-7">
                         <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
@@ -213,7 +223,7 @@ export default function AppRoot() {
                     <DropdownMenuLabel>
                       <div className="text-sm font-semibold">{user.name}</div>
                       <div className="truncate text-xs font-normal text-muted-foreground">{user.email}</div>
-                      <Badge variant="secondary" className="mt-1.5">{user.role}</Badge>
+                      <Badge variant="secondary" className="mt-1.5">{t.role[user.role] ?? user.role}</Badge>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     {/* Each role's way home — the logo deliberately isn't a link. */}
@@ -256,10 +266,11 @@ export default function AppRoot() {
             ) : (
               <>
                 <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
-                  <LogIn className="mr-1.5 h-4 w-4" /> {t.login}
+                  {/* Icons drop out on very narrow phones (≤ 380px) so the header never overflows. */}
+                  <LogIn className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.login}
                 </Button>
                 <Button size="sm" onClick={() => navigate('/register')}>
-                  <UserPlus className="mr-1.5 h-4 w-4" /> {t.register}
+                  <UserPlus className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.register}
                 </Button>
               </>
             )}
@@ -275,9 +286,20 @@ export default function AppRoot() {
         <div className="container mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-sm text-muted-foreground sm:flex-row">
           <p className="flex items-center gap-1.5">
             <Gavel className="h-3.5 w-3.5" aria-hidden />
-            <span className="font-semibold text-foreground">NeelamGhor</span> — {t.tagline}
+            <span className="font-semibold text-foreground">{siteSettings.siteName?.trim() || 'NeelamGhor'}</span> — {t.tagline}
           </p>
-          <p>{t.footerFacts}</p>
+          <p>
+            {t.footerFacts}
+            {/* Admin → Settings → support phone */}
+            {siteSettings.supportPhone?.trim() ? (
+              <>
+                {' · '}
+                <a className="font-medium text-foreground hover:underline" href={`tel:${siteSettings.supportPhone.replace(/[^\d+]/g, '')}`}>
+                  {t.support}: {siteSettings.supportPhone}
+                </a>
+              </>
+            ) : null}
+          </p>
         </div>
       </footer>
 
@@ -298,7 +320,15 @@ const SHELL_STRINGS = {
     register: 'Register',
     tagline: 'Live player auctions for Bangladesh',
     footerFacts: '৳ BDT · Cricket & Football · Room-code joining',
+    support: 'Support',
     noAccess: "You don't have access to that page — here is your dashboard.",
+    loading: 'Loading…',
+    notFoundTitle: 'Page not found',
+    notFoundDescription: 'The page you are looking for does not exist.',
+    backHome: 'Back to home',
+    mainNav: 'Main navigation',
+    accountMenu: 'Account menu',
+    role: { ADMIN: 'ADMIN', ORGANIZER: 'ORGANIZER', MANAGER: 'MANAGER' },
   },
   bn: {
     joinRoom: 'নিলাম রুমে যোগ দিন',
@@ -311,9 +341,17 @@ const SHELL_STRINGS = {
     register: 'রেজিস্টার',
     tagline: 'বাংলাদেশের লাইভ প্লেয়ার নিলাম',
     footerFacts: '৳ টাকা · ক্রিকেট ও ফুটবল · রুম কোড দিয়ে যোগদান',
+    support: 'সহায়তা',
     noAccess: 'ওই পেজে আপনার প্রবেশাধিকার নেই — এই আপনার ড্যাশবোর্ড।',
+    loading: 'লোড হচ্ছে…',
+    notFoundTitle: 'পেজটি পাওয়া যায়নি',
+    notFoundDescription: 'আপনি যে পেজটি খুঁজছেন সেটি নেই।',
+    backHome: 'হোমে ফিরে যান',
+    mainNav: 'প্রধান মেনু',
+    accountMenu: 'অ্যাকাউন্ট মেনু',
+    role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'noAccess', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'support' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {
@@ -339,21 +377,13 @@ function LangToggle() {
 }
 
 /** Site-wide banner driven by the admin "announcement" setting. */
-function AnnouncementBanner() {
-  const [message, setMessage] = useState<string | null>(null)
+/** Public admin settings (announcement, site name, support phone) — one cached request for the shell. */
+function useSiteSettings(): Record<string, string> {
+  return useCachedGet<{ settings: Record<string, string> }>('/api/settings').data?.settings ?? {}
+}
 
-  useEffect(() => {
-    let cancelled = false
-    apiGet<{ settings: Record<string, string> }>('/api/settings')
-      .then((res) => {
-        const text = res.settings?.announcement?.trim()
-        if (!cancelled && text) setMessage(text)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [])
+function AnnouncementBanner() {
+  const message = useSiteSettings().announcement?.trim()
 
   if (!message) return null
   return (

@@ -7,6 +7,8 @@ import {
   readJson,
   requireSession,
   serializePlayer,
+  IMAGE_URL_ERROR,
+  parseImageUrl,
 } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -69,11 +71,11 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   if (body.basePrice !== undefined) {
     const basePrice = coercePositiveInt(body.basePrice)
-    if (!basePrice) return jsonError('Base price must be a positive integer (taka)', 400)
+    if (!basePrice) return jsonError('Base price must be a whole amount from ৳1 to ৳1,000,000,000', 400)
     data.basePrice = basePrice
   }
 
-  const nullableString = (key: 'phone' | 'previousTeam' | 'photoUrl', max: number) => {
+  const nullableString = (key: 'phone' | 'previousTeam', max: number) => {
     if (body[key] === undefined) return
     if (body[key] === null) {
       data[key] = null
@@ -85,7 +87,10 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   }
   nullableString('phone', 20)
   nullableString('previousTeam', 80)
-  nullableString('photoUrl', 500)
+  const photoUrl = parseImageUrl(body.photoUrl)
+  // An old pasted link sent back unchanged is kept rather than blocking the save.
+  if (photoUrl === false && body.photoUrl !== player.photoUrl) return jsonError(IMAGE_URL_ERROR, 400)
+  if (photoUrl !== undefined && photoUrl !== false) data.photoUrl = photoUrl
 
   if (Object.keys(data).length === 0) return jsonError('No valid fields to update', 400)
 

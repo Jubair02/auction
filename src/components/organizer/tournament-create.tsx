@@ -40,7 +40,9 @@ import {
   otherSportPayload,
   type OtherSportValue,
 } from '@/components/organizer/other-sport-fields'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
+// Stored on the tournament and shown as-is elsewhere, so they stay in English.
 const TOURNAMENT_TYPES = [
   'Corporate Cricket',
   'University Tournament',
@@ -51,17 +53,190 @@ const TOURNAMENT_TYPES = [
   '6-a-side / 7-a-side Football',
 ]
 
-const SPORT_CHOICES: { value: Sport; label: string; hint: string; icon: LucideIcon }[] = [
-  { value: 'CRICKET', label: 'Cricket', hint: 'Batsman · Bowler · All-rounder · WK', icon: Trophy },
-  { value: 'FOOTBALL', label: 'Football', hint: 'GK · Defender · Midfielder · Forward', icon: Goal },
-  { value: 'OTHER', label: 'Others', hint: 'Kabaddi, badminton, volleyball…', icon: Medal },
+const SPORT_CHOICES: { value: Sport; icon: LucideIcon }[] = [
+  { value: 'CRICKET', icon: Trophy },
+  { value: 'FOOTBALL', icon: Goal },
+  { value: 'OTHER', icon: Medal },
 ]
 
 const STEPS = [
-  { n: 1, label: 'Basics', icon: ClipboardList },
-  { n: 2, label: 'Auction mode', icon: Gavel },
-  { n: 3, label: 'Review', icon: Check },
+  { n: 1, icon: ClipboardList },
+  { n: 2, icon: Gavel },
+  { n: 3, icon: Check },
 ]
+
+const STRINGS = {
+  en: {
+    sportChoices: {
+      CRICKET: { label: 'Cricket', hint: 'Batsman · Bowler · All-rounder · WK' },
+      FOOTBALL: { label: 'Football', hint: 'GK · Defender · Midfielder · Forward' },
+      OTHER: { label: 'Others', hint: 'Kabaddi, badminton, volleyball…' },
+    },
+    steps: ['Basics', 'Auction mode', 'Review'],
+    nameSportRequired: 'Tournament name (2+ characters) and sport are required.',
+    basePriceRequired: 'Enter a base price above ৳0 for normal mode.',
+    created: 'Tournament created — now add players and teams!',
+    createFailed: 'Could not create tournament',
+    title: 'Create tournament',
+    intro: 'Three quick steps and your auction shell is ready.',
+    progress: 'Progress',
+    tournamentName: 'Tournament name',
+    namePlaceholder: 'e.g. Mirpur Corporate League 2026',
+    sport: 'Sport',
+    tournamentType: 'Tournament type',
+    chooseType: 'Choose a type (optional)',
+    location: 'Location',
+    locationPlaceholder: 'e.g. Mirpur Indoor Stadium, Dhaka',
+    startDate: 'Start date',
+    auctionDateTime: 'Auction date & time',
+    description: 'Description',
+    descPlaceholder: 'Anything teams should know — format, rules, entry fee…',
+    categoryBased: 'Category-Based',
+    categoryDesc:
+      'Players are graded into categories A–E, each with its own base price. Best for cricket-style auctions where stars and newcomers cost differently.',
+    recommended: 'Recommended default',
+    normal: 'Normal',
+    normalDesc: 'Every player starts from one base price. Simple and fast — great for football and small friendly auctions.',
+    defaultPrices: 'Default base prices per category',
+    defaultPricesHint:
+      'One tap applies these when you add a player. Every player’s base price stays editable individually in the Players tab.',
+    basePriceEvery: 'Base price for every player (৳)',
+    basePriceHint: 'First bid on any player must be at least this amount.',
+    current: (amount: string) => `Current: ${amount}`,
+    reviewCreate: 'Review & create',
+    rowName: 'Name',
+    rowSport: 'Sport',
+    rowRoles: 'Player roles',
+    rowTeamSize: 'Team size',
+    perTeam: (n: string) => `${n} per team`,
+    onField: (n: string) => `${n} on field`,
+    rowType: 'Type',
+    rowLocation: 'Location',
+    rowStart: 'Start date',
+    rowAuctionAt: 'Auction at',
+    rowMode: 'Auction mode',
+    categoryModeValue: 'Category-Based (A–E)',
+    rowBasePrice: 'Base price',
+    setPerCategory: 'Set per category when adding players',
+    rowDescription: 'Description',
+    afterCreate: 'After creating, you’ll land in the tournament workspace to add players and teams.',
+    back: 'Back',
+    next: 'Next',
+    createTournament: 'Create tournament',
+    changeLater: 'You can change most details later from the tournament workspace.',
+  },
+  bn: {
+    sportChoices: {
+      CRICKET: { label: 'ক্রিকেট', hint: 'ব্যাটসম্যান · বোলার · অলরাউন্ডার · উইকেটকিপার' },
+      FOOTBALL: { label: 'ফুটবল', hint: 'গোলকিপার · ডিফেন্ডার · মিডফিল্ডার · ফরোয়ার্ড' },
+      OTHER: { label: 'অন্যান্য', hint: 'কাবাডি, ব্যাডমিন্টন, ভলিবল…' },
+    },
+    steps: ['মূল তথ্য', 'নিলামের ধরন', 'যাচাই'],
+    nameSportRequired: 'টুর্নামেন্টের নাম (কমপক্ষে 2 অক্ষর) আর খেলা দিতে হবে।',
+    basePriceRequired: 'নরমাল মোডের জন্য ৳0-এর বেশি বেস প্রাইস দিন।',
+    created: 'টুর্নামেন্ট তৈরি হয়েছে — এবার খেলোয়াড় আর দল যোগ করুন!',
+    createFailed: 'টুর্নামেন্ট তৈরি করা যায়নি',
+    title: 'টুর্নামেন্ট তৈরি করুন',
+    intro: 'তিনটি ছোট ধাপ, তারপরই আপনার নিলাম প্রস্তুত।',
+    progress: 'অগ্রগতি',
+    tournamentName: 'টুর্নামেন্টের নাম',
+    namePlaceholder: 'যেমন: Mirpur Corporate League 2026',
+    sport: 'খেলা',
+    tournamentType: 'টুর্নামেন্টের ধরন',
+    chooseType: 'ধরন বেছে নিন (ঐচ্ছিক)',
+    location: 'স্থান',
+    locationPlaceholder: 'যেমন: মিরপুর ইনডোর স্টেডিয়াম, ঢাকা',
+    startDate: 'শুরুর তারিখ',
+    auctionDateTime: 'নিলামের তারিখ ও সময়',
+    description: 'বিবরণ',
+    descPlaceholder: 'দলগুলোর যা জানা দরকার — ফরম্যাট, নিয়ম, এন্ট্রি ফি…',
+    categoryBased: 'ক্যাটাগরি ভিত্তিক',
+    categoryDesc:
+      'খেলোয়াড়দের A–E ক্যাটাগরিতে ভাগ করা হয়, প্রতিটির আলাদা বেস প্রাইস। ক্রিকেট ধাঁচের নিলামের জন্য সেরা, যেখানে তারকা আর নতুনদের দাম আলাদা।',
+    recommended: 'প্রস্তাবিত',
+    normal: 'নরমাল',
+    normalDesc: 'সব খেলোয়াড় একই বেস প্রাইস থেকে শুরু। সহজ আর দ্রুত — ফুটবল আর ছোট ফ্রেন্ডলি নিলামের জন্য দারুণ।',
+    defaultPrices: 'ক্যাটাগরি অনুযায়ী ডিফল্ট বেস প্রাইস',
+    defaultPricesHint:
+      'খেলোয়াড় যোগ করার সময় এক ট্যাপেই এগুলো বসে যাবে। প্রতিটি খেলোয়াড়ের বেস প্রাইস খেলোয়াড় ট্যাবে আলাদাভাবে বদলানো যাবে।',
+    basePriceEvery: 'সব খেলোয়াড়ের বেস প্রাইস (৳)',
+    basePriceHint: 'যেকোনো খেলোয়াড়ের প্রথম বিড অন্তত এই অঙ্কের হতে হবে।',
+    current: (amount: string) => `এখন: ${amount}`,
+    reviewCreate: 'যাচাই করে তৈরি করুন',
+    rowName: 'নাম',
+    rowSport: 'খেলা',
+    rowRoles: 'খেলোয়াড়ের রোল',
+    rowTeamSize: 'দলের আকার',
+    perTeam: (n: string) => `প্রতি দলে ${n} জন`,
+    onField: (n: string) => `মাঠে ${n} জন`,
+    rowType: 'ধরন',
+    rowLocation: 'স্থান',
+    rowStart: 'শুরুর তারিখ',
+    rowAuctionAt: 'নিলামের সময়',
+    rowMode: 'নিলামের ধরন',
+    categoryModeValue: 'ক্যাটাগরি ভিত্তিক (A–E)',
+    rowBasePrice: 'বেস প্রাইস',
+    setPerCategory: 'খেলোয়াড় যোগ করার সময় ক্যাটাগরি অনুযায়ী ঠিক হবে',
+    rowDescription: 'বিবরণ',
+    afterCreate: 'তৈরির পর টুর্নামেন্ট পেজে যাবেন, সেখানে খেলোয়াড় আর দল যোগ করবেন।',
+    back: 'পেছনে',
+    next: 'পরের ধাপ',
+    createTournament: 'টুর্নামেন্ট তৈরি করুন',
+    changeLater: 'বেশিরভাগ তথ্য পরে টুর্নামেন্ট পেজ থেকে বদলানো যাবে।',
+  },
+} satisfies Strings<{
+  sportChoices: Record<Sport, { label: string; hint: string }>
+  steps: string[]
+  nameSportRequired: string
+  basePriceRequired: string
+  created: string
+  createFailed: string
+  title: string
+  intro: string
+  progress: string
+  tournamentName: string
+  namePlaceholder: string
+  sport: string
+  tournamentType: string
+  chooseType: string
+  location: string
+  locationPlaceholder: string
+  startDate: string
+  auctionDateTime: string
+  description: string
+  descPlaceholder: string
+  categoryBased: string
+  categoryDesc: string
+  recommended: string
+  normal: string
+  normalDesc: string
+  defaultPrices: string
+  defaultPricesHint: string
+  basePriceEvery: string
+  basePriceHint: string
+  current: (amount: string) => string
+  reviewCreate: string
+  rowName: string
+  rowSport: string
+  rowRoles: string
+  rowTeamSize: string
+  perTeam: (n: string) => string
+  onField: (n: string) => string
+  rowType: string
+  rowLocation: string
+  rowStart: string
+  rowAuctionAt: string
+  rowMode: string
+  categoryModeValue: string
+  rowBasePrice: string
+  setPerCategory: string
+  rowDescription: string
+  afterCreate: string
+  back: string
+  next: string
+  createTournament: string
+  changeLater: string
+}>
 
 // The category base prices the Players tab offers as one-tap quick picks.
 // They are platform defaults, not per-tournament settings — each player's base
@@ -69,6 +244,8 @@ const STEPS = [
 const SUGGESTED_CATEGORY_PRICES = { ...DEFAULT_CATEGORY_BASE_PRICES }
 
 export default function TournamentCreate() {
+  const lang = useLang()
+  const s = useStrings(STRINGS)
   const [step, setStep] = useState(1)
 
   // Creating always ends on the new tournament's Manage page: fetch its code
@@ -103,17 +280,17 @@ export default function TournamentCreate() {
 
   const next = () => {
     if (step === 1 && !step1Valid) {
-      toast.error(otherError ?? 'Tournament name (2+ characters) and sport are required.')
+      toast.error(otherError ?? s.nameSportRequired)
       return
     }
     if (step === 2 && !step2Valid) {
-      toast.error('Enter a base price above ৳0 for normal mode.')
+      toast.error(s.basePriceRequired)
       return
     }
-    setStep((s) => Math.min(3, s + 1))
+    setStep((n) => Math.min(3, n + 1))
   }
 
-  const back = () => setStep((s) => Math.max(1, s - 1))
+  const back = () => setStep((n) => Math.max(1, n - 1))
 
   const create = async () => {
     setCreating(true)
@@ -134,10 +311,10 @@ export default function TournamentCreate() {
       // The response already holds the new tournament's full page data: the
       // Manage page renders from it at once (and refreshes in the background).
       if (res.detail) seedCached(tournamentDetailUrl(res.tournament.id), res.detail)
-      toast.success('Tournament created — now add players and teams!')
+      toast.success(s.created)
       navigate(`/tournaments/${res.tournament.id}`)
     } catch (ex) {
-      toast.error(ex instanceof ApiError ? ex.message : 'Could not create tournament')
+      toast.error(ex instanceof ApiError ? ex.message : s.createFailed)
       setCreating(false)
     }
   }
@@ -145,20 +322,20 @@ export default function TournamentCreate() {
   return (
     <div className="container mx-auto max-w-3xl px-4 py-8">
       <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Create tournament</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Three quick steps and your auction shell is ready.</p>
+        <h1 className="text-2xl font-extrabold tracking-tight">{s.title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{s.intro}</p>
       </div>
 
       {/* Stepper */}
-      <ol className="mt-6 grid grid-cols-3 gap-2" aria-label="Progress">
-        {STEPS.map((s) => {
-          const active = step === s.n
-          const done = step > s.n
+      <ol className="mt-6 grid grid-cols-3 gap-2" aria-label={s.progress}>
+        {STEPS.map((st, i) => {
+          const active = step === st.n
+          const done = step > st.n
           return (
-            <li key={s.n}>
+            <li key={st.n}>
               <button
                 type="button"
-                onClick={() => (s.n < step ? setStep(s.n) : undefined)}
+                onClick={() => (st.n < step ? setStep(st.n) : undefined)}
                 className={`flex w-full min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl border px-2 py-2 transition-colors sm:flex-row sm:gap-2 sm:py-3 ${
                   active
                     ? 'border-primary bg-primary/5 text-primary'
@@ -168,9 +345,9 @@ export default function TournamentCreate() {
                 }`}
                 aria-current={active ? 'step' : undefined}
               >
-                {done ? <Check className="h-4 w-4" aria-hidden /> : <s.icon className="h-4 w-4" aria-hidden />}
+                {done ? <Check className="h-4 w-4" aria-hidden /> : <st.icon className="h-4 w-4" aria-hidden />}
                 <span className="text-xs font-bold sm:text-sm">
-                  {s.n}. {s.label}
+                  {st.n}. {s.steps[i]}
                 </span>
               </button>
             </li>
@@ -192,13 +369,13 @@ export default function TournamentCreate() {
               <CardContent className="space-y-5 p-6">
                 <div className="space-y-1.5">
                   <Label htmlFor="t-name">
-                    Tournament name <span className="text-rose-600">*</span>
+                    {s.tournamentName} <span className="text-rose-600">*</span>
                   </Label>
                   <Input
                     id="t-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Mirpur Corporate League 2026"
+                    placeholder={s.namePlaceholder}
                     className="h-11"
                     maxLength={80}
                   />
@@ -206,16 +383,17 @@ export default function TournamentCreate() {
 
                 <div className="space-y-3">
                   <Label>
-                    Sport <span className="text-rose-600">*</span>
+                    {s.sport} <span className="text-rose-600">*</span>
                   </Label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {SPORT_CHOICES.map((s) => {
-                      const selected = sport === s.value
+                    {SPORT_CHOICES.map((choice) => {
+                      const selected = sport === choice.value
+                      const copy = s.sportChoices[choice.value]
                       return (
                         <button
-                          key={s.value}
+                          key={choice.value}
                           type="button"
-                          onClick={() => setSport(s.value)}
+                          onClick={() => setSport(choice.value)}
                           aria-pressed={selected}
                           className={`relative flex min-h-28 flex-col items-center justify-center gap-1 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
                             selected ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-background hover:bg-accent'
@@ -226,9 +404,9 @@ export default function TournamentCreate() {
                               <Check className="h-3.5 w-3.5" aria-hidden />
                             </span>
                           ) : null}
-                          <s.icon className="h-6 w-6" aria-hidden />
-                          <span className="text-base font-bold">{s.label}</span>
-                          <span className={`text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{s.hint}</span>
+                          <choice.icon className="h-6 w-6" aria-hidden />
+                          <span className="text-base font-bold">{copy.label}</span>
+                          <span className={`text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{copy.hint}</span>
                         </button>
                       )
                     })}
@@ -238,10 +416,10 @@ export default function TournamentCreate() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Tournament type</Label>
+                  <Label>{s.tournamentType}</Label>
                   <Select value={tournamentType} onValueChange={setTournamentType}>
-                    <SelectTrigger className="h-11 w-full" aria-label="Tournament type">
-                      <SelectValue placeholder="Choose a type (optional)" />
+                    <SelectTrigger className="h-11 w-full" aria-label={s.tournamentType}>
+                      <SelectValue placeholder={s.chooseType} />
                     </SelectTrigger>
                     <SelectContent>
                       {TOURNAMENT_TYPES.map((t) => (
@@ -255,13 +433,13 @@ export default function TournamentCreate() {
 
                 <div className="space-y-1.5">
                   <Label htmlFor="t-location">
-                    <MapPin className="mr-1 inline h-3.5 w-3.5" aria-hidden /> Location
+                    <MapPin className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.location}
                   </Label>
                   <Input
                     id="t-location"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
-                    placeholder="e.g. Mirpur Indoor Stadium, Dhaka"
+                    placeholder={s.locationPlaceholder}
                     className="h-11"
                   />
                 </div>
@@ -269,7 +447,7 @@ export default function TournamentCreate() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="t-start">
-                      <CalendarDays className="mr-1 inline h-3.5 w-3.5" aria-hidden /> Start date
+                      <CalendarDays className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.startDate}
                     </Label>
                     <Input
                       id="t-start"
@@ -281,7 +459,7 @@ export default function TournamentCreate() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="t-auction">
-                      <Gavel className="mr-1 inline h-3.5 w-3.5" aria-hidden /> Auction date &amp; time
+                      <Gavel className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.auctionDateTime}
                     </Label>
                     <Input
                       id="t-auction"
@@ -294,12 +472,12 @@ export default function TournamentCreate() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="t-desc">Description</Label>
+                  <Label htmlFor="t-desc">{s.description}</Label>
                   <Textarea
                     id="t-desc"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Anything teams should know — format, rules, entry fee…"
+                    placeholder={s.descPlaceholder}
                     rows={3}
                   />
                 </div>
@@ -331,14 +509,11 @@ export default function TournamentCreate() {
                     }`}
                   >
                     <span className="flex items-center gap-2 font-bold">
-                      <ListChecks className="h-4.5 w-4.5 text-primary" aria-hidden /> Category-Based
+                      <ListChecks className="h-4.5 w-4.5 text-primary" aria-hidden /> {s.categoryBased}
                     </span>
-                    <p className="mt-1.5 text-sm text-muted-foreground">
-                      Players are graded into categories A–E, each with its own base price. Best for cricket-style
-                      auctions where stars and newcomers cost differently.
-                    </p>
+                    <p className="mt-1.5 text-sm text-muted-foreground">{s.categoryDesc}</p>
                     <Badge variant="secondary" className="mt-2">
-                      Recommended default
+                      {s.recommended}
                     </Badge>
                   </button>
 
@@ -353,24 +528,18 @@ export default function TournamentCreate() {
                     }`}
                   >
                     <span className="flex items-center gap-2 font-bold">
-                      <Gavel className="h-4.5 w-4.5 text-amber-600" aria-hidden /> Normal
+                      <Gavel className="h-4.5 w-4.5 text-amber-600" aria-hidden /> {s.normal}
                     </span>
-                    <p className="mt-1.5 text-sm text-muted-foreground">
-                      Every player starts from one base price. Simple and fast — great for football and small
-                      friendly auctions.
-                    </p>
+                    <p className="mt-1.5 text-sm text-muted-foreground">{s.normalDesc}</p>
                   </button>
                 </div>
 
                 {auctionMode === 'CATEGORY' ? (
                   <div className="rounded-xl border bg-muted/30 p-4">
                     <p className="flex items-center gap-1.5 text-sm font-semibold">
-                      <Wallet className="h-4 w-4 text-primary" aria-hidden /> Default base prices per category
+                      <Wallet className="h-4 w-4 text-primary" aria-hidden /> {s.defaultPrices}
                     </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      One tap applies these when you add a player. Every player&apos;s base price stays editable
-                      individually in the Players tab.
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{s.defaultPricesHint}</p>
                     <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
                       {Object.entries(SUGGESTED_CATEGORY_PRICES).map(([cat, price]) => (
                         <div
@@ -388,7 +557,7 @@ export default function TournamentCreate() {
                 ) : (
                   <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
                     <Label htmlFor="t-base" className="flex items-center gap-1.5">
-                      <Wallet className="h-4 w-4 text-amber-600" aria-hidden /> Base price for every player (৳)
+                      <Wallet className="h-4 w-4 text-amber-600" aria-hidden /> {s.basePriceEvery}
                     </Label>
                     <Input
                       id="t-base"
@@ -401,7 +570,7 @@ export default function TournamentCreate() {
                       aria-describedby="t-base-hint"
                     />
                     <p id="t-base-hint" className="mt-1.5 text-xs text-muted-foreground">
-                      First bid on any player must be at least this amount. {parsedBasePrice > 0 ? `Current: ${formatBDT(parsedBasePrice)}` : ''}
+                      {s.basePriceHint} {parsedBasePrice > 0 ? s.current(formatBDT(parsedBasePrice)) : ''}
                     </p>
                   </div>
                 )}
@@ -421,38 +590,38 @@ export default function TournamentCreate() {
           >
             <Card className="mt-6">
               <CardContent className="space-y-4 p-6">
-                <h2 className="font-bold">Review &amp; create</h2>
+                <h2 className="font-bold">{s.reviewCreate}</h2>
                 <dl className="divide-y rounded-xl border">
                   {[
-                    { k: 'Name', v: name },
-                    { k: 'Sport', v: sport ? sportLabel(sport, 'en', other.sportName.trim()) : '—' },
+                    { k: s.rowName, v: name },
+                    { k: s.rowSport, v: sport ? sportLabel(sport, lang, other.sportName.trim()) : '—' },
                     ...(sport === 'OTHER'
                       ? [
-                          { k: 'Player roles', v: other.playerRoles.length > 0 ? other.playerRoles.join(' · ') : rolesForSport('OTHER').join(' · ') },
+                          { k: s.rowRoles, v: other.playerRoles.length > 0 ? other.playerRoles.join(' · ') : rolesForSport('OTHER').join(' · ') },
                           {
-                            k: 'Team size',
+                            k: s.rowTeamSize,
                             v:
-                              [other.playersPerTeam && `${other.playersPerTeam} per team`, other.playersOnField && `${other.playersOnField} on field`]
+                              [other.playersPerTeam && s.perTeam(other.playersPerTeam), other.playersOnField && s.onField(other.playersOnField)]
                                 .filter(Boolean)
                                 .join(' · ') || '—',
                           },
                         ]
                       : []),
-                    { k: 'Type', v: tournamentType || '—' },
-                    { k: 'Location', v: location || '—' },
-                    { k: 'Start date', v: startDate ? new Date(startDate).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-                    { k: 'Auction at', v: auctionAt ? new Date(auctionAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-                    { k: 'Auction mode', v: auctionMode === 'CATEGORY' ? 'Category-Based (A–E)' : 'Normal' },
+                    { k: s.rowType, v: tournamentType || '—' },
+                    { k: s.rowLocation, v: location || '—' },
+                    { k: s.rowStart, v: startDate ? new Date(startDate).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+                    { k: s.rowAuctionAt, v: auctionAt ? new Date(auctionAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+                    { k: s.rowMode, v: auctionMode === 'CATEGORY' ? s.categoryModeValue : s.normal },
                     {
-                      k: 'Base price',
+                      k: s.rowBasePrice,
                       v:
                         auctionMode === 'NORMAL'
                           ? parsedBasePrice > 0
                             ? formatBDT(parsedBasePrice)
                             : '—'
-                          : 'Set per category when adding players',
+                          : s.setPerCategory,
                     },
-                    { k: 'Description', v: description.trim() || '—' },
+                    { k: s.rowDescription, v: description.trim() || '—' },
                   ].map((row) => (
                     <div key={row.k} className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm">
                       <dt className="shrink-0 font-medium text-muted-foreground">{row.k}</dt>
@@ -460,9 +629,7 @@ export default function TournamentCreate() {
                     </div>
                   ))}
                 </dl>
-                <p className="text-xs text-muted-foreground">
-                  After creating, you&apos;ll land in the tournament workspace to add players and teams.
-                </p>
+                <p className="text-xs text-muted-foreground">{s.afterCreate}</p>
               </CardContent>
             </Card>
           </motion.div>
@@ -472,23 +639,23 @@ export default function TournamentCreate() {
       {/* Nav buttons */}
       <div className="mt-6 flex items-center justify-between gap-3">
         <Button variant="outline" className="min-h-11" onClick={back} disabled={step === 1 || creating}>
-          <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> Back
+          <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {s.back}
         </Button>
         {step < 3 ? (
           <Button className="min-h-11" onClick={next} disabled={creating}>
-            Next <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
+            {s.next} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
           </Button>
         ) : (
           <Button className="min-h-11" onClick={() => void create()} disabled={creating}>
             {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Check className="mr-1.5 h-4 w-4" aria-hidden />}
-            Create tournament
+            {s.createTournament}
           </Button>
         )}
       </div>
 
       <Separator className="mt-8" />
       <p className="mt-4 text-center text-xs text-muted-foreground">
-        You can change most details later from the tournament workspace.
+        {s.changeLater}
       </p>
     </div>
   )

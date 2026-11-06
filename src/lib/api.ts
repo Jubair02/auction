@@ -42,7 +42,14 @@ export const apiDelete = <T,>(path: string) => api<T>(path, { method: 'DELETE' }
 /** Download a file (e.g. CSV export) from an API endpoint. */
 export async function apiDownload(path: string, filename: string): Promise<void> {
   const res = await fetch(path, { cache: 'no-store' })
-  if (!res.ok) throw new ApiError(`Download failed (${res.status})`, res.status)
+  if (!res.ok) {
+    // Surface the server's own reason ("You do not have permission…") when it sent one.
+    const message = await res
+      .json()
+      .then((d: { error?: string }) => d?.error)
+      .catch(() => undefined)
+    throw new ApiError(message || `Download failed (${res.status})`, res.status)
+  }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

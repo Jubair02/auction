@@ -1,8 +1,8 @@
 import { db } from '@/lib/db'
-import { getSessionUser, jsonError } from '@/lib/auth'
+import { getSessionUserWithVersion, jsonError } from '@/lib/auth'
 import { signToken } from '@/lib/crypto'
-import { clientKey, rateLimit } from '@/lib/rate-limit'
-import { readJson } from '../../../_lib/helpers'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
+import { isUniqueViolation, ONE_TEAM_PER_MANAGER, readJson } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
@@ -16,7 +16,7 @@ const JOIN_WINDOW_MS = 10 * 60 * 1000
 
 // POST /api/rooms/:code/join — public; returns a signed socket token + identity
 export async function POST(req: Request, { params }: RouteParams) {
-  const retryAfter = rateLimit(clientKey(req, 'room-join'), JOINS_PER_WINDOW, JOIN_WINDOW_MS)
+  const retryAfter = await rateLimit(clientKey(req, 'room-join'), JOINS_PER_WINDOW, JOIN_WINDOW_MS)
   if (retryAfter !== null) {
     return Response.json(
       { error: `Too many join attempts. Please try again in ${retryAfter} seconds.` },
@@ -41,7 +41,8 @@ export async function POST(req: Request, { params }: RouteParams) {
     return jsonError('Role must be "organizer", "manager" or "viewer"', 400)
   }
 
-  const sessionUser = await getSessionUser()
+  const session = await getSessionUserWithVersion()
+  const sessionUser = session?.user ?? null
   const isOrganizer =
     sessionUser && (sessionUser.role === 'ADMIN' || sessionUser.id === auction.tournament.organizerId)
 
@@ -82,6 +83,7 @@ export async function POST(req: Request, { params }: RouteParams) {
         role: 'ORGANIZER',
         name: sessionUser.name,
         userId: sessionUser.id,
+        sv: session!.sessionVersion,
       },
       SOCKET_TOKEN_TTL,
     )
@@ -133,10 +135,18 @@ export async function POST(req: Request, { params }: RouteParams) {
         return jsonError(`You already manage "${alreadyManaging.name}" in this tournament`, 409)
       }
       // Compare-and-swap: two managers racing for the same team — only one wins.
-      const claimed = await db.team.updateMany({
-        where: { id: team.id, managerUserId: null },
-        data: { managerUserId: sessionUser.id },
-      })
+      // The unique index on (tournamentId, managerUserId) stops one manager
+      // claiming two teams with simultaneous requests (the check above can't).
+      let claimed: { count: number }
+      try {
+        claimed = await db.team.updateMany({
+          where: { id: team.id, managerUserId: null },
+          data: { managerUserId: sessionUser.id },
+        })
+      } catch (err) {
+        if (isUniqueViolation(err)) return jsonError(ONE_TEAM_PER_MANAGER, 409)
+        throw err
+      }
       if (claimed.count !== 1) {
         return jsonError('Another manager has just claimed this team. Pick a different team.', 409)
       }
@@ -152,6 +162,7 @@ export async function POST(req: Request, { params }: RouteParams) {
         teamId: team.id,
         teamName: team.name,
         userId: sessionUser.id,
+        sv: session!.sessionVersion,
       },
       SOCKET_TOKEN_TTL,
     )

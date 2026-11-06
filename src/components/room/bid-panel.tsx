@@ -209,12 +209,13 @@ function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
   }
 
   // Quick increments always start from the minimum legal next bid, so no quick
-  // button can produce an amount the server would reject.
-  const steps = [0, 10000, 20000].map((extra) => Math.max(state.minIncrement, extra))
-  const quickAmounts = [minBid, minBid + steps[1], minBid + steps[2]]
+  // button can produce an amount the server would reject. The bigger jumps
+  // scale with the league's own increment (2× and 4×), so a ৳500-increment
+  // league gets +৳1,000 / +৳2,000 rather than a fixed +৳10,000 / +৳20,000.
+  const quickAmounts = [minBid, minBid + 2 * state.minIncrement, minBid + 4 * state.minIncrement]
   const quickLabels = state.currentBid
     ? quickAmounts.map((a) => `+${formatNumber(a - state.currentBid!.amount)}`)
-    : [t.base, `+${formatNumber(steps[1])}`, `+${formatNumber(steps[2])}`]
+    : [t.base, `+${formatNumber(2 * state.minIncrement)}`, `+${formatNumber(4 * state.minIncrement)}`]
 
   return {
     t,

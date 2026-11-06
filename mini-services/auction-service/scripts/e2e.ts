@@ -40,10 +40,14 @@ async function waitFor<T>(what: string, fn: () => T | null | undefined | false, 
 }
 
 // ---------------- HTTP ----------------
-async function http(method: string, path: string, body?: unknown, cookie?: string) {
+async function http(method: string, path: string, body?: unknown, cookie?: string, extraHeaders: Record<string, string> = {}) {
   const res = await fetch(WEB + path, {
     method,
-    headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+    headers: {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...extraHeaders,
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   let json: any = null
@@ -84,6 +88,7 @@ function connect(label: string): Promise<Client> {
       c.state = merged.state
     })
     socket.on('error', (e: { message: string }) => c.errors.push(e.message))
+    socket.on('seat_revoked', (e: { message: string }) => c.errors.push(`SEAT_REVOKED: ${e.message}`))
     socket.on('notification', (n: { message: string }) => c.notes.push(n.message))
     socket.on('connect', () => {
       clients.push(c)
@@ -523,6 +528,80 @@ async function main() {
     expected: leftAfterR2,
   })
 
+  // ---- Hardening (REST): sessions, limits, validation, data exposure
+  console.log('\nHardening (REST)')
+  const mE = await mkUser('manager-e', 'MANAGER')
+  const eCookie = await login(mE.email)
+  check('a fresh login is a valid session', !!(await http('GET', '/api/auth/me', undefined, eCookie)).json?.user)
+  await http('POST', '/api/auth/logout', {}, eCookie)
+  const afterLogout = await http('GET', '/api/auth/me', undefined, eCookie)
+  check('logout revokes the session — the old cookie no longer works', afterLogout.json?.user === null, afterLogout.json)
+
+  const huge = await http('PATCH', `/api/teams/${beta.id}`, { budget: 3_000_000_000 }, orgC)
+  check('an oversized amount is a clear 400, not a server error', huge.status === 400 && /1,000,000,000/.test(huge.json?.error ?? ''), huge)
+
+  const pasted = await http('PATCH', `/api/teams/${beta.id}`, { logoUrl: 'https://tracker.example/pixel.png' }, orgC)
+  const uploaded = await http('PATCH', `/api/teams/${beta.id}`, { logoUrl: '/api/uploads/abcdefghij0123456789klmno' }, orgC)
+  check('image fields accept our uploads only (no pasted third-party links)', pasted.status === 400 && uploaded.status === 200, {
+    pasted: pasted.status,
+    uploaded: uploaded.status,
+  })
+
+  const publicRoom = await http('GET', `/api/rooms/${code}`)
+  const leaked = (publicRoom.json?.teams ?? []).some((tm: Record<string, unknown>) => 'managerUserId' in tm)
+  check('public room info says whether a team is taken, never by which account', !leaked && 'claimed' in (publicRoom.json?.teams?.[0] ?? {}), publicRoom.json?.teams?.[0])
+
+  // Double-approve of the same registration creates exactly one player.
+  await http('POST', `/api/tournaments/${tid}/registrations`, { open: true }, orgC)
+  const regCode = (await db.tournament.findUnique({ where: { id: tid } }))!.registrationCode!
+  await http('POST', `/api/register/${regCode}`, { name: 'E2E Signup', phone: '01755555555', role: 'Bowler' })
+  const reg = await db.playerRegistration.findFirst({ where: { tournamentId: tid, name: 'E2E Signup' } })
+  const beforeApprove = await db.player.count({ where: { tournamentId: tid } })
+  const approvals = await Promise.all([1, 2, 3].map(() => http('PATCH', `/api/tournaments/${tid}/registrations`, { ids: [reg!.id], action: 'approve' }, orgC)))
+  const added = (await db.player.count({ where: { tournamentId: tid } })) - beforeApprove
+  check('approving the same registration three times at once adds one player', added === 1, { added, statuses: approvals.map((a) => a.status) })
+
+  // Login limit is shared through the database (a made-up client IP, so nobody else is locked out).
+  const probeIp = { 'X-Forwarded-For': `203.0.113.${(Date.now() % 200) + 20}` }
+  const tries: number[] = []
+  for (let i = 0; i < 11; i++) tries.push((await http('POST', '/api/auth/login', { email: mE.email, password: 'wrong' }, undefined, probeIp)).status)
+  const counter = await db.rateLimit.findUnique({ where: { key: `login:${probeIp['X-Forwarded-For']}` } })
+  check('the 11th failed login is refused, and the counter lives in the database', tries[10] === 429 && tries[9] === 401 && (counter?.count ?? 0) >= 11, {
+    last: tries.slice(-2),
+    dbCount: counter?.count,
+  })
+
+  // ---- Security: one team per manager, live seats re-checked
+  console.log('\nSecurity (REST + live sockets)')
+  // Two unassigned teams; one manager fires both claims at the same instant.
+  await http(
+    'POST',
+    `/api/tournaments/${tid}/teams`,
+    { teams: [{ name: 'E2E Delta', budget: 60000, maxSquad: 3, minSquad: 0 }, { name: 'E2E Echo', budget: 60000, maxSquad: 3, minSquad: 0 }] },
+    orgC,
+  )
+  const extraTeams = await db.team.findMany({ where: { tournamentId: tid, name: { in: ['E2E Delta', 'E2E Echo'] } } })
+  const mD = await mkUser('manager-d', 'MANAGER')
+  const dC = await login(mD.email)
+  const claims = await Promise.all(
+    extraTeams.map((tm) => http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E D', teamId: tm.id }, dC)),
+  )
+  const dTeams = await db.team.count({ where: { tournamentId: tid, managerUserId: mD.id } })
+  check('simultaneous claims: a manager still ends up with only one team', dTeams === 1 && claims.some((r) => r.status === 409), {
+    statuses: claims.map((r) => r.status),
+    teamsHeld: dTeams,
+  })
+
+  // A password reset (session version bump) cuts off a manager's open seat.
+  await sleep(5500) // past the seat re-check interval
+  await db.user.update({ where: { id: mB.id }, data: { sessionVersion: { increment: 1 } } })
+  e = B.errors.length
+  bid(B, 10000)
+  await waitFor('manager seat revoked', () => B.errors.slice(e).some((m) => m.startsWith('SEAT_REVOKED')))
+  check('after a password reset, the manager’s open seat can no longer bid', B.errors.slice(e).some((m) => m.startsWith('SEAT_REVOKED')), lastError(B, e))
+  const rejoinB = await join(await connect('beta-old-pass'), code, joinB.json.socketToken)
+  check('…and the old seat pass can’t rejoin either', !rejoinB.ok, rejoinB.error)
+
   act(O, 'end')
   // V2: the original viewer socket was closed by the "refresh" step above.
   await waitFor('ended', () => V2.state?.status === 'ENDED')
@@ -530,6 +609,19 @@ async function main() {
   check('organizer ends the auction — tournament completed', V2.state?.status === 'ENDED' && tRow?.status === 'COMPLETED', {
     viewer: V2.state?.status,
     tournament: tRow?.status,
+  })
+
+  // A blocked organizer's already-open connection loses control of the room.
+  await sleep(5500)
+  await db.user.update({ where: { id: org.id }, data: { status: 'BLOCKED' } })
+  e = O.errors.length
+  act(O, 'reopen')
+  await waitFor('organizer seat revoked', () => O.errors.slice(e).some((m) => m.startsWith('SEAT_REVOKED')))
+  await sleep(1500)
+  const stillEnded = (await db.auction.findFirst({ where: { tournamentId: tid } }))?.status
+  check('a blocked organizer’s open connection can no longer run the auction', O.errors.slice(e).some((m) => m.startsWith('SEAT_REVOKED')) && stillEnded === 'ENDED', {
+    errors: lastError(O, e),
+    auction: stillEnded,
   })
 }
 
