@@ -12,7 +12,7 @@ import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
 import { DASHBOARD_PATH } from '@/lib/access'
-import { useAppStore } from '@/lib/store'
+import { useAuthState } from '@/lib/store'
 import { type Strings, useStrings } from '@/lib/i18n'
 
 type AcceptInviteStrings = {
@@ -85,7 +85,7 @@ interface AcceptResult {
 
 /** /invite#<token> — a manager accepts the organizer's invite for one team. */
 export default function AcceptInvite({ token }: { token: string }) {
-  const user = useAppStore((s) => s.user)
+  const { user } = useAuthState()
   const [info, setInfo] = useState<InviteInfo | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [accepting, setAccepting] = useState(false)
@@ -100,7 +100,7 @@ export default function AcceptInvite({ token }: { token: string }) {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [token, t.loadFailed])
 
   function goToAuth(to: '/login' | '/register') {
     // Keep the secret in the fragment (never sent to the server) through the login round-trip.

@@ -23,6 +23,9 @@ const reportOnlyCsp = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' ws: wss:",
+  // The PWA service worker (public/sw.js) and manifest (src/app/manifest.ts).
+  "worker-src 'self'",
+  "manifest-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -46,7 +49,19 @@ const nextConfig: NextConfig = {
   reactStrictMode: false,
   poweredByHeader: false,
   async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
+    return [
+      { source: "/(.*)", headers: securityHeaders },
+      // The service worker must always be re-checked, so a deploy reaches
+      // installed apps promptly (browsers also cap its HTTP caching at 24h).
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      { source: "/offline.html", headers: [{ key: "Cache-Control", value: "no-cache" }] },
+    ];
   },
 };
 

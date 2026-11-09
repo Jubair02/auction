@@ -1,3 +1,4 @@
+import { after } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
@@ -76,11 +77,15 @@ export async function POST(req: Request) {
   const link = `${baseUrl}/reset-password#${token}`
   const message = passwordResetEmail({ name: user.name, link, ttlMinutes: RESET_TTL_MINUTES })
 
-  // Not awaited: waiting on Resend only for real accounts would make response
-  // times reveal which emails are registered.
-  void sendEmail({ to: user.email, ...message }).catch((err) => {
-    console.error('[forgot-password] sending the reset email failed:', (err as Error).message)
-  })
+  // Sent after the response: waiting on Resend only for real accounts would
+  // make response times reveal which emails are registered. `after` keeps the
+  // serverless function alive until it finishes — a bare unawaited promise can
+  // be frozen with the function on Vercel and the email never leaves.
+  after(() =>
+    sendEmail({ to: user.email, ...message }).catch((err) => {
+      console.error('[forgot-password] sending the reset email failed:', (err as Error).message)
+    }),
+  )
 
   return Response.json(GENERIC_OK)
 }

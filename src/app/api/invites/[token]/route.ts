@@ -19,7 +19,7 @@ async function findInvite(req: Request, token: string) {
     where: { inviteTokenHash: hashOneTimeToken(token) },
     include: { tournament: { include: { auction: { select: { roomCode: true } } } } },
   })
-  if (!team || !team.inviteExpiresAt || team.inviteExpiresAt <= new Date()) {
+  if (!team || !team.inviteExpiresAt || team.inviteExpiresAt <= new Date() || team.tournament.archivedAt) {
     return { response: jsonError(INVALID, 404) }
   }
   return { team }

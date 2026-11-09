@@ -8,6 +8,9 @@ export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
 
+/** Exports that include players' contact details (or exist only to import players). */
+const CONTACT_EXPORTS = new Set(['players', 'template'])
+
 function csvResponse(filename: string, body: string): Response {
   // UTF-8 BOM so Excel opens Bangla/Unicode content correctly
   return new Response('\uFEFF' + body, {
@@ -27,12 +30,15 @@ export async function GET(req: Request, { params }: RouteParams) {
   if ('response' in auth) return auth.response
   const { user } = auth
 
-  const loaded = await loadTournamentForOwner(id, user)
-  if ('response' in loaded) return loaded.response
-  const tournament = loaded.tournament
-
   const url = new URL(req.url)
   const type = url.searchParams.get('type') ?? ''
+
+  // Every staff member (auctioneers too) may download results; the full player
+  // list carries phone numbers and the template is for importing, so those
+  // two need 'manage' (owner / ADMIN / co-organizer).
+  const loaded = await loadTournamentForOwner(id, user, CONTACT_EXPORTS.has(type) ? 'manage' : 'run')
+  if ('response' in loaded) return loaded.response
+  const tournament = loaded.tournament
   const fileBase = `neelamghor-${type}-${slugify(tournament.name)}`
 
   if (type === 'template') {

@@ -25,10 +25,10 @@ import {
 import { EmptyState, StatCard } from '@/components/shared/empty-state'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { apiDownload, apiGet, ApiError } from '@/lib/api'
-import { navigate } from '@/lib/router'
+import { AppLink } from '@/components/shared/app-link'
 import { formatBDT, formatDate, formatTime } from '@/lib/format'
 import type { AuctionEventDTO, PlayerSaleChain, ResultsData } from '@/lib/types'
-import { type Strings, useLangStore, useStrings } from '@/lib/i18n'
+import { type Strings, useLangStore, useStrings, useLang } from '@/lib/i18n'
 
 const BN_PLAYER_STATUS: Record<string, string> = {
   AVAILABLE: 'নিলাম বাকি',
@@ -185,6 +185,7 @@ interface BidEntry {
 
 export default function AuctionHistory({ tournamentId }: { tournamentId: string }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   const [data, setData] = useState<ResultsData | null>(null)
   const [chains, setChains] = useState<PlayerSaleChain[]>([])
   const [loading, setLoading] = useState(true)
@@ -276,8 +277,8 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
       <div className="container mx-auto max-w-lg px-4 py-16 text-center">
         <p className="text-lg font-bold">{s.unavailable}</p>
         <p className="mt-1 text-sm text-muted-foreground">{s.unavailableDesc}</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/tournaments')}>
-          {s.backToTournaments}
+        <Button variant="outline" className="mt-4" asChild>
+          <AppLink href="/tournaments">{s.backToTournaments}</AppLink>
         </Button>
       </div>
     )
@@ -294,9 +295,11 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
             variant="ghost"
             size="sm"
             className="-ml-2 mb-1 text-muted-foreground print:hidden"
-            onClick={() => navigate(`/tournaments/${tournamentId}`)}
+            asChild
           >
-            <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {s.backToTournament}
+            <AppLink href={`/tournaments/${tournamentId}`}>
+              <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {s.backToTournament}
+            </AppLink>
           </Button>
           <h1 className="flex flex-wrap items-center gap-2 text-2xl font-extrabold tracking-tight">
             <Gavel className="h-6 w-6 text-primary" aria-hidden /> {s.title}
@@ -305,7 +308,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
             <span className="font-semibold text-foreground">{tournament.name}</span>
             <TournamentStatusBadge status={tournament.status} />
             {tournament.roomCode ? <span className="font-mono">{tournament.roomCode}</span> : null}
-            {tournament.startDate ? <span>{formatDate(tournament.startDate)}</span> : null}
+            {tournament.startDate ? <span>{formatDate(tournament.startDate, false, lang)}</span> : null}
           </div>
         </div>
         <div className="flex shrink-0 gap-2 print:hidden">
@@ -345,7 +348,9 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
             description={s.noBidsDesc}
             action={
               tournament.roomCode ? (
-                <Button onClick={() => navigate(`/room/${tournament.roomCode}`)}>{s.openAuctionRoom}</Button>
+                <Button asChild>
+                  <AppLink href={`/room/${tournament.roomCode}`}>{s.openAuctionRoom}</AppLink>
+                </Button>
               ) : undefined
             }
           />
@@ -376,7 +381,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {winner ? (
-                            <Badge className="bg-teal-100 text-teal-900 hover:bg-teal-100">
+                            <Badge className="bg-teal-100 text-teal-900 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/50">
                               <Trophy className="mr-1 h-3 w-3" aria-hidden /> {winner.teamName} · {formatBDT(winner.price)}
                             </Badge>
                           ) : (
@@ -397,7 +402,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                               <li
                                 key={`${b.createdAt}-${b.amount}-${i}`}
                                 className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${
-                                  isFinal ? 'bg-teal-50 font-semibold text-teal-900' : 'bg-muted/40'
+                                  isFinal ? 'bg-teal-50 font-semibold text-teal-900 dark:bg-teal-950/40 dark:text-teal-200' : 'bg-muted/40'
                                 }`}
                               >
                                 <span className="flex items-center gap-2">
@@ -412,7 +417,7 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                                 <span className="flex items-center gap-3 whitespace-nowrap">
                                   <span className="font-semibold tabular-nums">{formatBDT(b.amount)}</span>
                                   <span className="text-xs text-muted-foreground">
-                                    {formatTime(b.createdAt)}
+                                    {formatTime(b.createdAt, lang)}
                                   </span>
                                 </span>
                               </li>
@@ -447,11 +452,11 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
 /* ------------------------------------------------------------------ */
 
 const EVENT_META: Record<AuctionEventDTO['type'], { dot: string; tone: string }> = {
-  SALE: { dot: 'bg-teal-500', tone: 'text-teal-900' },
-  RE_AUCTION: { dot: 'bg-amber-500', tone: 'text-amber-900' },
-  REFUND: { dot: 'bg-sky-500', tone: 'text-sky-900' },
-  UNSOLD: { dot: 'bg-rose-400', tone: 'text-rose-900' },
-  SKIPPED: { dot: 'bg-slate-400', tone: 'text-slate-700' },
+  SALE: { dot: 'bg-teal-500', tone: 'text-teal-900 dark:text-teal-300' },
+  RE_AUCTION: { dot: 'bg-amber-500', tone: 'text-amber-900 dark:text-amber-300' },
+  REFUND: { dot: 'bg-sky-500', tone: 'text-sky-900 dark:text-sky-300' },
+  UNSOLD: { dot: 'bg-rose-400', tone: 'text-rose-900 dark:text-rose-300' },
+  SKIPPED: { dot: 'bg-slate-400', tone: 'text-muted-foreground' },
 }
 
 /**
@@ -469,6 +474,7 @@ function SaleChains({
   setOpenChains: (fn: (prev: Record<string, boolean>) => Record<string, boolean>) => void
 }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   if (chains.length === 0) return null
   const reauctioned = chains.filter((c) => c.reauctions > 0).length
 
@@ -513,12 +519,12 @@ function SaleChains({
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {c.reauctions > 0 ? (
-                        <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
+                        <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-950/50">
                           <RotateCcw className="mr-1 h-3 w-3" aria-hidden /> {c.reauctions}x
                         </Badge>
                       ) : null}
                       {c.currentTeamName ? (
-                        <Badge className="hidden bg-teal-100 text-teal-900 hover:bg-teal-100 sm:inline-flex">
+                        <Badge className="hidden bg-teal-100 text-teal-900 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/50 sm:inline-flex">
                           <Trophy className="mr-1 h-3 w-3" aria-hidden /> {c.currentTeamName} ·{' '}
                           {formatBDT(c.currentPrice ?? 0)}
                         </Badge>
@@ -552,7 +558,7 @@ function SaleChains({
                                 {e.teamName ? <span className="font-normal"> · {e.teamName}</span> : null}
                               </p>
                               <p className="text-xs tabular-nums text-muted-foreground">
-                                {formatDate(e.createdAt)} {formatTime(e.createdAt)}
+                                {formatDate(e.createdAt, false, lang)} {formatTime(e.createdAt, lang)}
                               </p>
                             </div>
                             <p className="text-xs text-muted-foreground">

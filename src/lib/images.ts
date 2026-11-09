@@ -6,7 +6,11 @@ import sharp from 'sharp'
 
 export type ImageKind = 'PHOTO' | 'LOGO' | 'BANNER'
 
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 // input size cap (phones shoot big JPEGs)
+// Input size cap. Vercel rejects request bodies over 4.5 MB before our code
+// runs (with an opaque error), so the cap sits just under it; the browser
+// downscales big phone photos before uploading (shared/image-upload.tsx).
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+export const MAX_UPLOAD_MESSAGE = 'Images must be 4 MB or smaller'
 
 const PRESETS: Record<ImageKind, { width: number; height: number; fit: 'cover' | 'contain' }> = {
   PHOTO: { width: 512, height: 512, fit: 'cover' }, // square player portrait
@@ -30,7 +34,7 @@ export interface ProcessedImage {
 
 export async function processImage(input: Buffer, kind: ImageKind): Promise<ProcessedImage> {
   if (input.length === 0) throw new InvalidImageError('The file is empty')
-  if (input.length > MAX_UPLOAD_BYTES) throw new InvalidImageError('Images must be 8 MB or smaller')
+  if (input.length > MAX_UPLOAD_BYTES) throw new InvalidImageError(MAX_UPLOAD_MESSAGE)
 
   const preset = PRESETS[kind]
   try {

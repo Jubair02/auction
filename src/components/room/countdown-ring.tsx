@@ -4,6 +4,12 @@ import { motion } from 'framer-motion'
 import { Pause } from 'lucide-react'
 import { formatClock } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: { timeRemaining: (clock: string) => `Time remaining ${clock}`, paused: 'Paused', onTheClock: 'on the clock' },
+  bn: { timeRemaining: (clock: string) => `বাকি সময় ${clock}`, paused: 'বিরতি', onTheClock: 'সময় চলছে' },
+} satisfies Strings<{ timeRemaining: (clock: string) => string; paused: string; onTheClock: string }>
 
 interface CountdownRingProps {
   remainingMs: number
@@ -15,6 +21,7 @@ interface CountdownRingProps {
 
 /** Circular SVG countdown ring — green >10s, amber 6–10s, red <=5s with pulse. Reads well on light and dark. */
 export function CountdownRing({ remainingMs, totalMs, paused = false, className }: CountdownRingProps) {
+  const t = useStrings(STRINGS)
   const radius = 56
   const circumference = 2 * Math.PI * radius
   const fraction = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 0
@@ -32,7 +39,7 @@ export function CountdownRing({ remainingMs, totalMs, paused = false, className 
     <div
       className={cn('@container relative h-32 w-32 shrink-0 sm:h-40 sm:w-40', className)}
       role="timer"
-      aria-label={`Time remaining ${formatClock(remainingMs)}`}
+      aria-label={t.timeRemaining(formatClock(remainingMs))}
     >
       <svg viewBox="0 0 128 128" className="h-full w-full" aria-hidden>
         <circle cx="64" cy="64" r={radius} fill="none" stroke="currentColor" strokeWidth="10" className="text-slate-200 dark:text-white/10" />
@@ -57,7 +64,7 @@ export function CountdownRing({ remainingMs, totalMs, paused = false, className 
           {formatClock(remainingMs)}
         </span>
         <span className="mt-1 text-[max(8px,6.5cqw)] font-semibold uppercase tracking-widest text-muted-foreground">
-          {paused ? 'Paused' : 'on the clock'}
+          {paused ? t.paused : t.onTheClock}
         </span>
       </div>
     </div>

@@ -7,6 +7,69 @@ import { X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { OTHER_SPORT_LIMITS, type TournamentSummary } from '@/lib/types'
+import { type Lang, type Strings, useStrings } from '@/lib/i18n'
+
+const STRINGS = {
+  en: {
+    errName: 'Enter the sport name (e.g. Kabaddi).',
+    errNameMax: (max: number) => `Sport name can be at most ${max} characters.`,
+    errRange: (label: string, max: number) => `${label} must be between 1 and ${max}.`,
+    errOnField: 'Playing on field cannot be more than players per team.',
+    sportName: 'Sport name',
+    sportNamePlaceholder: 'e.g. Kabaddi',
+    popular: 'Popular:',
+    playerRoles: 'Player roles',
+    rolesHint: 'Used to filter players in the auction and to balance teams. Leave empty for Attacker · Defender · All-rounder · Player.',
+    removeRole: (role: string) => `Remove role ${role}`,
+    roleLimit: 'Role limit reached',
+    rolePlaceholder: 'Type a role and press Enter',
+    playersPerTeam: 'Players per team',
+    playersPerTeamHint: 'Default max squad for new teams',
+    playersPerTeamPlaceholder: 'e.g. 12',
+    playersOnField: 'Playing on field',
+    playersOnFieldHint: 'How many play at once',
+    playersOnFieldPlaceholder: 'e.g. 7',
+  },
+  bn: {
+    errName: 'খেলার নাম লিখুন (যেমন কাবাডি)।',
+    errNameMax: (max: number) => `খেলার নাম সর্বোচ্চ ${max} অক্ষরের হতে পারে।`,
+    errRange: (label: string, max: number) => `${label} 1 থেকে ${max}-এর মধ্যে হতে হবে।`,
+    errOnField: 'মাঠে খেলোয়াড়ের সংখ্যা দলের মোট খেলোয়াড়ের চেয়ে বেশি হতে পারে না।',
+    sportName: 'খেলার নাম',
+    sportNamePlaceholder: 'যেমন Kabaddi',
+    popular: 'জনপ্রিয়:',
+    playerRoles: 'খেলোয়াড়ের ভূমিকা',
+    rolesHint: 'নিলামে খেলোয়াড় ফিল্টার করতে ও দল ভারসাম্য করতে ব্যবহার হয়। খালি রাখলে Attacker · Defender · All-rounder · Player থাকবে।',
+    removeRole: (role: string) => `${role} ভূমিকা সরান`,
+    roleLimit: 'আর ভূমিকা যোগ করা যাবে না',
+    rolePlaceholder: 'ভূমিকা লিখে Enter চাপুন',
+    playersPerTeam: 'দলপ্রতি খেলোয়াড়',
+    playersPerTeamHint: 'নতুন দলের ডিফল্ট সর্বোচ্চ স্কোয়াড',
+    playersPerTeamPlaceholder: 'যেমন 12',
+    playersOnField: 'মাঠে খেলে',
+    playersOnFieldHint: 'একসাথে কতজন খেলে',
+    playersOnFieldPlaceholder: 'যেমন 7',
+  },
+} satisfies Strings<{
+  errName: string
+  errNameMax: (max: number) => string
+  errRange: (label: string, max: number) => string
+  errOnField: string
+  sportName: string
+  sportNamePlaceholder: string
+  popular: string
+  playerRoles: string
+  rolesHint: string
+  removeRole: (role: string) => string
+  roleLimit: string
+  rolePlaceholder: string
+  playersPerTeam: string
+  playersPerTeamHint: string
+  playersPerTeamPlaceholder: string
+  playersOnField: string
+  playersOnFieldHint: string
+  playersOnFieldPlaceholder: string
+}>
 
 export interface OtherSportValue {
   sportName: string
@@ -40,19 +103,20 @@ const toInt = (v: string) => {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-/** Why the value can't be saved yet, or null when it's fine. */
-export function otherSportError(v: OtherSportValue): string | null {
+/** Why the value can't be saved yet, or null when it's fine. Pass the UI language for a Bangla message. */
+export function otherSportError(v: OtherSportValue, lang: Lang = 'en'): string | null {
+  const s = STRINGS[lang]
   const name = v.sportName.trim()
-  if (name.length < 2) return 'Enter the sport name (e.g. Kabaddi).'
-  if (name.length > OTHER_SPORT_LIMITS.nameMax) return `Sport name can be at most ${OTHER_SPORT_LIMITS.nameMax} characters.`
-  for (const [raw, label] of [[v.playersPerTeam, 'Players per team'], [v.playersOnField, 'Playing on field']] as const) {
+  if (name.length < 2) return s.errName
+  if (name.length > OTHER_SPORT_LIMITS.nameMax) return s.errNameMax(OTHER_SPORT_LIMITS.nameMax)
+  for (const [raw, label] of [[v.playersPerTeam, s.playersPerTeam], [v.playersOnField, s.playersOnField]] as const) {
     if (raw === '') continue
     const n = toInt(raw)
-    if (!n || n > OTHER_SPORT_LIMITS.teamMax) return `${label} must be between 1 and ${OTHER_SPORT_LIMITS.teamMax}.`
+    if (!n || n > OTHER_SPORT_LIMITS.teamMax) return s.errRange(label, OTHER_SPORT_LIMITS.teamMax)
   }
   const perTeam = toInt(v.playersPerTeam)
   const onField = toInt(v.playersOnField)
-  if (perTeam && onField && onField > perTeam) return 'Playing on field cannot be more than players per team.'
+  if (perTeam && onField && onField > perTeam) return s.errOnField
   return null
 }
 
@@ -75,6 +139,7 @@ export function OtherSportFields({
   onChange: (v: OtherSportValue) => void
   idPrefix: string
 }) {
+  const t = useStrings(STRINGS)
   const [roleDraft, setRoleDraft] = useState('')
   const set = (patch: Partial<OtherSportValue>) => onChange({ ...value, ...patch })
 
@@ -94,18 +159,18 @@ export function OtherSportFields({
     <div className="space-y-5 rounded-xl border-2 border-primary/40 bg-primary/[0.03] p-4 sm:p-5">
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-sport-name`}>
-          Sport name <span className="text-rose-600">*</span>
+          {t.sportName} <span className="text-rose-600 dark:text-rose-400">*</span>
         </Label>
         <Input
           id={`${idPrefix}-sport-name`}
           value={value.sportName}
           onChange={(e) => set({ sportName: e.target.value })}
-          placeholder="e.g. Kabaddi"
+          placeholder={t.sportNamePlaceholder}
           className="h-11"
           maxLength={OTHER_SPORT_LIMITS.nameMax}
         />
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">Popular:</span>
+          <span className="text-sm text-muted-foreground">{t.popular}</span>
           {presets.map((p) => (
             <button
               key={p.name}
@@ -123,9 +188,9 @@ export function OtherSportFields({
 
       <div className="space-y-2">
         <div>
-          <Label htmlFor={`${idPrefix}-role-input`}>Player roles</Label>
+          <Label htmlFor={`${idPrefix}-role-input`}>{t.playerRoles}</Label>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Used to filter players in the auction and to balance teams. Leave empty for Attacker · Defender · All-rounder · Player.
+            {t.rolesHint}
           </p>
         </div>
         <div
@@ -142,7 +207,7 @@ export function OtherSportFields({
                   removeRole(role)
                 }}
                 className="rounded p-0.5 hover:bg-primary/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                aria-label={`Remove role ${role}`}
+                aria-label={t.removeRole(role)}
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
               </button>
@@ -166,7 +231,7 @@ export function OtherSportFields({
               }
             }}
             onBlur={() => roleDraft.trim() && addRole(roleDraft)}
-            placeholder={value.playerRoles.length >= OTHER_SPORT_LIMITS.roles ? 'Role limit reached' : 'Type a role and press Enter'}
+            placeholder={value.playerRoles.length >= OTHER_SPORT_LIMITS.roles ? t.roleLimit : t.rolePlaceholder}
             disabled={value.playerRoles.length >= OTHER_SPORT_LIMITS.roles}
             className="h-8 min-w-40 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
           />
@@ -176,8 +241,8 @@ export function OtherSportFields({
       <div className="grid gap-4 sm:grid-cols-2">
         {(
           [
-            { key: 'playersPerTeam', label: 'Players per team', hint: 'Default max squad for new teams', placeholder: 'e.g. 12' },
-            { key: 'playersOnField', label: 'Playing on field', hint: 'How many play at once', placeholder: 'e.g. 7' },
+            { key: 'playersPerTeam', label: t.playersPerTeam, hint: t.playersPerTeamHint, placeholder: t.playersPerTeamPlaceholder },
+            { key: 'playersOnField', label: t.playersOnField, hint: t.playersOnFieldHint, placeholder: t.playersOnFieldPlaceholder },
           ] as const
         ).map((f) => (
           <div key={f.key} className="space-y-1.5">

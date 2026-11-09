@@ -2,7 +2,9 @@ import { db } from '@/lib/db'
 import { getSessionUser } from '@/lib/auth'
 import { DEMO_ROOM_CODE } from '@/lib/demo'
 import { clientKey, rateLimit, rateLimitBlocked } from '@/lib/rate-limit-shared'
-import type { RoomInfo, RoomTeamInfo } from '@/lib/types'
+import { getPublicBranding } from '@/lib/branding'
+import type { PublicBranding, RoomInfo, RoomTeamInfo } from '@/lib/types'
+import { tournamentAccess } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
@@ -34,29 +36,46 @@ export async function GET(req: Request, { params }: RouteParams) {
   const auction = await db.auction.findUnique({
     where: { roomCode },
     include: {
-      tournament: { select: { id: true, name: true, sport: true, auctionMode: true, organizerId: true } },
+      tournament: {
+        select: {
+          id: true,
+          name: true,
+          sport: true,
+          auctionMode: true,
+          organizerId: true,
+          archivedAt: true,
+          plan: true,
+          logoUrl: true,
+          brandColor: true,
+          brandHidePlatform: true,
+        },
+      },
     },
   })
-  if (!auction) {
+  // An archived (deleted) tournament's room is gone as far as visitors are concerned.
+  if (!auction || auction.tournament.archivedAt) {
     // The join page asks for the demo room on every visit; in an unseeded
     // database that miss must not use up the visitor's wrong-code budget.
     if (roomCode !== DEMO_ROOM_CODE) await rateLimit(missKey, MISSES_PER_WINDOW, MISS_WINDOW_MS)
     return Response.json({ error: 'Room not found. Check the code and try again.' }, { status: 404 })
   }
 
-  const teams = await db.team.findMany({
-    where: { tournamentId: auction.tournamentId },
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
-  })
+  const [teams, branding] = await Promise.all([
+    db.team.findMany({
+      where: { tournamentId: auction.tournamentId },
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
+    }),
+    // Brand colour, logo and sponsors for the room, overlay and join card (PRO only).
+    getPublicBranding(auction.tournament),
+  ])
 
   const sessionUser = await getSessionUser()
+  // Owner, ADMIN and tournament staff (co-organizer, auctioneer) run the room.
   const myRole: RoomInfo['myRole'] =
-    sessionUser && (sessionUser.role === 'ADMIN' || sessionUser.id === auction.tournament.organizerId)
-      ? 'organizer'
-      : null
+    sessionUser && (await tournamentAccess(auction.tournament, sessionUser)) !== null ? 'organizer' : null
 
-  const body: RoomInfo = {
+  const body: RoomInfo & { branding: PublicBranding } = {
     roomCode: auction.roomCode,
     auctionId: auction.id,
     tournamentId: auction.tournament.id,
@@ -80,6 +99,8 @@ export async function GET(req: Request, { params }: RouteParams) {
     })),
     myRole,
     allowOpenClaim: auction.allowOpenClaim,
+    plan: auction.tournament.plan === 'PRO' ? 'PRO' : 'FREE',
+    branding,
   }
 
   return Response.json(body)

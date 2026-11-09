@@ -50,9 +50,9 @@ export function StatCard({
 }) {
   const toneClass = {
     default: 'text-foreground',
-    success: 'text-emerald-700',
-    warning: 'text-amber-700',
-    danger: 'text-rose-700',
+    success: 'text-emerald-700 dark:text-emerald-400',
+    warning: 'text-amber-700 dark:text-amber-400',
+    danger: 'text-rose-700 dark:text-rose-400',
     primary: 'text-primary',
   }[tone]
   return (

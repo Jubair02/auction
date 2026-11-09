@@ -78,3 +78,74 @@ jobs:
             --to-schema-datamodel prisma/schema.prisma \
             --shadow-database-url "$SHADOW_DATABASE_URL" \
             --exit-code
+
+  e2e:
+    name: End-to-end (web API + auction service + Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/e2e
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/e2e
+      # Test-only value (>= 32 chars); shared by the website and the auction service.
+      AUCTION_SECRET: ci-e2e-secret-not-used-anywhere-else-0123456789
+      # `next start` runs with NODE_ENV=production, where APP_URL is required.
+      APP_URL: http://localhost:3000
+      # Baked into the client bundle at build time.
+      NEXT_PUBLIC_AUCTION_URL: http://localhost:3003
+      # Read by mini-services/auction-service/scripts/e2e.ts
+      WEB_URL: http://localhost:3000
+      AUCTION_URL: http://localhost:3003
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+
+      # Plain Postgres: migrate.mjs uses DIRECT_URL as is (no Neon "-pooler" rewrite).
+      - name: Apply migrations
+        run: npm run db:deploy
+
+      - name: Build
+        run: npm run build
+
+      - name: Start website and auction service
+        run: |
+          nohup npx next start -p 3000 > web.log 2>&1 &
+          nohup npx bun mini-services/auction-service/index.ts > auction.log 2>&1 &
+
+      - name: Wait until both are healthy
+        run: |
+          for url in http://localhost:3000/api/health http://localhost:3003/healthz; do
+            echo "Waiting for $url"
+            for i in $(seq 1 60); do
+              if curl -fsS "$url" > /dev/null; then echo "  up"; break; fi
+              if [ "$i" = 60 ]; then echo "  $url never became healthy"; exit 1; fi
+              sleep 2
+            done
+          done
+
+      - name: Run end-to-end test
+        run: npm run test:e2e
+
+      - name: Server logs
+        if: always()
+        run: |
+          echo "::group::web.log";     cat web.log || true;     echo "::endgroup::"
+          echo "::group::auction.log"; cat auction.log || true; echo "::endgroup::"

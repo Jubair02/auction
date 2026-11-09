@@ -1,15 +1,20 @@
 // ============================================================
 // NeelamGhor — live auction socket mini-service (port 3003)
 // Event routing + token auth. The game logic lives in engine.ts.
+//
+// Run EXACTLY ONE instance. Room state, bid timers and the per-room lock
+// live in this process's memory; a second instance would run its own
+// clocks against the same rooms. Health check: GET /healthz.
 // ============================================================
 import './env' // MUST be first: loads DATABASE_URL / AUCTION_SECRET from the parent .env
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { Server, type Socket } from 'socket.io'
 import { explainTokenFailure, getAuctionSecret, secretFingerprint, verifyToken } from '../../src/lib/crypto'
 import { createResilientClient } from '../../src/lib/db-resilience'
 import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
 import { AuctionEngine } from './engine'
+import { startOutboxWorker } from './outbox'
 
 // Fail fast: without the shared secret no token can be verified.
 try {
@@ -56,9 +61,17 @@ const LIMITS = {
   bid: { limit: 10, windowMs: 5_000 },
   action: { limit: 30, windowMs: 10_000 },
 }
+// Per ROOM, viewers only: a reconnect storm (a stream link shared to
+// thousands, or everyone reconnecting after a restart) is admitted at a
+// steady pace instead of all at once. Seats (organizer/managers) are exempt.
+const VIEWER_JOINS_PER_ROOM = { limit: 30, windowMs: 10_000 }
+// One viewer pass (one REST join) may be open in a few tabs, not hundreds.
+const MAX_SOCKETS_PER_VIEWER_PASS = 5
 
 // Retries transient connection failures on reads; 20 s transaction budget.
 const db = createResilientClient()
+// Delivers queued SMS (Notification outbox) and runs the hourly data-retention sweep.
+const stopOutbox = startOutboxWorker(db)
 const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/', // DO NOT change — Caddy gateway requires this exact path
@@ -71,15 +84,107 @@ const io = new Server(httpServer, {
 })
 const engine = new AuctionEngine(io, db)
 
+// ---------- GET /healthz ----------
+// Engine.IO is mounted on path "/", so it claims EVERY plain HTTP request it
+// sees. Take its request listener(s) back out and put a router in front that
+// answers /healthz itself and hands everything else to Engine.IO unchanged
+// (WebSocket upgrades use the separate 'upgrade' event and are untouched).
+const startedAt = Date.now()
+const HEALTH_DB_TIMEOUT_MS = 2_000
+
+async function dbReachable(): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      db.$queryRaw`SELECT 1`.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), HEALTH_DB_TIMEOUT_MS)
+      }),
+    ])
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function healthz(res: ServerResponse): Promise<void> {
+  const ok = await dbReachable()
+  const body = { ok, uptimeSec: Math.round((Date.now() - startedAt) / 1000), rooms: engine.roomCount, ...(ok ? {} : { error: 'database unreachable' }) }
+  res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(body))
+}
+
+const engineIoListeners = httpServer.listeners('request') as ((req: IncomingMessage, res: ServerResponse) => void)[]
+httpServer.removeAllListeners('request')
+httpServer.on('request', (req: IncomingMessage, res: ServerResponse) => {
+  const pathname = (req.url ?? '').split('?')[0]
+  if (pathname === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) {
+    void healthz(res).catch(() => {
+      if (!res.headersSent) res.writeHead(503)
+      res.end()
+    })
+    return
+  }
+  for (const listener of engineIoListeners) listener.call(httpServer, req, res)
+})
+
 const emitError = (socket: Socket, message: string) => socket.emit('error', { message })
 
-/** True when this socket has exceeded its budget for the event (and says so). */
-function throttled(socket: Socket, scope: keyof typeof LIMITS): boolean {
+/** Ack shape for place_bid / organizer_action (newer clients pass one; old clients don't). */
+type ActionAck = (res: { ok: true } | { ok: false; error: string }) => void
+
+/**
+ * Reports an outcome: through the ack when the client sent one, otherwise as
+ * before (an 'error' event on failure, nothing on success).
+ */
+function reply(socket: Socket, ack: ActionAck | undefined, error: string | null): void {
+  if (ack) ack(error ? { ok: false, error } : { ok: true })
+  else if (error) emitError(socket, error)
+}
+
+/** Socket.IO passes the ack as the last argument; tolerate a missing payload. */
+function splitArgs<T>(data: unknown, ack: unknown): { data: T | undefined; ack: ActionAck | undefined } {
+  if (typeof data === 'function') return { data: undefined, ack: data as ActionAck }
+  return { data: (data ?? undefined) as T | undefined, ack: typeof ack === 'function' ? (ack as ActionAck) : undefined }
+}
+
+/** Seconds to wait when this socket has exceeded its budget for the event, else null. */
+function throttled(socket: Socket, scope: keyof typeof LIMITS): number | null {
   const { limit, windowMs } = LIMITS[scope]
-  const retryAfter = rateLimit(`${scope}:${socket.id}`, limit, windowMs)
-  if (retryAfter === null) return false
-  emitError(socket, `Slow down — try again in ${retryAfter}s`)
-  return true
+  return rateLimit(`${scope}:${socket.id}`, limit, windowMs)
+}
+
+// ---------- room lookup cache ----------
+// Every join used to read the auction row by room code. Codes never change
+// for an auction, so a short cache spares the database during join storms.
+const ROOM_CACHE_MS = 30_000
+const roomCache = new Map<string, { id: string; tournamentId: string; at: number }>()
+
+async function findRoom(roomCode: string): Promise<{ id: string; tournamentId: string } | null> {
+  const hit = roomCache.get(roomCode)
+  if (hit && Date.now() - hit.at < ROOM_CACHE_MS) return hit
+  const auction = await db.auction.findUnique({ where: { roomCode }, select: { id: true, tournamentId: true } })
+  if (!auction) {
+    roomCache.delete(roomCode)
+    return null
+  }
+  if (roomCache.size > 1000) roomCache.clear()
+  roomCache.set(roomCode, { ...auction, at: Date.now() })
+  return auction
+}
+
+// ---------- viewer pass fan-out ----------
+const viewerPassSockets = new Map<string, Set<string>>()
+const passKeyOf = (token: string) => token.slice(token.lastIndexOf('.') + 1)
+
+function releaseViewerPass(socket: Socket): void {
+  const key = socket.data.viewerPass as string | undefined
+  if (!key) return
+  socket.data.viewerPass = undefined
+  const set = viewerPassSockets.get(key)
+  set?.delete(socket.id)
+  if (set && set.size === 0) viewerPassSockets.delete(key)
 }
 
 // ---------- seat re-validation ----------
@@ -93,41 +198,67 @@ const SEAT_RECHECK_MS = 5_000
 // still-valid organizer automatically, or sends others back to the join card.
 const SEAT_REVOKED = 'Your seat pass is no longer valid — log in again to rejoin.'
 
-async function seatRevokedReason(identity: SocketIdentity, tournamentId: string): Promise<string | null> {
+/** Seat passes issued after login sessions carry the session id (`sid`). */
+type SeatIdentity = SocketIdentity & { sid?: string }
+
+async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): Promise<string | null> {
   if (identity.role !== 'MANAGER' && identity.role !== 'ORGANIZER') return null
-  const user = identity.userId
-    ? await db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true, sessionVersion: true } })
-    : null
+  const [user, session] = await Promise.all([
+    identity.userId
+      ? db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true, sessionVersion: true } })
+      : null,
+    // The login session the pass was issued under: logging out on that device
+    // (or the session expiring) ends the seat too. Older passes carry no sid
+    // and keep the previous behaviour.
+    identity.sid
+      ? db.session.findUnique({ where: { id: identity.sid }, select: { userId: true, revokedAt: true, expiresAt: true } })
+      : null,
+  ])
   if (!user || user.status !== 'ACTIVE') return SEAT_REVOKED
   // Passes issued before session versions carry none and count as 0.
   if ((identity.sv ?? 0) !== user.sessionVersion) return SEAT_REVOKED
+  if (identity.sid) {
+    if (!session || session.userId !== identity.userId || session.revokedAt || session.expiresAt <= new Date()) {
+      return SEAT_REVOKED
+    }
+  }
+  // The organizer seat belongs to the owner, an ADMIN, or tournament staff
+  // (co-organizer or auctioneer) — removing someone from the staff ends it.
   if (identity.role === 'ORGANIZER' && user.role !== 'ADMIN') {
-    const tournament = await db.tournament.findUnique({ where: { id: tournamentId }, select: { organizerId: true } })
-    if (tournament?.organizerId !== identity.userId) return SEAT_REVOKED
+    // (Prisma treats an undefined filter as "match anything" — never let one through.)
+    if (!identity.userId) return SEAT_REVOKED
+    const tournament = await db.tournament.findFirst({
+      where: {
+        id: tournamentId,
+        OR: [{ organizerId: identity.userId }, { staff: { some: { userId: identity.userId } } }],
+      },
+      select: { id: true },
+    })
+    if (!tournament) return SEAT_REVOKED
   }
   return null
 }
 
 /**
- * True when the seat is no longer valid. The socket is unseated (no more
- * actions, no more room broadcasts) and told via `seat_revoked`; the client
- * shows it as a join error, which re-seats a still-valid organizer or returns
- * others to the join card. (Not a server-side disconnect: socket.io clients
- * deliberately don't reconnect after one, leaving "Connecting…" forever.)
+ * The reason, when the seat is no longer valid. The socket is unseated (no
+ * more actions, no more room broadcasts) and told via `seat_revoked`; the
+ * client shows it as a join error, which re-seats a still-valid organizer or
+ * returns others to the join card. (Not a server-side disconnect: socket.io
+ * clients deliberately don't reconnect after one, leaving "Connecting…" forever.)
  */
-async function seatRevoked(socket: Socket, identity: SocketIdentity): Promise<boolean> {
+async function seatRevoked(socket: Socket, identity: SeatIdentity): Promise<string | null> {
   const checkedAt = (socket.data.seatCheckedAt as number | undefined) ?? 0
-  if (Date.now() - checkedAt < SEAT_RECHECK_MS) return false
+  if (Date.now() - checkedAt < SEAT_RECHECK_MS) return null
   const reason = await seatRevokedReason(identity, socket.data.tournamentId as string)
   if (!reason) {
     socket.data.seatCheckedAt = Date.now()
-    return false
+    return null
   }
   socket.data.identity = undefined
   socket.leave(`auction:${identity.auctionId}`)
   await engine.leave(socket)
   socket.emit('seat_revoked', { message: reason })
-  return true
+  return reason
 }
 
 io.use((socket, next) => {
@@ -146,19 +277,34 @@ interface JoinAck {
 io.on('connection', (socket) => {
   socket.on('join_room', async (data: { roomCode?: string; token?: string }, ack?: (res: JoinAck) => void) => {
     try {
-      if (throttled(socket, 'join')) return ack?.({ ok: false, error: 'Too many join attempts — wait a moment and retry' })
+      if (throttled(socket, 'join') !== null) return ack?.({ ok: false, error: 'Too many join attempts — wait a moment and retry' })
       const roomCode = String(data?.roomCode ?? '').trim().toUpperCase()
       const token = String(data?.token ?? '')
       if (!roomCode || !token) return ack?.({ ok: false, error: 'roomCode and token are required' })
 
-      const identity = verifyToken<SocketIdentity>(token)
+      const identity = verifyToken<SeatIdentity>(token)
       if (!identity || !identity.auctionId) {
         const reason = explainTokenFailure(token)
         console.warn(`[auction-service] join rejected for ${roomCode}: ${reason}`)
         return ack?.({ ok: false, error: reason })
       }
 
-      const auction = await db.auction.findUnique({ where: { roomCode } })
+      let passKey: string | undefined
+      if (identity.role === 'VIEWER') {
+        // Keyed by the signed auction id, so a made-up room code can't drain another room's budget.
+        const { limit, windowMs } = VIEWER_JOINS_PER_ROOM
+        const wait = rateLimit(`viewer-join:${identity.auctionId}`, limit, windowMs)
+        if (wait !== null) {
+          return ack?.({ ok: false, error: `Lots of people are joining right now — try again in ${wait}s` })
+        }
+        passKey = passKeyOf(token)
+        const open = viewerPassSockets.get(passKey)
+        if (open && !open.has(socket.id) && open.size >= MAX_SOCKETS_PER_VIEWER_PASS) {
+          return ack?.({ ok: false, error: 'This viewer pass is open in too many tabs — close one and try again' })
+        }
+      }
+
+      const auction = await findRoom(roomCode)
       if (!auction) return ack?.({ ok: false, error: 'Room not found' })
       if (identity.auctionId !== auction.id) return ack?.({ ok: false, error: 'Token is not valid for this room' })
 
@@ -186,6 +332,15 @@ io.on('connection', (socket) => {
       socket.data.identity = identity
       socket.data.tournamentId = auction.tournamentId
       socket.data.seatCheckedAt = Date.now()
+      if (socket.data.viewerPass !== passKey) {
+        releaseViewerPass(socket)
+        if (passKey) {
+          let set = viewerPassSockets.get(passKey)
+          if (!set) viewerPassSockets.set(passKey, (set = new Set()))
+          set.add(socket.id)
+          socket.data.viewerPass = passKey
+        }
+      }
       return ack?.({ ok: true, state })
     } catch (err) {
       console.error('[auction-service] join_room failed:', err)
@@ -193,35 +348,51 @@ io.on('connection', (socket) => {
     }
   })
 
-  socket.on('place_bid', async (data: { amount?: unknown }) => {
+  // place_bid { amount, playerId? } [, ack]. Newer clients pass playerId (the
+  // player they saw on the block) and an ack: every refusal comes back through
+  // it, and { ok: true } once the bid is saved. Old clients get 'error' events.
+  socket.on('place_bid', async (rawData: unknown, rawAck?: unknown) => {
+    // Before anything that can wait: a bid's lateness is judged by arrival.
+    const receivedAt = Date.now()
+    const { data, ack } = splitArgs<{ amount?: unknown; playerId?: unknown }>(rawData, rawAck)
     try {
-      const identity = socket.data.identity as SocketIdentity | undefined
-      if (!identity) return emitError(socket, 'Join the room first')
-      if (identity.role !== 'MANAGER') return emitError(socket, 'Only team managers can bid')
-      if (throttled(socket, 'bid')) return
-      if (await seatRevoked(socket, identity)) return
-      await engine.placeBid(socket, identity, data?.amount)
+      const identity = socket.data.identity as SeatIdentity | undefined
+      if (!identity) return reply(socket, ack, 'Join the room first')
+      if (identity.role !== 'MANAGER') return reply(socket, ack, 'Only team managers can bid')
+      const wait = throttled(socket, 'bid')
+      if (wait !== null) return reply(socket, ack, ack ? 'Too many bids — slow down' : `Slow down — try again in ${wait}s`)
+      const revoked = await seatRevoked(socket, identity)
+      if (revoked) return ack?.({ ok: false, error: revoked }) // old clients: the seat_revoked event says it
+      const error = await engine.placeBid(identity, data?.amount, { playerId: data?.playerId, receivedAt })
+      reply(socket, ack, error)
     } catch (err) {
       console.error('[auction-service] place_bid failed:', err)
-      emitError(socket, 'Bid failed — try again')
+      reply(socket, ack, 'Bid failed — try again')
     }
   })
 
-  socket.on('organizer_action', async (data: { action?: string; payload?: Record<string, unknown> }) => {
+  // organizer_action { action, payload } [, ack] — same ack contract as place_bid.
+  socket.on('organizer_action', async (rawData: unknown, rawAck?: unknown) => {
+    const { data, ack } = splitArgs<{ action?: string; payload?: Record<string, unknown> }>(rawData, rawAck)
     try {
-      const identity = socket.data.identity as SocketIdentity | undefined
-      if (!identity) return emitError(socket, 'Join the room first')
-      if (identity.role !== 'ORGANIZER') return emitError(socket, 'Only the organizer can perform this action')
-      if (throttled(socket, 'action')) return
-      if (await seatRevoked(socket, identity)) return
-      await engine.organizerAction(socket, identity, data?.action, data?.payload)
+      const identity = socket.data.identity as SeatIdentity | undefined
+      if (!identity) return reply(socket, ack, 'Join the room first')
+      if (identity.role !== 'ORGANIZER') return reply(socket, ack, 'Only the organizer can perform this action')
+      const wait = throttled(socket, 'action')
+      if (wait !== null) return reply(socket, ack, `Slow down — try again in ${wait}s`)
+      const revoked = await seatRevoked(socket, identity)
+      if (revoked) return ack?.({ ok: false, error: revoked })
+      const payload = data?.payload && typeof data.payload === 'object' ? data.payload : undefined
+      const error = await engine.organizerAction(identity, data?.action, payload)
+      reply(socket, ack, error)
     } catch (err) {
       console.error('[auction-service] organizer_action failed:', err)
-      emitError(socket, 'Action failed — try again')
+      reply(socket, ack, 'Action failed — try again')
     }
   })
 
   socket.on('disconnect', () => {
+    releaseViewerPass(socket)
     void engine.leave(socket)
   })
 })
@@ -229,7 +400,11 @@ io.on('connection', (socket) => {
 // Hosts like Render assign the port via PORT; locally it stays 3003.
 const PORT = Number(process.env.PORT) || 3003
 httpServer.listen(PORT, () => {
-  console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/")`)
+  console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/", health check GET /healthz)`)
+  console.log(
+    '[auction-service] NOTE: run exactly ONE instance of this service — rooms, bid timers and locks live in this ' +
+      'process\'s memory. Do not scale it out or run a second copy against the same database.',
+  )
   // In production the website (e.g. on Vercel) is on another origin; without
   // ALLOWED_ORIGINS every browser connection is refused and rooms never join.
   if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS?.trim()) {
@@ -251,6 +426,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true
   console.log(`[auction-service] ${signal} received — shutting down…`)
   engine.dispose()
+  stopOutbox()
   io.close()
   httpServer.close()
   await db.$disconnect().catch(() => undefined)

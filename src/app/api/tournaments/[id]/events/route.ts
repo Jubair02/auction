@@ -1,5 +1,4 @@
 import { db } from '@/lib/db'
-import { jsonError } from '@/lib/auth'
 import { loadTournamentForOwner, requireSession } from '../../../_lib/helpers'
 import type { AuctionEventDTO, PlayerSaleChain } from '@/lib/types'
 
@@ -7,7 +6,7 @@ export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
 
-// GET /api/tournaments/:id/events — immutable audit trail (owner/ADMIN).
+// GET /api/tournaments/:id/events — immutable audit trail (any tournament staff, incl. auctioneers).
 // Returns the raw log plus a per-player sale chain built from it, so the
 // history screen can show SALE → RE-AUCTION → REFUND → NEW SALE in order.
 export async function GET(_req: Request, { params }: RouteParams) {
@@ -16,7 +15,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const auth = await requireSession()
   if ('response' in auth) return auth.response
 
-  const loaded = await loadTournamentForOwner(id, auth.user)
+  const loaded = await loadTournamentForOwner(id, auth.user, 'run')
   if ('response' in loaded) return loaded.response
 
   const auction = await db.auction.findUnique({ where: { tournamentId: id }, select: { id: true } })

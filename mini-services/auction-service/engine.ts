@@ -2,26 +2,37 @@
 // NeelamGhor — AuctionEngine (live auction state machine)
 // One in-memory Room per auctionId; authoritative for timers, bids,
 // stage transitions (GOING ONCE/TWICE) and presence. Every transition
-// is persisted to SQLite via Prisma. Rooms are rebuilt from the DB on
-// first touch after a service restart, and self-heal on join if the
-// DB state diverges from memory (e.g. external reset).
+// is persisted to Postgres via Prisma (database first, memory second).
+// Rooms are rebuilt from the DB on first touch after a service restart,
+// and self-heal on join if the DB state diverges from memory (e.g.
+// external reset).
+//
+// SINGLE INSTANCE ONLY: timers, the per-room lock and the room state live
+// in this process's memory. Two instances would each run their own clock
+// and lock. Compare-and-swaps on the DB stop them from double-selling or
+// selling to a lower bidder, but bids would still race. Run exactly one.
 // ============================================================
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import type { Server, Socket } from 'socket.io'
 import type {
-  Prisma,
   Auction,
   Tournament,
   Team,
   Player,
   RoomParticipant,
 } from '@prisma/client'
-import type { RoomState, RoomStateWire, RoomRole, SocketIdentity } from '../../src/lib/types'
-import { BOUNDED_TX_SQL, type ResilientClient } from '../../src/lib/db-resilience'
-import { bdt, maxBidFor, validateBid } from './rules'
+import type { RoomNotification, RoomState, RoomStateWire, RoomRole, SocketIdentity } from '../../src/lib/types'
+// Explicit .ts extensions so `node --test` (type stripping) can load this file
+// too (engine.test.ts); Bun and tsc (allowImportingTsExtensions) accept both.
+import { BOUNDED_TX_SQL, type ResilientClient } from '../../src/lib/db-resilience.ts'
+import { bdt, maxBidFor, validateBid } from './rules.ts'
+import { queuePlayerSoldSms, trackServiceEvent } from './outbox.ts'
 
 type EngineStatus = 'READY' | 'LIVE' | 'PAUSED' | 'ENDED'
-type NotifLevel = 'info' | 'success' | 'warning' | 'error'
+type NotifLevel = RoomNotification['level']
+type NotifKind = NonNullable<RoomNotification['kind']>
+/** What an action resolves to: a refusal message, or nothing on success. */
+type Outcome = string | void
 
 /** Who triggered a money- or ownership-moving event. Null actor = the timer. */
 interface Actor {
@@ -34,11 +45,18 @@ type AuditType = 'SALE' | 'RE_AUCTION' | 'REFUND' | 'UNSOLD' | 'SKIPPED'
 
 /** Thrown when a re-auction loses the compare-and-swap race. */
 class SaleAlreadyChanged extends Error {}
+/** Thrown inside finalizeSold's transaction to roll back a half-applied sale. */
+class LotAlreadyChanged extends Error {}
 
 const CATEGORY_CODES = ['A', 'B', 'C', 'D', 'E']
 /** Pause between a SOLD/UNSOLD call and the auto-picked next player, so everyone sees the result. */
 const AUTO_ADVANCE_DELAY_MS = 4000
 const BID_TIMER_RANGE = { min: 5, max: 600 }
+/** A join re-checks the room against the database (self-heal) at most this often. */
+const SYNC_INTERVAL_MS = 5_000
+/** A room nobody is connected to is dropped from memory after this long (rebuilt from the DB on the next join). */
+const EMPTY_ROOM_TTL_MS = 30 * 60_000
+const EVICT_SWEEP_MS = 60_000
 
 interface BidView {
   amount: number
@@ -102,6 +120,10 @@ interface Room {
   /** Fingerprints of the pool / participant list in the last broadcast (delta sends). */
   lastPlayersHash: string | null
   lastParticipantsHash: string | null
+  /** When a join last compared this room with the database (epoch ms). */
+  lastSyncAt: number
+  /** Since when no socket has been connected (epoch ms); null while someone is. */
+  emptySince: number | null
 }
 
 /** Short content fingerprint used to skip re-sending unchanged lists. */
@@ -114,20 +136,32 @@ export class AuctionEngine {
   private locks = new Map<string, Promise<unknown>>()
   private ticker: ReturnType<typeof setInterval>
   private timerEmitter: ReturnType<typeof setInterval>
+  private evictor: ReturnType<typeof setInterval>
+  // Plain fields, not constructor parameter properties: node's type stripping
+  // (used by `npm test`) cannot run parameter properties.
+  private io: Server
+  private db: ResilientClient
 
-  constructor(
-    private io: Server,
-    private db: ResilientClient,
-  ) {
+  constructor(io: Server, db: ResilientClient) {
+    this.io = io
+    this.db = db
     // Single global ticker: stage transitions + finalize (500ms resolution).
     this.ticker = setInterval(() => void this.tick(), 500)
     // 1s timer broadcast while LIVE + currentPlayer + not paused.
     this.timerEmitter = setInterval(() => this.emitTimers(), 1000)
+    // Drop rooms nobody has been connected to for a while.
+    this.evictor = setInterval(() => void this.evictIdleRooms(), EVICT_SWEEP_MS)
   }
 
   dispose(): void {
     clearInterval(this.ticker)
     clearInterval(this.timerEmitter)
+    clearInterval(this.evictor)
+  }
+
+  /** Rooms currently held in memory (for /healthz). */
+  get roomCount(): number {
+    return this.rooms.size
   }
 
   // ----------------------------------------------------------
@@ -141,29 +175,72 @@ export class AuctionEngine {
       const old = this.rooms.get(prev.auctionId)
       if (old) {
         old.sockets.delete(socket.id)
+        if (old.sockets.size === 0) old.emptySince ??= Date.now()
         socket.leave(`auction:${prev.auctionId}`)
-        void this.refreshParticipants(old).then(() => this.schedulePresenceBroadcast(old))
+        if (prev.identity.role === 'VIEWER') this.schedulePresenceBroadcast(old)
+        else void this.refreshParticipants(old).then(() => this.schedulePresenceBroadcast(old))
       }
     }
 
-    // Under the room lock: a heal/rebuild must never swap the room object out
-    // from under a bid, organizer action or timer tick that is mid-flight.
-    const room = await this.withLock(auctionId, async () => {
-      const existing = this.rooms.get(auctionId)
-      return existing ? this.syncIfStale(existing) : this.getOrBuild(auctionId)
-    })
+    // A heal can swap the room object and an idle room can be evicted while
+    // we wait, so only register on the room that is live right now. The check
+    // and the registration below run in one synchronous step.
+    let room = await this.roomForJoin(auctionId, identity)
+    for (let attempt = 0; this.rooms.get(auctionId) !== room && attempt < 3; attempt++) {
+      room = await this.roomForJoin(auctionId, identity)
+    }
 
     room.sockets.set(socket.id, { role: identity.role, name: identity.name, teamId: identity.teamId })
+    room.emptySince = null
     this.socketRooms.set(socket.id, { auctionId, identity })
     // Join the broadcast room BEFORE building the snapshot we hand back, so no
     // broadcast can fall in the gap between the two (the client ignores delta
     // broadcasts until its full snapshot arrives).
     await socket.join(`auction:${auctionId}`)
 
-    await this.upsertParticipant(room, identity)
-    await this.refreshParticipants(room)
+    if (identity.role === 'VIEWER') {
+      // Viewers are a live count, never listed (see buildState), so their
+      // presence row is fire-and-forget and the participant list is untouched.
+      void this.upsertParticipant(room, identity)
+    } else {
+      await this.upsertParticipant(room, identity)
+      await this.refreshParticipants(room)
+    }
     this.schedulePresenceBroadcast(room)
     return this.buildState(room)
+  }
+
+  /**
+   * The room a join attaches to, built from the DB on first use and healed
+   * if the DB diverged (external reset, REST edits) — at most once every
+   * SYNC_INTERVAL_MS. Seat joins (organizer/manager) heal under the room lock
+   * as before. Viewer joins never hold the lock for a DB read: one viewer per
+   * interval probes the auction row outside the lock, and only a real
+   * divergence takes the lock (which re-reads before swapping anything).
+   */
+  private async roomForJoin(auctionId: string, identity: SocketIdentity): Promise<Room> {
+    const existing = this.rooms.get(auctionId)
+    // Under the room lock: a heal/rebuild must never swap the room object out
+    // from under a bid, organizer action or timer tick that is mid-flight.
+    if (!existing) return this.withLock(auctionId, () => this.getOrBuild(auctionId))
+    if (Date.now() - existing.lastSyncAt < SYNC_INTERVAL_MS) return existing
+    existing.lastSyncAt = Date.now() // claim the check before any await
+    if (identity.role !== 'VIEWER') {
+      return this.withLock(auctionId, async () => {
+        const live = this.rooms.get(auctionId)
+        return live ? this.syncIfStale(live) : this.getOrBuild(auctionId)
+      })
+    }
+    try {
+      const row = await this.db.auction.findUnique({ where: { id: auctionId } })
+      if (!row || !this.diverged(existing, row)) return existing
+    } catch {
+      return existing
+    }
+    return this.withLock(auctionId, async () => {
+      const live = this.rooms.get(auctionId)
+      return live ? this.syncIfStale(live) : this.getOrBuild(auctionId)
+    })
   }
 
   async leave(socket: Socket): Promise<void> {
@@ -173,6 +250,7 @@ export class AuctionEngine {
     const room = this.rooms.get(rec.auctionId)
     if (!room) return
     room.sockets.delete(socket.id)
+    if (room.sockets.size === 0) room.emptySince ??= Date.now()
 
     const stillOnline = [...room.sockets.values()].some(
       (s) => s.role === rec.identity.role && s.name === rec.identity.name,
@@ -187,8 +265,47 @@ export class AuctionEngine {
         // non-fatal
       }
     }
-    await this.refreshParticipants(room)
+    // Viewer rows are not part of the participant list — nothing to re-read.
+    if (rec.identity.role !== 'VIEWER') await this.refreshParticipants(room)
     this.schedulePresenceBroadcast(room)
+  }
+
+  /**
+   * Frees memory held by rooms nobody has been connected to for
+   * EMPTY_ROOM_TTL_MS. The DB is always up to date (every transition is
+   * written before memory changes), so the next join rebuilds the room —
+   * exactly like after a service restart. Done under the room lock, so no
+   * bid, action or tick is mid-flight, and joins re-check the live room.
+   */
+  private async evictIdleRooms(): Promise<void> {
+    const now = Date.now()
+    for (const room of [...this.rooms.values()]) {
+      if (room.sockets.size > 0) {
+        room.emptySince = null
+        continue
+      }
+      room.emptySince ??= now
+      if (now - room.emptySince < EMPTY_ROOM_TTL_MS || room.ticking) continue
+      try {
+        await this.withLock(room.auctionId, async () => {
+          if (this.rooms.get(room.auctionId) !== room || room.sockets.size > 0 || room.ticking) return
+          if (room.presenceTimer) clearTimeout(room.presenceTimer)
+          room.presenceTimer = null
+          this.rooms.delete(room.auctionId)
+          this.building.delete(room.auctionId)
+          console.log(`[engine] evicted idle room ${room.roomCode} (no connections for ${Math.round((now - room.emptySince!) / 60_000)} min)`)
+        })
+        // Drop the lock chain too, unless something queued on it meanwhile.
+        const chain = this.locks.get(room.auctionId)
+        if (chain && !this.rooms.has(room.auctionId)) {
+          void chain.then(() => {
+            if (this.locks.get(room.auctionId) === chain && !this.rooms.has(room.auctionId)) this.locks.delete(room.auctionId)
+          })
+        }
+      } catch (err) {
+        console.error('[engine] room eviction failed:', (err as Error).message)
+      }
+    }
   }
 
   private async upsertParticipant(room: Room, identity: SocketIdentity): Promise<void> {
@@ -223,8 +340,10 @@ export class AuctionEngine {
 
   private async refreshParticipants(room: Room): Promise<void> {
     try {
+      // Seats only: viewers are counted from live sockets, never listed, and a
+      // streamed auction can have hundreds of viewer rows.
       room.participants = await this.db.roomParticipant.findMany({
-        where: { auctionId: room.auctionId },
+        where: { auctionId: room.auctionId, role: { not: 'VIEWER' } },
         orderBy: { joinedAt: 'asc' },
       })
     } catch {
@@ -319,181 +438,239 @@ export class AuctionEngine {
   // ----------------------------------------------------------
   // Client actions
   // ----------------------------------------------------------
-  async placeBid(socket: Socket, identity: SocketIdentity, rawAmount: unknown): Promise<void> {
-    await this.withLock(identity.auctionId, async () => {
+  /**
+   * A manager's bid. Resolves to null once the bid is saved and broadcast, or
+   * to the reason it was refused. Unexpected failures (DB down) throw.
+   *
+   * `receivedAt` is when the event reached the service — taken before any
+   * lock wait. A bid that arrived after the final call (GOING TWICE) ran out
+   * is refused even if the lot has not been closed yet; one that arrived in
+   * time is honoured even when it only gets the lock after the deadline.
+   * `playerId` (newer clients) pins the bid to the player the manager saw.
+   */
+  async placeBid(
+    identity: SocketIdentity,
+    rawAmount: unknown,
+    opts: { playerId?: unknown; receivedAt?: number } = {},
+  ): Promise<string | null> {
+    const receivedAt = opts.receivedAt ?? Date.now()
+    const outcome = await this.withLock(identity.auctionId, async (): Promise<Outcome> => {
       // Resolved inside the lock — a join may have rebuilt the room meanwhile.
       const room = this.rooms.get(identity.auctionId)
-      if (!room) return this.emitError(socket, 'Join the room first')
-      if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
+      if (!room) return this.fail('Join the room first')
+      if (room.status !== 'LIVE') return this.fail('Auction is not live')
+      if (typeof opts.playerId === 'string' && opts.playerId !== room.currentPlayerId) {
+        return this.fail('The player on the block changed — check and bid again')
+      }
+      // Only the last stage's deadline closes the lot; an earlier deadline just
+      // moves on to GOING ONCE/TWICE, where bids are still welcome.
+      if (room.stage === 2 && room.timerEndsAt != null && receivedAt > room.timerEndsAt) {
+        return this.fail('Too late — bidding on this player had closed')
+      }
       const player = room.players.find((p) => p.id === room.currentPlayerId)
-      if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
+      if (!room.currentPlayerId || !player) return this.fail('No player on the block')
       const amount = Number(rawAmount)
       const team = room.teams.find((t) => t.id === identity.teamId)
-      if (!team) return this.emitError(socket, 'You are not assigned to a team in this room')
+      if (!team) return this.fail('You are not assigned to a team in this room')
       if (!(await this.holdsSeat(team, identity.userId))) {
-        return this.emitError(socket, "You are no longer this team's manager — log in with the team's account and rejoin")
+        return this.fail("You are no longer this team's manager — log in with the team's account and rejoin")
       }
       const invalid = this.validateBid(room, team, player, amount, { manual: false })
-      if (invalid) return this.emitError(socket, invalid)
+      if (invalid) return this.fail(invalid)
 
-      const created = await this.db.$transaction(async (tx) => {
-        await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
-        const bid = await tx.bid.create({
-          data: {
-            auctionId: room.auctionId,
-            playerId: player.id,
-            teamId: team.id,
-            teamName: team.name,
-            playerName: player.name,
-            amount,
-            cycle: player.auctionCycle,
-          },
-        })
-        await tx.auction.update({
-          where: { id: room.auctionId },
-          data: { currentBidAmount: amount, currentBidTeamId: team.id, bidCount: { increment: 1 } },
-        })
-        return bid
-      })
+      const createdAt = await this.persistBid(room, team, player, amount)
 
       room.currentBid = { amount, teamId: team.id, teamName: team.name, teamColor: team.color }
       room.currentBidHistory = [
         ...room.currentBidHistory,
-        { teamId: team.id, teamName: team.name, amount, createdAt: created.createdAt.toISOString() },
+        { teamId: team.id, teamName: team.name, amount, createdAt: createdAt.toISOString() },
       ]
       room.stage = 0
       room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
       room.pausedRemainingMs = null
-      this.notify(room, 'success', `${team.name} bids ${bdt(amount)} for ${player.name}`)
+      this.notify(room, 'success', `${team.name} bids ${bdt(amount)} for ${player.name}`, 'bid')
       this.broadcast(room)
     })
+    return outcome || null
   }
 
+  /**
+   * Saves a bid and moves the auction's current bid in ONE statement — one
+   * round trip to a far-away Postgres instead of four for an interactive
+   * transaction. A single statement is atomic by itself and can never be left
+   * idle-in-transaction holding locks, so it needs no BOUNDED_TX_SQL. Same
+   * rows as before: one Bid, plus Auction currentBidAmount/TeamId and bidCount (bids write no
+   * AuctionEvent). A missing auction row fails the Bid foreign key → throws.
+   */
+  private async persistBid(room: Room, team: TeamCache, player: Player, amount: number): Promise<Date> {
+    const createdAt = new Date()
+    // Prisma stores DateTime as UTC in timestamp(3); an ISO string cast to
+    // timestamp keeps the UTC wall time (its "Z" is ignored), exactly as Prisma would.
+    await this.db.$queryRaw`
+      WITH new_bid AS (
+        INSERT INTO "Bid" ("id", "auctionId", "playerId", "teamId", "teamName", "playerName", "amount", "cycle", "createdAt")
+        VALUES (${randomUUID()}, ${room.auctionId}, ${player.id}, ${team.id}, ${team.name}, ${player.name},
+                ${amount}, ${player.auctionCycle}, ${createdAt.toISOString()}::timestamp(3))
+        RETURNING "id"
+      ), moved AS (
+        UPDATE "Auction"
+        SET "currentBidAmount" = ${amount}, "currentBidTeamId" = ${team.id}, "bidCount" = "bidCount" + 1
+        WHERE "id" = ${room.auctionId}
+        RETURNING "id"
+      )
+      SELECT (SELECT count(*) FROM new_bid)::int AS "bids", (SELECT count(*) FROM moved)::int AS "auctions"`
+    return createdAt
+  }
+
+  /**
+   * An organizer action. Resolves to null on success or to the reason it was
+   * refused; unexpected failures (DB down) throw and leave memory untouched.
+   */
   async organizerAction(
-    socket: Socket,
     identity: SocketIdentity,
     action: string | undefined,
     payload: Record<string, unknown> | undefined,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const actor: Actor = { id: identity.userId ?? null, name: identity.name }
-    await this.withLock(identity.auctionId, async () => {
+    const outcome = await this.withLock(identity.auctionId, async (): Promise<Outcome> => {
       // Resolved inside the lock — a join may have rebuilt the room meanwhile.
       const room = this.rooms.get(identity.auctionId)
-      if (!room) return this.emitError(socket, 'Join the room first')
+      if (!room) return this.fail('Join the room first')
       switch (action) {
-        case 'start': return this.actionStart(socket, room)
-        case 'pause': return this.actionPause(socket, room)
-        case 'resume': return this.actionResume(socket, room)
-        case 'next_player': return this.actionNextPlayer(socket, room)
-        case 'select_player': return this.actionSelectPlayer(socket, room, payload)
-        case 'set_category': return this.actionSetCategory(socket, room, payload)
-        case 'skip': return this.actionSkip(socket, room, actor)
-        case 'force_sell': return this.actionForceSell(socket, room, actor)
-        case 'force_unsold': return this.actionForceUnsold(socket, room, actor)
-        case 'reauction': return this.actionReauction(socket, room, payload, actor)
-        case 'manual_bid': return this.manualBid(socket, room, payload, actor)
-        case 'end': return this.actionEnd(socket, room)
-        case 'reopen': return this.actionReopen(socket, room)
-        case 'set_auto_advance': return this.actionSetAutoAdvance(socket, room, payload)
-        case 'set_bid_timer': return this.actionSetBidTimer(socket, room, payload)
-        case 'reauction_unsold': return this.actionReauctionUnsold(socket, room, actor)
-        default: return this.emitError(socket, `Unknown action: ${String(action)}`)
+        case 'start': return this.actionStart(room)
+        case 'pause': return this.actionPause(room)
+        case 'resume': return this.actionResume(room)
+        case 'next_player': return this.actionNextPlayer(room)
+        case 'select_player': return this.actionSelectPlayer(room, payload)
+        case 'set_category': return this.actionSetCategory(room, payload)
+        case 'skip': return this.staleLot(room, payload) ?? this.actionSkip(room, actor)
+        case 'force_sell': return this.staleLot(room, payload) ?? this.actionForceSell(room, actor)
+        case 'force_unsold': return this.staleLot(room, payload) ?? this.actionForceUnsold(room, actor)
+        case 'reauction': return this.actionReauction(room, payload, actor)
+        case 'manual_bid': return this.manualBid(room, payload, actor)
+        case 'end': return this.actionEnd(room)
+        case 'reopen': return this.actionReopen(room)
+        case 'set_auto_advance': return this.actionSetAutoAdvance(room, payload)
+        case 'set_bid_timer': return this.actionSetBidTimer(room, payload)
+        case 'reauction_unsold': return this.actionReauctionUnsold(room, actor)
+        default: return this.fail(`Unknown action: ${String(action)}`)
       }
     })
+    return outcome || null
+  }
+
+  /**
+   * Sell / unsold / skip decide a lot, so they must act on the lot the
+   * organizer was looking at. Newer clients send the player and the bid they
+   * saw; if either moved on meanwhile (a last-second bid, the timer closing
+   * the lot) the click is refused instead of hitting the wrong lot or price.
+   * Old clients send neither and keep the previous behaviour.
+   */
+  private staleLot(room: Room, payload: Record<string, unknown> | undefined): string | null {
+    if (typeof payload?.playerId === 'string' && payload.playerId !== room.currentPlayerId) {
+      return 'The player on the block changed — check and try again'
+    }
+    if (payload && 'bidAmount' in payload && payload.bidAmount !== (room.currentBid?.amount ?? null)) {
+      return 'A new bid came in — check and try again'
+    }
+    return null
   }
 
   // ---------- organizer actions ----------
-  private async actionStart(socket: Socket, room: Room): Promise<void> {
-    if (room.status === 'ENDED') return this.emitError(socket, 'Auction has already ended')
-    if (room.status !== 'READY') return this.emitError(socket, 'Auction already started')
+  private async actionStart(room: Room): Promise<Outcome> {
+    if (room.status === 'ENDED') return this.fail('Auction has already ended')
+    if (room.status !== 'READY') return this.fail('Auction already started')
     // Pick up anything the organizer added since the room was first built.
     await this.resyncPool(room)
-    if (room.players.length === 0) return this.emitError(socket, 'Add at least one player before starting')
-    if (room.teams.length === 0) return this.emitError(socket, 'Add at least one team before starting')
+    if (room.players.length === 0) return this.fail('Add at least one player before starting')
+    if (room.teams.length === 0) return this.fail('Add at least one team before starting')
+    // CATEGORY mode: default to the first category that still has players —
+    // written in the same transaction as the status, so memory only changes
+    // once both are saved.
+    const firstCategory =
+      room.tournament.auctionMode === 'CATEGORY' && !room.currentCategory
+        ? CATEGORY_CODES.find((code) => room.players.some((p) => p.category === code && p.status === 'AVAILABLE'))
+        : undefined
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
-      this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
+      this.db.auction.update({
+        where: { id: room.auctionId },
+        data: { status: 'LIVE', ...(firstCategory ? { currentCategory: firstCategory } : {}) },
+      }),
       this.db.tournament.update({ where: { id: room.tournament.id }, data: { status: 'LIVE' } }),
     ])
     room.status = 'LIVE'
     room.pausedRemainingMs = null
-
-    // CATEGORY mode: default to the first category that still has players.
-    if (room.tournament.auctionMode === 'CATEGORY' && !room.currentCategory) {
-      const first = CATEGORY_CODES.find((code) =>
-        room.players.some((p) => p.category === code && p.status === 'AVAILABLE'),
-      )
-      if (first) {
-        room.currentCategory = first
-        await this.db.auction.update({ where: { id: room.auctionId }, data: { currentCategory: first } })
-      }
-    }
+    if (firstCategory) room.currentCategory = firstCategory
+    // Fire-and-forget: analytics never delays or fails the room.
+    void trackServiceEvent(this.db, 'auction_started', { userId: room.tournament.organizerId, tournamentId: room.tournament.id })
 
     this.notify(room, 'success', 'Auction started! Good luck everyone.')
     if (!room.currentPlayerId) await this.pickNextPlayer(room)
     this.broadcast(room)
   }
 
-  private async actionPause(socket: Socket, room: Room): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
-    room.status = 'PAUSED'
-    room.pausedRemainingMs =
-      room.currentPlayerId && room.timerEndsAt != null
-        ? Math.max(0, room.timerEndsAt - Date.now())
-        : null
+  private async actionPause(room: Room): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
+    // Freeze the clock at the click, not after the write's round trip.
+    const remaining =
+      room.currentPlayerId && room.timerEndsAt != null ? Math.max(0, room.timerEndsAt - Date.now()) : null
+    // DB first: a failed write leaves memory (and the running lot) untouched.
     await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'PAUSED' } })
+    room.status = 'PAUSED'
+    room.pausedRemainingMs = remaining
     this.notify(room, 'info', 'Auction paused')
     this.broadcast(room)
   }
 
-  private async actionResume(socket: Socket, room: Room): Promise<void> {
-    if (room.status !== 'PAUSED') return this.emitError(socket, 'Auction is not paused')
+  private async actionResume(room: Room): Promise<Outcome> {
+    if (room.status !== 'PAUSED') return this.fail('Auction is not paused')
+    await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } })
     room.status = 'LIVE'
     room.timerEndsAt = room.currentPlayerId ? Date.now() + (room.pausedRemainingMs ?? room.sessionTimerSeconds * 1000) : null
     room.pausedRemainingMs = null
     if (!room.currentPlayerId) this.scheduleAutoAdvance(room)
-    await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } })
     this.notify(room, 'info', 'Auction resumed')
     this.broadcast(room)
   }
 
-  private async actionNextPlayer(socket: Socket, room: Room): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
-    if (room.currentPlayerId) return this.emitError(socket, 'A player is already on the block')
+  private async actionNextPlayer(room: Room): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
+    if (room.currentPlayerId) return this.fail('A player is already on the block')
     await this.resyncPool(room)
     await this.pickNextPlayer(room)
     this.broadcast(room)
   }
 
-  private async actionSelectPlayer(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
-    if (room.currentPlayerId) return this.emitError(socket, 'A player is already on the block')
+  private async actionSelectPlayer(room: Room, payload: Record<string, unknown> | undefined): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
+    if (room.currentPlayerId) return this.fail('A player is already on the block')
     await this.resyncPool(room)
     const playerId = String(payload?.playerId ?? '')
     const player = room.players.find((p) => p.id === playerId)
-    if (!player) return this.emitError(socket, 'Player not found')
+    if (!player) return this.fail('Player not found')
     if (player.status !== 'AVAILABLE' && player.status !== 'UNSOLD' && player.status !== 'SKIPPED') {
-      return this.emitError(socket, 'Player is not selectable (SOLD players need Re-auction)')
+      return this.fail('Player is not selectable (SOLD players need Re-auction)')
     }
     await this.putOnBlock(room, player)
     this.broadcast(room)
   }
 
-  private async actionSetCategory(socket: Socket, room: Room, payload: Record<string, unknown> | undefined): Promise<void> {
-    if (room.status === 'ENDED') return this.emitError(socket, 'Auction has ended')
-    if (room.tournament.auctionMode !== 'CATEGORY') return this.emitError(socket, 'This auction is not in category mode')
+  private async actionSetCategory(room: Room, payload: Record<string, unknown> | undefined): Promise<Outcome> {
+    if (room.status === 'ENDED') return this.fail('Auction has ended')
+    if (room.tournament.auctionMode !== 'CATEGORY') return this.fail('This auction is not in category mode')
     const category = String(payload?.category ?? '').toUpperCase()
-    if (!CATEGORY_CODES.includes(category)) return this.emitError(socket, 'Invalid category (A–E)')
-    room.currentCategory = category
+    if (!CATEGORY_CODES.includes(category)) return this.fail('Invalid category (A–E)')
     await this.db.auction.update({ where: { id: room.auctionId }, data: { currentCategory: category } })
+    room.currentCategory = category
     this.notify(room, 'info', `Category ${category} selected`)
     this.broadcast(room)
   }
 
-  private async actionSkip(socket: Socket, room: Room, actor: Actor): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
+  private async actionSkip(room: Room, actor: Actor): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
     const player = room.players.find((p) => p.id === room.currentPlayerId)
-    if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
+    if (!room.currentPlayerId || !player) return this.fail('No player on the block')
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.player.update({ where: { id: player.id }, data: { status: 'SKIPPED' } }),
@@ -515,20 +692,20 @@ export class AuctionEngine {
     room.timerEndsAt = null
     room.pausedRemainingMs = null
     this.scheduleAutoAdvance(room)
-    this.notify(room, 'info', `${player.name} is skipped by the organizer`)
+    this.notify(room, 'info', `${player.name} is skipped by the organizer`, 'unsold')
     this.broadcast(room)
   }
 
-  private async actionForceSell(socket: Socket, room: Room, actor: Actor): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
-    if (!room.currentPlayerId) return this.emitError(socket, 'No player on the block')
-    if (!room.currentBid) return this.emitError(socket, 'No bid to sell — use Force Unsold instead')
+  private async actionForceSell(room: Room, actor: Actor): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
+    if (!room.currentPlayerId) return this.fail('No player on the block')
+    if (!room.currentBid) return this.fail('No bid to sell — use Force Unsold instead')
     await this.finalizeSold(room, actor)
   }
 
-  private async actionForceUnsold(socket: Socket, room: Room, actor: Actor): Promise<void> {
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
-    if (!room.currentPlayerId) return this.emitError(socket, 'No player on the block')
+  private async actionForceUnsold(room: Room, actor: Actor): Promise<Outcome> {
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
+    if (!room.currentPlayerId) return this.fail('No player on the block')
     await this.finalizeUnsold(room, actor)
   }
 
@@ -549,49 +726,46 @@ export class AuctionEngine {
    *    duplicate refund is possible on retry, refresh or a racing organizer
    */
   private async actionReauction(
-    socket: Socket,
     room: Room,
     payload: Record<string, unknown> | undefined,
     actor: Actor,
-  ): Promise<void> {
+  ): Promise<Outcome> {
     // ---- when is re-auction allowed ----
     if (room.status === 'ENDED') {
-      return this.emitError(socket, 'The auction has ended — reopen it before re-auctioning a player.')
+      return this.fail('The auction has ended — reopen it before re-auctioning a player.')
     }
     if (room.status === 'PAUSED') {
-      return this.emitError(socket, 'Resume the auction before re-auctioning a player.')
+      return this.fail('Resume the auction before re-auctioning a player.')
     }
     if (room.status !== 'LIVE') {
-      return this.emitError(socket, 'Start the auction before re-auctioning a player.')
+      return this.fail('Start the auction before re-auctioning a player.')
     }
     if (room.currentPlayerId) {
       const onBlock = room.players.find((p) => p.id === room.currentPlayerId)
-      return this.emitError(
-        socket,
+      return this.fail(
         `${onBlock?.name ?? 'A player'} is on the block — sell, mark unsold or skip them first.`,
       )
     }
 
     const playerId = String(payload?.playerId ?? '')
-    if (!playerId) return this.emitError(socket, 'No player selected')
+    if (!playerId) return this.fail('No player selected')
 
     // Always read the row fresh: the cached pool can lag behind, and the
     // freshness of `status` is what makes the swap below safe.
     const player = await this.db.player.findUnique({ where: { id: playerId } })
     if (!player || player.tournamentId !== room.tournament.id) {
-      return this.emitError(socket, 'Player not found in this tournament')
+      return this.fail('Player not found in this tournament')
     }
     if (player.status === 'LIVE') {
-      return this.emitError(socket, 'This player is already on the auction block.')
+      return this.fail('This player is already on the auction block.')
     }
     if (player.status !== 'SOLD') {
-      return this.emitError(
-        socket,
+      return this.fail(
         `Only a sold player can be re-auctioned — ${player.name} is ${player.status.toLowerCase()}. Pick them from the pool to put them on the block.`,
       )
     }
     if (!player.soldToTeamId || player.soldPrice == null) {
-      return this.emitError(socket, 'That sale has no recorded team or price, so it cannot be refunded.')
+      return this.fail('That sale has no recorded team or price, so it cannot be refunded.')
     }
 
     const soldToTeamId = player.soldToTeamId
@@ -673,13 +847,28 @@ export class AuctionEngine {
       })
     } catch (err) {
       if (err instanceof SaleAlreadyChanged) {
-        return this.emitError(socket, 'That sale has already been changed — refresh the pool and try again.')
+        return this.fail('That sale has already been changed — refresh the pool and try again.')
       }
       throw err
     }
 
-    // Purses and squad counts must be re-read: the new cycle's bid ceilings
-    // are computed from the state *after* the refund, never from stale values.
+    // The transaction committed: apply exactly what it wrote to the cache
+    // first, so that even if the re-read below fails, finalizeSold's
+    // compare-and-swap (status LIVE + auctionCycle) matches the new cycle and
+    // the lot can never be silently dropped, and the refund counts in purses.
+    const reborn: Player = { ...player, status: 'LIVE', soldPrice: null, soldToTeamId: null, auctionCycle: nextCycle }
+    const ci = room.players.findIndex((p) => p.id === player.id)
+    if (ci >= 0) room.players[ci] = reborn
+    else room.players.push(reborn)
+    const ti = room.teams.findIndex((t) => t.id === soldToTeamId)
+    if (ti >= 0) {
+      room.teams[ti] = {
+        ...room.teams[ti],
+        spent: room.teams[ti].spent - refund,
+        squadCount: Math.max(0, room.teams[ti].squadCount - 1),
+      }
+    }
+    // Then re-read purses and squads, picking up anything else that changed.
     await this.resyncPool(room)
 
     room.currentPlayerId = player.id
@@ -702,8 +891,8 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async actionEnd(socket: Socket, room: Room): Promise<void> {
-    if (room.status === 'ENDED') return this.emitError(socket, 'Auction already ended')
+  private async actionEnd(room: Room): Promise<Outcome> {
+    if (room.status === 'ENDED') return this.fail('Auction already ended')
     const liveOnes = room.players.filter((p) => p.status === 'LIVE')
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
@@ -732,6 +921,11 @@ export class AuctionEngine {
     room.timerEndsAt = null
     room.pausedRemainingMs = null
     room.nextPlayerAt = null
+    void trackServiceEvent(this.db, 'auction_completed', {
+      userId: room.tournament.organizerId,
+      tournamentId: room.tournament.id,
+      props: { round: room.round, sold: room.players.filter((p) => p.status === 'SOLD').length },
+    })
     this.notify(room, 'success', 'Auction ended. Final squads are ready!')
     this.broadcast(room)
   }
@@ -741,8 +935,8 @@ export class AuctionEngine {
    * simply goes live again so the organizer can keep going. Without this an
    * accidental End leaves the tournament permanently stuck on COMPLETED.
    */
-  private async actionReopen(socket: Socket, room: Room): Promise<void> {
-    if (room.status !== 'ENDED') return this.emitError(socket, 'The auction is not ended')
+  private async actionReopen(room: Room): Promise<Outcome> {
+    if (room.status !== 'ENDED') return this.fail('The auction is not ended')
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
@@ -769,49 +963,31 @@ export class AuctionEngine {
   }
 
   private async manualBid(
-    socket: Socket,
     room: Room,
     payload: Record<string, unknown> | undefined,
     actor: Actor,
-  ): Promise<void> {
+  ): Promise<Outcome> {
     const teamId = String(payload?.teamId ?? '')
     const team = room.teams.find((t) => t.id === teamId)
-    if (!team) return this.emitError(socket, 'Team not found')
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Auction is not live')
+    if (!team) return this.fail('Team not found')
+    if (room.status !== 'LIVE') return this.fail('Auction is not live')
     const player = room.players.find((p) => p.id === room.currentPlayerId)
-    if (!room.currentPlayerId || !player) return this.emitError(socket, 'No player on the block')
+    if (!room.currentPlayerId || !player) return this.fail('No player on the block')
     const amount = Number(payload?.amount)
     const invalid = this.validateBid(room, team, player, amount, { manual: true })
-    if (invalid) return this.emitError(socket, invalid)
+    if (invalid) return this.fail(invalid)
 
-    await this.db.$transaction(async (tx) => {
-      await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
-      await tx.bid.create({
-        data: {
-          auctionId: room.auctionId,
-          playerId: player.id,
-          teamId: team.id,
-          teamName: team.name,
-          playerName: player.name,
-          amount,
-          cycle: player.auctionCycle,
-        },
-      })
-      await tx.auction.update({
-        where: { id: room.auctionId },
-        data: { currentBidAmount: amount, currentBidTeamId: team.id, bidCount: { increment: 1 } },
-      })
-    })
+    const createdAt = await this.persistBid(room, team, player, amount)
 
     room.currentBid = { amount, teamId: team.id, teamName: team.name, teamColor: team.color }
     room.currentBidHistory = [
       ...room.currentBidHistory,
-      { teamId: team.id, teamName: team.name, amount, createdAt: new Date().toISOString() },
+      { teamId: team.id, teamName: team.name, amount, createdAt: createdAt.toISOString() },
     ]
     room.stage = 0
     room.timerEndsAt = Date.now() + room.sessionTimerSeconds * 1000
     room.pausedRemainingMs = null
-    this.notify(room, 'info', `Manual bid by ${actor.name ?? 'the organizer'}: ${team.name} → ${bdt(amount)}`)
+    this.notify(room, 'info', `Manual bid by ${actor.name ?? 'the organizer'}: ${team.name} → ${bdt(amount)}`, 'bid')
     this.broadcast(room)
   }
 
@@ -839,11 +1015,11 @@ export class AuctionEngine {
       if (candidates.length === 0) {
         const nextCode = CATEGORY_CODES.find((code) => pool.some((p) => p.category === code))
         if (nextCode) {
-          room.currentCategory = nextCode
           await this.db.auction.update({
             where: { id: room.auctionId },
             data: { currentCategory: nextCode },
           })
+          room.currentCategory = nextCode
           this.notify(room, 'info', `Category complete — moving on to Category ${nextCode}`)
           candidates = pool.filter((p) => p.category === nextCode)
         } else {
@@ -893,48 +1069,80 @@ export class AuctionEngine {
     const player = room.players.find((p) => p.id === room.currentPlayerId)
     const bid = room.currentBid
     if (!player || !bid) return
-    // Compare-and-swap on "still on the block in this cycle": if a previous
-    // attempt committed but its reply was lost (dropped DB connection) and the
-    // timer retries, the team must not be charged twice.
-    const applied = await this.db.$transaction(async (tx) => {
-      await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
-      const claimed = await tx.player.updateMany({
-        where: { id: player.id, status: 'LIVE', auctionCycle: player.auctionCycle },
-        data: { status: 'SOLD', soldPrice: bid.amount, soldToTeamId: bid.teamId },
+    // Compare-and-swap on BOTH rows:
+    //  - the auction still has this player on the block with exactly this
+    //    winning bid (amount + team), so an instance whose memory is behind the
+    //    database (it should never run twice, but) can never sell to a lower
+    //    or different bidder;
+    //  - the player is still LIVE in this cycle, so if a previous attempt
+    //    committed but its reply was lost (dropped DB connection) and the
+    //    timer retries, the team is not charged twice.
+    let applied: boolean
+    try {
+      applied = await this.db.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
+        const block = await tx.auction.updateMany({
+          where: {
+            id: room.auctionId,
+            currentPlayerId: player.id,
+            currentBidAmount: bid.amount,
+            currentBidTeamId: bid.teamId,
+          },
+          data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
+        })
+        if (block.count !== 1) return false
+        const claimed = await tx.player.updateMany({
+          where: { id: player.id, status: 'LIVE', auctionCycle: player.auctionCycle },
+          data: { status: 'SOLD', soldPrice: bid.amount, soldToTeamId: bid.teamId },
+        })
+        if (claimed.count !== 1) throw new LotAlreadyChanged() // roll back the auction row too
+        await tx.team.update({ where: { id: bid.teamId }, data: { spent: { increment: bid.amount } } })
+        // Cycle 0 is the first sale; anything above is a sale from a re-auction.
+        await tx.auctionEvent.create({
+          data: this.auditRow(room, {
+            type: 'SALE',
+            cycle: player.auctionCycle,
+            player,
+            teamId: bid.teamId,
+            teamName: bid.teamName,
+            amount: bid.amount,
+            actor,
+          }),
+        })
+        return true
       })
-      if (claimed.count !== 1) return false
-      await tx.team.update({ where: { id: bid.teamId }, data: { spent: { increment: bid.amount } } })
-      await tx.auction.update({
-        where: { id: room.auctionId },
-        data: { currentPlayerId: null, currentBidAmount: null, currentBidTeamId: null },
-      })
-      // Cycle 0 is the first sale; anything above is a sale from a re-auction.
-      await tx.auctionEvent.create({
-        data: this.auditRow(room, {
-          type: 'SALE',
-          cycle: player.auctionCycle,
-          player,
-          teamId: bid.teamId,
-          teamName: bid.teamName,
-          amount: bid.amount,
-          actor,
-        }),
-      })
-      return true
-    })
+    } catch (err) {
+      if (!(err instanceof LotAlreadyChanged)) throw err
+      applied = false
+    }
     if (!applied) {
       const row = await this.db.player.findUnique({ where: { id: player.id } })
-      const alreadySold = row?.status === 'SOLD' && row.soldToTeamId === bid.teamId && row.soldPrice === bid.amount
+      const alreadySold =
+        row?.status === 'SOLD' &&
+        row.soldToTeamId === bid.teamId &&
+        row.soldPrice === bid.amount &&
+        row.auctionCycle === player.auctionCycle
       if (!alreadySold) {
-        // Something else changed the player — trust the database, not memory.
-        console.error(`[engine] sale of ${player.id} skipped: player is ${row?.status ?? 'missing'} in the database`)
-        await this.resyncPool(room)
-        room.currentPlayerId = null
-        room.currentBid = null
-        room.currentBidHistory = []
-        room.stage = 0
-        room.timerEndsAt = null
-        this.broadcast(room)
+        // Memory disagrees with the database (another writer, an external
+        // edit) — trust the database: rebuild the room from it.
+        console.error(
+          `[engine] sale of ${player.id} to ${bid.teamId} at ${bid.amount} skipped: the database no longer matches ` +
+            `(player is ${row?.status ?? 'missing'}) — rebuilding room ${room.roomCode} from the database`,
+        )
+        try {
+          const fresh = await this.replaceRoom(room)
+          this.broadcast(fresh)
+        } catch (rebuildErr) {
+          console.error('[engine] rebuild after a skipped sale failed:', (rebuildErr as Error).message)
+          await this.resyncPool(room)
+          room.currentPlayerId = null
+          room.currentBid = null
+          room.currentBidHistory = []
+          room.stage = 0
+          room.timerEndsAt = null
+          room.lastSyncAt = 0 // let the next join heal it
+          this.broadcast(room)
+        }
         return
       }
       // else: the earlier attempt did commit — just bring memory up to date below.
@@ -970,8 +1178,16 @@ export class AuctionEngine {
     room.timerEndsAt = null
     room.pausedRemainingMs = null
     this.scheduleAutoAdvance(room)
-    this.notify(room, 'success', `${player.name} SOLD to ${bid.teamName} for ${bdt(bid.amount)}!`)
+    this.notify(room, 'success', `${player.name} SOLD to ${bid.teamName} for ${bdt(bid.amount)}!`, 'sold')
     this.broadcast(room)
+    // The sale has committed. Queue the "you were sold" SMS in the background;
+    // it never throws and never delays the room (dedupeKey stops repeats).
+    void queuePlayerSoldSms(this.db, {
+      tournamentId: room.tournament.id,
+      player: { id: player.id, name: player.name, phone: player.phone, auctionCycle: player.auctionCycle },
+      teamName: bid.teamName,
+      price: bid.amount,
+    })
   }
 
   private async finalizeUnsold(room: Room, actor?: Actor): Promise<void> {
@@ -1007,7 +1223,7 @@ export class AuctionEngine {
     room.timerEndsAt = null
     room.pausedRemainingMs = null
     this.scheduleAutoAdvance(room)
-    this.notify(room, 'error', `${player.name} goes UNSOLD`)
+    this.notify(room, 'error', `${player.name} goes UNSOLD`, 'unsold')
     this.broadcast(room)
   }
 
@@ -1019,17 +1235,18 @@ export class AuctionEngine {
    * Only allowed once the current round is complete — never mid-round, never
    * automatically.
    */
-  private async actionReauctionUnsold(socket: Socket, room: Room, actor: Actor): Promise<void> {
-    if (room.status === 'ENDED') return this.emitError(socket, 'The auction is finalized — reopen it first.')
-    if (room.status !== 'LIVE') return this.emitError(socket, 'Resume the auction before starting a new round.')
-    if (room.currentPlayerId) return this.emitError(socket, 'A player is on the block — finish this round first.')
+  private async actionReauctionUnsold(room: Room, actor: Actor): Promise<Outcome> {
+    if (room.status === 'ENDED') return this.fail('The auction is finalized — reopen it first.')
+    if (room.status !== 'LIVE') return this.fail('Resume the auction before starting a new round.')
+    if (room.currentPlayerId) return this.fail('A player is on the block — finish this round first.')
 
-    await this.resyncPool(room)
+    // Strict: who returns is decided from this read, so a stale pool must not be used.
+    await this.resyncPool(room, { strict: true })
     if (room.players.some((p) => p.status === 'AVAILABLE')) {
-      return this.emitError(socket, 'This round still has players to auction — finish the round first.')
+      return this.fail('This round still has players to auction — finish the round first.')
     }
     const returning = room.players.filter((p) => p.status === 'UNSOLD' || p.status === 'SKIPPED')
-    if (returning.length === 0) return this.emitError(socket, 'There are no unsold or skipped players to re-auction.')
+    if (returning.length === 0) return this.fail('There are no unsold or skipped players to re-auction.')
 
     const nextRound = room.round + 1
     const ids = returning.map((p) => p.id)
@@ -1054,6 +1271,13 @@ export class AuctionEngine {
       })
     })
 
+    // Committed: mirror it in the cache first (status + bumped cycle), so a
+    // failed re-read below can never leave old cycles in memory — finalizeSold's
+    // compare-and-swap would then match nothing and silently drop the lot.
+    const returningIds = new Set(ids)
+    room.players = room.players.map((p) =>
+      returningIds.has(p.id) ? { ...p, status: 'AVAILABLE', auctionCycle: p.auctionCycle + 1 } : p,
+    )
     await this.resyncPool(room)
     room.round = nextRound
     room.lastResult = null
@@ -1062,8 +1286,8 @@ export class AuctionEngine {
     if (room.tournament.auctionMode === 'CATEGORY') {
       const first = CATEGORY_CODES.find((code) => room.players.some((p) => p.category === code && p.status === 'AVAILABLE'))
       if (first && first !== room.currentCategory) {
-        room.currentCategory = first
         await this.db.auction.update({ where: { id: room.auctionId }, data: { currentCategory: first } })
+        room.currentCategory = first
       }
     }
     this.scheduleAutoAdvance(room) // Auto Auction ON → the round's first player comes up by itself
@@ -1119,11 +1343,10 @@ export class AuctionEngine {
   }
 
   private async actionSetAutoAdvance(
-    socket: Socket,
     room: Room,
     payload: Record<string, unknown> | undefined,
-  ): Promise<void> {
-    if (typeof payload?.enabled !== 'boolean') return this.emitError(socket, 'enabled must be true or false')
+  ): Promise<Outcome> {
+    if (typeof payload?.enabled !== 'boolean') return this.fail('enabled must be true or false')
     const enabled = payload.enabled
     if (enabled !== room.autoAdvance) {
       await this.db.auction.update({ where: { id: room.auctionId }, data: { autoAdvance: enabled } })
@@ -1144,13 +1367,12 @@ export class AuctionEngine {
   }
 
   private async actionSetBidTimer(
-    socket: Socket,
     room: Room,
     payload: Record<string, unknown> | undefined,
-  ): Promise<void> {
+  ): Promise<Outcome> {
     const seconds = Number(payload?.seconds)
     if (!Number.isInteger(seconds) || seconds < BID_TIMER_RANGE.min || seconds > BID_TIMER_RANGE.max) {
-      return this.emitError(socket, `Bidding duration must be ${BID_TIMER_RANGE.min}–${BID_TIMER_RANGE.max} seconds`)
+      return this.fail(`Bidding duration must be ${BID_TIMER_RANGE.min}–${BID_TIMER_RANGE.max} seconds`)
     }
     if (seconds !== room.bidTimerSeconds) {
       await this.db.auction.update({ where: { id: room.auctionId }, data: { bidTimerSeconds: seconds } })
@@ -1210,12 +1432,12 @@ export class AuctionEngine {
     if (room.stage === 0) {
       room.stage = 1
       room.timerEndsAt = now + room.goingIntervalSeconds * 1000
-      this.notify(room, 'warning', 'GOING ONCE!')
+      this.notify(room, 'warning', 'GOING ONCE!', 'going')
       this.broadcast(room)
     } else if (room.stage === 1) {
       room.stage = 2
       room.timerEndsAt = now + room.goingIntervalSeconds * 1000
-      this.notify(room, 'warning', 'GOING TWICE!')
+      this.notify(room, 'warning', 'GOING TWICE!', 'going')
       this.broadcast(room)
     } else {
       room.timerEndsAt = null
@@ -1247,17 +1469,20 @@ export class AuctionEngine {
   // ----------------------------------------------------------
   // Emission helpers
   // ----------------------------------------------------------
-  private notify(room: Room, level: NotifLevel, message: string): void {
-    this.io.to(`auction:${room.auctionId}`).emit('notification', {
+  private notify(room: Room, level: NotifLevel, message: string, kind: NotifKind = 'system'): void {
+    const note: RoomNotification = {
       id: randomUUID(),
       level,
       message,
       at: new Date().toISOString(),
-    })
+      kind,
+    }
+    this.io.to(`auction:${room.auctionId}`).emit('notification', note)
   }
 
-  private emitError(socket: Socket, message: string): void {
-    socket.emit('error', { message })
+  /** Refusal reason for the caller (index.ts reports it via the ack, or an 'error' event for old clients). */
+  private fail(message: string): string {
+    return message
   }
 
   /**
@@ -1306,31 +1531,44 @@ export class AuctionEngine {
     return pending
   }
 
-  /** Heals in-memory state if the DB diverged (external reset, REST edits). */
+  /** Does the auction row disagree with memory on anything the engine owns? */
+  private diverged(room: Room, row: Auction): boolean {
+    return (
+      row.status !== room.status ||
+      row.currentPlayerId !== room.currentPlayerId ||
+      row.currentCategory !== room.currentCategory ||
+      row.currentBidAmount !== (room.currentBid?.amount ?? null) ||
+      row.currentBidTeamId !== (room.currentBid?.teamId ?? null)
+    )
+  }
+
+  /** Heals in-memory state if the DB diverged (external reset, REST edits). Runs under the room lock. */
   private async syncIfStale(room: Room): Promise<Room> {
     try {
+      room.lastSyncAt = Date.now()
       const row = await this.db.auction.findUnique({ where: { id: room.auctionId } })
       if (!row) return room
-      const stale =
-        row.status !== room.status ||
-        row.currentPlayerId !== room.currentPlayerId ||
-        row.currentCategory !== room.currentCategory ||
-        row.currentBidAmount !== (room.currentBid?.amount ?? null)
-      if (!stale) {
+      if (!this.diverged(room, row)) {
         this.applySettings(room, row)
         return room
       }
-      if (room.presenceTimer) {
-        clearTimeout(room.presenceTimer)
-        room.presenceTimer = null
-      }
-      const fresh = await this.buildRoom(room.auctionId)
-      fresh.sockets = room.sockets // keep live presence
-      this.rooms.set(room.auctionId, fresh)
-      return fresh
+      return await this.replaceRoom(room)
     } catch {
       return room
     }
+  }
+
+  /** Rebuilds a room from the database and swaps it in, keeping live presence. Runs under the room lock. */
+  private async replaceRoom(room: Room): Promise<Room> {
+    if (room.presenceTimer) {
+      clearTimeout(room.presenceTimer)
+      room.presenceTimer = null
+    }
+    const fresh = await this.buildRoom(room.auctionId)
+    fresh.sockets = room.sockets // keep live presence
+    fresh.emptySince = room.emptySince
+    this.rooms.set(room.auctionId, fresh)
+    return fresh
   }
 
   private async buildRoom(auctionId: string): Promise<Room> {
@@ -1371,6 +1609,8 @@ export class AuctionEngine {
       presenceTimer: null,
       lastPlayersHash: null,
       lastParticipantsHash: null,
+      lastSyncAt: Date.now(),
+      emptySince: null,
     }
     await this.refreshCache(room)
 
@@ -1477,7 +1717,7 @@ export class AuctionEngine {
    * so squad, budget and pool edits made through the REST API while the auction
    * is running are picked up instead of going unnoticed.
    */
-  private async resyncPool(room: Room): Promise<void> {
+  private async resyncPool(room: Room, opts: { strict?: boolean } = {}): Promise<void> {
     try {
       const [auctionRow, tournamentRow, teams, players, squadGroups] = await Promise.all([
         this.db.auction.findUnique({ where: { id: room.auctionId } }),
@@ -1501,8 +1741,11 @@ export class AuctionEngine {
       room.players = players
       if (tournamentRow) room.tournament = tournamentRow
       if (auctionRow) this.applySettings(room, auctionRow)
-    } catch {
-      // keep the previous cache — a stale pool beats dropping the live room
+    } catch (err) {
+      console.error(`[engine] pool re-read failed for room ${room.roomCode}:`, (err as Error).message)
+      // Strict callers decide something from this read — they must not act on a stale pool.
+      if (opts.strict) throw err
+      // Otherwise keep the previous cache — a stale pool beats dropping the live room.
     }
   }
 

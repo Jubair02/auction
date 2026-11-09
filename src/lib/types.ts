@@ -79,6 +79,39 @@ export interface SocketIdentity {
 }
 
 // ---------- REST shapes ----------
+/** FREE tournaments have team/player limits and an overlay watermark; PRO unlocks everything. */
+export type Plan = 'FREE' | 'PRO'
+/**
+ * What the signed-in user may do with a tournament:
+ * OWNER / ADMIN — everything; CO_ORGANIZER — everything except billing, staff and deletion;
+ * AUCTIONEER — view it and run the live room; MANAGER — a team manager's read-only squad view.
+ */
+export type TournamentAccess = 'OWNER' | 'ADMIN' | 'CO_ORGANIZER' | 'AUCTIONEER' | 'MANAGER'
+export type PaymentMethod = 'BKASH' | 'NAGAD'
+export type LeagueFormat = 'ROUND_ROBIN' | 'DOUBLE_ROUND_ROBIN' | 'GROUPS_KNOCKOUT' | 'KNOCKOUT'
+export type SponsorTier = 'TITLE' | 'ASSOCIATE' | 'SPONSOR' | 'PARTNER'
+
+export interface SponsorDTO {
+  id: string
+  name: string
+  logoUrl: string | null
+  url: string | null
+  tier: SponsorTier
+  sortOrder: number
+}
+
+/**
+ * What public surfaces (overlay, room, results, league pages, share cards) show.
+ * Sponsors and hiding NeelamGhor branding apply only to PRO tournaments.
+ */
+export interface PublicBranding {
+  name: string
+  logoUrl: string | null
+  brandColor: string | null
+  hidePlatform: boolean
+  sponsors: SponsorDTO[]
+}
+
 export interface TournamentSummary {
   id: string
   name: string
@@ -102,6 +135,9 @@ export interface TournamentSummary {
   teamCount: number
   roomCode: string | null
   auctionStatus: AuctionStatus | null
+  plan: Plan
+  /** Set for tournaments the user helps run as staff (not the owner). */
+  staffRole?: 'CO_ORGANIZER' | 'AUCTIONEER' | null
 }
 
 export interface PlayerDTO {
@@ -162,7 +198,28 @@ export interface TournamentDetail {
     description: string | null
     logoUrl: string | null
     bannerUrl: string | null
+    plan: Plan
+    proSince: string | null
+    resultsPublic: boolean
+    /** Player registration fee in ৳ (null = free), paid to the organizer's own numbers. */
+    registrationFee: number | null
+    feeBkashNumber: string | null
+    feeNagadNumber: string | null
+    feeInstructions: string | null
+    smsEnabled: boolean
+    smsLang: 'bn' | 'en'
+    /** League settings (null points = sport defaults). */
+    leagueFormat: LeagueFormat | null
+    pointsWin: number | null
+    pointsDraw: number | null
+    pointsLoss: number | null
+    oversPerInnings: number | null
+    /** Branding (applies on PRO only). */
+    brandColor: string | null
+    brandHidePlatform: boolean
   }
+  /** The caller's access level for this tournament. */
+  myAccess: TournamentAccess
   players: PlayerDTO[]
   teams: TeamDTO[]
   auction: AuctionDTO | null
@@ -328,6 +385,12 @@ export interface RoomNotification {
   level: 'info' | 'success' | 'warning' | 'error'
   message: string
   at: string
+  /**
+   * What the notice is about: 'bid' (a bid was placed), 'going' (GOING ONCE /
+   * GOING TWICE), 'sold', 'unsold' (unsold or skipped) or 'system' (anything
+   * else). Optional: older services do not send it.
+   */
+  kind?: 'bid' | 'going' | 'sold' | 'unsold' | 'system'
 }
 
 export type OrganizerAction =
@@ -415,4 +478,199 @@ export interface AdminStats {
   players: number
   bids: number
   totalValue: number
+}
+
+// ---------- Plans & payments ----------
+/** GET /api/plans — Pro price, Free limits and the platform's payment numbers. */
+export interface PlanInfo {
+  proPrice: number
+  freeMaxTeams: number
+  freeMaxPlayers: number
+  bkashNumber: string | null
+  nagadNumber: string | null
+  instructions: string | null
+}
+
+export type PaymentStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+/** A manual bKash / Nagad payment for a tournament's Pro plan. */
+export interface PaymentDTO {
+  id: string
+  tournamentId: string | null
+  tournamentName: string
+  payerName: string
+  amount: number
+  method: PaymentMethod
+  trxId: string
+  senderNumber: string
+  status: PaymentStatus
+  reviewNote: string | null
+  reviewedAt: string | null
+  createdAt: string
+}
+
+/** NONE = no fee; CLAIMED = the player says they paid; VERIFIED / REJECTED by the organizer. */
+export type RegistrationPayStatus = 'NONE' | 'CLAIMED' | 'VERIFIED' | 'REJECTED'
+
+/** A player's self-registration as the organizer sees it. */
+export interface RegistrationDTO {
+  id: string
+  name: string
+  phone: string
+  role: string
+  previousTeam: string | null
+  photoUrl: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  feeAmount: number | null
+  payMethod: PaymentMethod | null
+  payTrxId: string | null
+  paySender: string | null
+  payStatus: RegistrationPayStatus
+  smsConsent: boolean
+  createdAt: string
+}
+
+// ---------- Public results & overlay plan (Phase 2) ----------
+// Declaration merging: these add fields to ResultsData / RoomInfo above.
+
+/** Who is looking at a results page: tournament staff, a team manager in it, or anyone (public link). */
+export type ResultsViewer = 'staff' | 'manager' | 'public'
+
+export interface ResultsData {
+  /** The organizer's "results public" switch. */
+  resultsPublic: boolean
+  /** Anyone with the link can see these results right now (public and the auction is over). */
+  publicNow: boolean
+  viewer: ResultsViewer
+}
+
+export interface RoomInfo {
+  /** FREE rooms show a small "Powered by NeelamGhor" mark on the stream overlay. */
+  plan: Plan
+}
+
+// ---------- League: fixtures, results, standings, stats (Phase 3) ----------
+// Pure logic and the shapes below live in lib/league.ts.
+export type {
+  FormLetter,
+  Leaderboard,
+  LeaderboardKey,
+  LeaderRow,
+  MatchStage,
+  MatchStatus,
+  ResultType,
+  StandingRow,
+} from './league'
+import type { Leaderboard, MatchStage, MatchStatus, ResultType, StandingRow } from './league'
+
+export interface LeagueTeamDTO {
+  id: string
+  name: string
+  color: string | null
+  logoUrl: string | null
+  groupName: string | null
+}
+
+export interface MatchDTO {
+  id: string
+  matchNumber: number
+  stage: MatchStage
+  groupName: string | null
+  round: number
+  homeTeamId: string | null
+  awayTeamId: string | null
+  /** Placeholder until the team is known, e.g. "Winner M7" / "Runner-up Group B" (see lib/league.ts). */
+  homeLabel: string | null
+  awayLabel: string | null
+  scheduledAt: string | null
+  venue: string | null
+  status: MatchStatus
+  homeScore: number | null
+  awayScore: number | null
+  /** Cricket: wickets lost and legal balls faced. */
+  homeWickets: number | null
+  awayWickets: number | null
+  homeBalls: number | null
+  awayBalls: number | null
+  winnerTeamId: string | null
+  resultType: ResultType | null
+  resultNote: string | null
+  playerOfMatchId: string | null
+  playerOfMatchName: string | null
+  /** Player stat lines recorded for this match. */
+  statsCount: number
+}
+
+/** One points table: a group (groupName) or the single league table (null). */
+export interface StandingsTableDTO {
+  groupName: string | null
+  /** Positions that go through to the knockouts (0 = none / no knockouts). */
+  qualifyCount: number
+  /** Every match of the table is completed or abandoned. */
+  complete: boolean
+  rows: StandingRow[]
+}
+
+export interface SquadPlayerDTO {
+  id: string
+  name: string
+  role: string
+  photoUrl: string | null
+}
+
+export interface LeagueSettingsDTO {
+  format: LeagueFormat | null
+  /** As saved (null = sport default). */
+  pointsWin: number | null
+  pointsDraw: number | null
+  pointsLoss: number | null
+  oversPerInnings: number | null
+  resultsPublic: boolean
+  /** What the table actually uses. */
+  effectivePoints: { win: number; draw: number; loss: number }
+}
+
+/** GET /api/tournaments/:id/league (staff) and GET /api/league/:id (public). */
+export interface LeagueData {
+  tournament: {
+    id: string
+    name: string
+    sport: Sport
+    sportName: string | null
+    logoUrl: string | null
+    bannerUrl: string | null
+    location: string | null
+    startDate: string | null
+  }
+  settings: LeagueSettingsDTO
+  teams: LeagueTeamDTO[]
+  /** Ordered by round, then kick-off, then match number. */
+  matches: MatchDTO[]
+  standings: StandingsTableDTO[]
+  leaderboards: Leaderboard[]
+  /** Players sold to each team (staff API only; empty on the public API). */
+  squads: { teamId: string; players: SquadPlayerDTO[] }[]
+  viewer: ResultsViewer
+  /** Public API only (null on the staff API). */
+  branding: PublicBranding | null
+}
+
+/** GET/PUT /api/matches/:id/stats — one player's numbers (null = not recorded). */
+export interface MatchStatDTO {
+  playerId: string
+  teamId: string | null
+  runs: number | null
+  ballsFaced: number | null
+  fours: number | null
+  sixes: number | null
+  wickets: number | null
+  ballsBowled: number | null
+  runsConceded: number | null
+  catches: number | null
+  goals: number | null
+  assists: number | null
+  yellowCards: number | null
+  redCards: number | null
+  saves: number | null
+  points: number | null
 }

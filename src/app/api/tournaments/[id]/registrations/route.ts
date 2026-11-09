@@ -1,7 +1,11 @@
 import { randomBytes } from 'crypto'
+import { after } from 'next/server'
+import type { Tournament } from '@prisma/client'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { DEFAULT_CATEGORY_BASE_PRICES } from '@/lib/types'
+import { notifyRegistrationDecision } from '@/lib/notify'
+import { assertWithinPlan } from '@/lib/plans'
+import { DEFAULT_CATEGORY_BASE_PRICES, type RegistrationDTO, type RegistrationPayStatus } from '@/lib/types'
 import {
   coercePositiveInt,
   insertPlayersNumbered,
@@ -31,10 +35,52 @@ export async function GET(_req: Request, { params }: RouteParams) {
     orderBy: { createdAt: 'desc' },
     take: 1000,
   })
+  const t = loaded.tournament
   return Response.json({
-    registrationOpen: loaded.tournament.registrationOpen,
-    registrationCode: loaded.tournament.registrationCode,
-    registrations: registrations.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    registrationOpen: t.registrationOpen,
+    registrationCode: t.registrationCode,
+    // The fee settings, so the tab can edit them without the full tournament.
+    registrationFee: t.registrationFee,
+    feeBkashNumber: t.feeBkashNumber,
+    feeNagadNumber: t.feeNagadNumber,
+    feeInstructions: t.feeInstructions,
+    plan: t.plan === 'PRO' ? 'PRO' : 'FREE',
+    registrations: registrations.map(
+      (r): RegistrationDTO => ({
+        id: r.id,
+        name: r.name,
+        phone: r.phone,
+        role: r.role,
+        previousTeam: r.previousTeam,
+        photoUrl: r.photoUrl,
+        status: r.status as RegistrationDTO['status'],
+        feeAmount: r.feeAmount,
+        payMethod: r.payMethod === 'BKASH' || r.payMethod === 'NAGAD' ? r.payMethod : null,
+        payTrxId: r.payTrxId,
+        paySender: r.paySender,
+        payStatus: r.payStatus as RegistrationPayStatus,
+        smsConsent: r.smsConsent,
+        createdAt: r.createdAt.toISOString(),
+      }),
+    ),
+  })
+}
+
+/** Texts each player the organizer's decision (if the tournament has SMS on) once the response is sent. */
+function notifyDecisions(
+  tournament: Tournament,
+  regs: { id: string; name: string; phone: string; smsConsent: boolean }[],
+  decision: 'APPROVED' | 'REJECTED',
+) {
+  if (regs.length === 0) return
+  after(async () => {
+    for (const r of regs) {
+      try {
+        await notifyRegistrationDecision(tournament, r, decision)
+      } catch (err) {
+        console.error('[registrations] queueing the decision SMS failed:', (err as Error).message)
+      }
+    }
   })
 }
 
@@ -59,8 +105,9 @@ export async function POST(req: Request, { params }: RouteParams) {
   return Response.json(updated)
 }
 
-// PATCH /api/tournaments/:id/registrations {ids, action: 'approve'|'reject', category?, basePrice?}
-// Approving turns PENDING sign-ups into real players (in one transaction).
+// PATCH /api/tournaments/:id/registrations
+//   {ids, action: 'approve'|'reject', category?, basePrice?} — approving turns PENDING sign-ups into real players.
+//   {ids, action: 'verify_payment'|'reject_payment'} — the organizer checked the fee's Transaction ID.
 export async function PATCH(req: Request, { params }: RouteParams) {
   const { id } = await params
   const auth = await requireSession()
@@ -73,7 +120,21 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   if (!body) return jsonError('Invalid request body', 400)
   const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string').slice(0, 500) : []
   if (ids.length === 0) return jsonError('Select at least one registration', 400)
-  if (body.action !== 'approve' && body.action !== 'reject') return jsonError('action must be approve or reject', 400)
+  const action = body.action
+  if (action !== 'approve' && action !== 'reject' && action !== 'verify_payment' && action !== 'reject_payment') {
+    return jsonError('action must be approve, reject, verify_payment or reject_payment', 400)
+  }
+
+  if (action === 'verify_payment' || action === 'reject_payment') {
+    const payStatus = action === 'verify_payment' ? 'VERIFIED' : 'REJECTED'
+    // Only sign-ups that claimed a fee payment; the organizer may correct an earlier call.
+    const result = await db.playerRegistration.updateMany({
+      where: { id: { in: ids }, tournamentId: id, payStatus: { in: ['CLAIMED', 'VERIFIED', 'REJECTED'] } },
+      data: { payStatus },
+    })
+    if (result.count === 0) return jsonError('Those registrations have no fee payment to review', 409)
+    return Response.json({ updated: result.count, payStatus })
+  }
 
   const pending = await db.playerRegistration.findMany({
     where: { id: { in: ids }, tournamentId: id, status: 'PENDING' },
@@ -81,13 +142,19 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   })
   if (pending.length === 0) return jsonError('Those registrations were already handled', 409)
 
-  if (body.action === 'reject') {
-    await db.playerRegistration.updateMany({
-      where: { id: { in: pending.map((r) => r.id) }, status: 'PENDING' },
-      data: { status: 'REJECTED' },
-    })
-    return Response.json({ rejected: pending.length })
+  if (action === 'reject') {
+    const rejectedRows = await db.$queryRaw<{ id: string }[]>`
+      UPDATE "PlayerRegistration" SET "status" = 'REJECTED'
+      WHERE "id" = ANY(${pending.map((r) => r.id)}::text[]) AND "tournamentId" = ${id} AND "status" = 'PENDING'
+      RETURNING "id"`
+    const rejectedIds = new Set(rejectedRows.map((r) => r.id))
+    notifyDecisions(tournament, pending.filter((r) => rejectedIds.has(r.id)), 'REJECTED')
+    return Response.json({ rejected: rejectedIds.size })
   }
+
+  // Free plan: the approved players must still fit within its player limit.
+  const overLimit = await assertWithinPlan(tournament, { players: pending.length })
+  if (overLimit) return overLimit
 
   const category = tournament.auctionMode === 'CATEGORY' ? normalizeCategory(body.category) : null
   if (category === false) return jsonError('Category must be one of A, B, C, D, E', 400)
@@ -136,5 +203,6 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   await db.$transaction(
     claimed.map((r, i) => db.playerRegistration.update({ where: { id: r.id }, data: { playerId: inserted[i]?.id ?? null } })),
   )
+  notifyDecisions(tournament, claimed, 'APPROVED')
   return Response.json({ approved: inserted.length })
 }

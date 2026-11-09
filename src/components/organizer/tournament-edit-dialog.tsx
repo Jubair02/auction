@@ -26,18 +26,9 @@ import {
 import { apiPatch, ApiError } from '@/lib/api'
 import type { Sport, TournamentDetail } from '@/lib/types'
 import { OtherSportFields, otherSportError, otherSportFrom, otherSportPayload, type OtherSportValue } from '@/components/organizer/other-sport-fields'
-import { type Strings, useStrings } from '@/lib/i18n'
-
-// Stored on the tournament and shown as-is elsewhere, so they stay in English.
-const TOURNAMENT_TYPES = [
-  'Corporate Cricket',
-  'University Tournament',
-  'Local Club Tournament',
-  'School Tournament',
-  'Friends/Community Tournament',
-  'Indoor Cricket',
-  '6-a-side / 7-a-side Football',
-]
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { Switch } from '@/components/ui/switch'
+import { tournamentTypeLabel, tournamentTypeOptions } from '@/lib/tournament-types'
 
 /** Sentinel for "no type" — Radix Select cannot take an empty string value. */
 const NO_TYPE = '__none__'
@@ -72,6 +63,9 @@ const STRINGS = {
     logo: 'Logo',
     banner: 'Banner',
     description: 'Description',
+    resultsPublic: 'Public results page',
+    resultsPublicHint:
+      'After the auction ends, anyone with the link can see the squads and prices (never phone numbers) and share them. Turn off to keep results to your staff and team managers.',
     cancel: 'Cancel',
     save: 'Save changes',
   },
@@ -102,6 +96,9 @@ const STRINGS = {
     logo: 'লোগো',
     banner: 'ব্যানার',
     description: 'বিবরণ',
+    resultsPublic: 'ফলাফলের পাবলিক পেজ',
+    resultsPublicHint:
+      'নিলাম শেষ হলে লিংক থাকলে যে কেউ দল ও দাম দেখতে ও শেয়ার করতে পারবে (ফোন নম্বর কখনো নয়)। বন্ধ রাখলে ফলাফল শুধু আপনার স্টাফ ও দলের ম্যানেজাররা দেখবেন।',
     cancel: 'বাতিল',
     save: 'পরিবর্তন সংরক্ষণ করুন',
   },
@@ -132,6 +129,8 @@ const STRINGS = {
   logo: string
   banner: string
   description: string
+  resultsPublic: string
+  resultsPublicHint: string
   cancel: string
   save: string
 }>
@@ -157,6 +156,7 @@ export function TournamentEditDialog({
   onSaved: () => Promise<void>
 }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   const [name, setName] = useState(tournament.name)
   const [sport, setSport] = useState<Sport>(tournament.sport)
   const [other, setOther] = useState<OtherSportValue>(() => otherSportFrom(tournament))
@@ -169,6 +169,7 @@ export function TournamentEditDialog({
   const [auctionAt, setAuctionAt] = useState(toLocalInput(tournament.auctionAt))
   const [auctionMode, setAuctionMode] = useState(tournament.auctionMode)
   const [basePrice, setBasePrice] = useState(String(tournament.basePrice))
+  const [resultsPublic, setResultsPublic] = useState(tournament.resultsPublic ?? true)
   const [saving, setSaving] = useState(false)
 
   // Mode and base price drive the live engine — frozen once the gavel is in play.
@@ -185,7 +186,7 @@ export function TournamentEditDialog({
       return
     }
 
-    const otherError = sport === 'OTHER' ? otherSportError(other) : null
+    const otherError = sport === 'OTHER' ? otherSportError(other, lang) : null
     if (otherError) {
       toast.error(otherError)
       return
@@ -205,6 +206,7 @@ export function TournamentEditDialog({
         startDate: startDate ? new Date(startDate).toISOString() : null,
         auctionAt: auctionAt ? new Date(auctionAt).toISOString() : null,
         ...(locked ? {} : { auctionMode, basePrice: price }),
+        resultsPublic,
       })
       toast.success(s.updated)
       onOpenChange(false)
@@ -230,7 +232,7 @@ export function TournamentEditDialog({
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="te-name">
-              {s.name} <span className="text-rose-600">*</span>
+              {s.name} <span className="text-rose-600 dark:text-rose-400">*</span>
             </Label>
             <Input id="te-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className="h-10" />
           </div>
@@ -264,9 +266,9 @@ export function TournamentEditDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NO_TYPE}>{s.noType}</SelectItem>
-                {TOURNAMENT_TYPES.map((t) => (
+                {tournamentTypeOptions(tournament.tournamentType).map((t) => (
                   <SelectItem key={t} value={t}>
-                    {t}
+                    {tournamentTypeLabel(t, lang)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -358,6 +360,14 @@ export function TournamentEditDialog({
               rows={3}
               maxLength={2000}
             />
+          </div>
+
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3 sm:col-span-2">
+            <div className="space-y-0.5">
+              <Label htmlFor="te-results-public">{s.resultsPublic}</Label>
+              <p className="text-xs text-muted-foreground">{s.resultsPublicHint}</p>
+            </div>
+            <Switch id="te-results-public" checked={resultsPublic} onCheckedChange={setResultsPublic} />
           </div>
         </div>
 

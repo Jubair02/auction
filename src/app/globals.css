@@ -78,38 +78,42 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Dark theme: deep surfaces tinted toward the brand teal (hue 195) so the
+   primary colour sits naturally on them; text and borders keep WCAG AA
+   contrast. Toggle: lib/theme.ts (class on <html>). */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.70 0.11 175);
-  --primary-foreground: oklch(0.145 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  color-scheme: dark;
+  --background: oklch(0.165 0.012 195);
+  --foreground: oklch(0.965 0.004 195);
+  --card: oklch(0.205 0.014 195);
+  --card-foreground: oklch(0.965 0.004 195);
+  --popover: oklch(0.215 0.015 195);
+  --popover-foreground: oklch(0.965 0.004 195);
+  --primary: oklch(0.74 0.12 178);
+  --primary-foreground: oklch(0.17 0.02 195);
+  --secondary: oklch(0.27 0.015 195);
+  --secondary-foreground: oklch(0.965 0.004 195);
+  --muted: oklch(0.255 0.014 195);
+  --muted-foreground: oklch(0.74 0.012 195);
+  --accent: oklch(0.28 0.018 195);
+  --accent-foreground: oklch(0.965 0.004 195);
+  --destructive: oklch(0.69 0.19 22);
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.74 0.12 178);
+  --chart-1: oklch(0.74 0.12 178);
+  --chart-2: oklch(0.78 0.15 75);
+  --chart-3: oklch(0.7 0.15 250);
+  --chart-4: oklch(0.72 0.17 330);
+  --chart-5: oklch(0.7 0.17 30);
+  --sidebar: oklch(0.205 0.014 195);
+  --sidebar-foreground: oklch(0.965 0.004 195);
+  --sidebar-primary: oklch(0.74 0.12 178);
+  --sidebar-primary-foreground: oklch(0.17 0.02 195);
+  --sidebar-accent: oklch(0.28 0.018 195);
+  --sidebar-accent-foreground: oklch(0.965 0.004 195);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: oklch(0.74 0.12 178);
 }
 
 @layer base {
@@ -165,4 +169,23 @@
 * {
   scrollbar-width: thin;
   scrollbar-color: hsl(215 16% 47% / 0.35) transparent;
+}
+
+/* Data saver (html[data-low-data], see src/lib/low-data.ts) and the OS
+   "reduce motion" setting: stop decorative CSS animations and transitions.
+   Loading spinners keep turning so a busy state is still visible. */
+html[data-low-data] *:not(.animate-spin),
+html[data-low-data] *::before,
+html[data-low-data] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

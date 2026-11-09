@@ -5,8 +5,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { useAuctionSocket, useCountdown } from '@/lib/use-auction-socket'
-import type { JoinResult, RoomInfo, RoomState } from '@/lib/types'
+import type { JoinResult, Plan, PublicBranding, RoomInfo, RoomState } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { brandPalette, type BrandPalette } from '@/lib/brand-color'
+import { SponsorStrip } from '@/components/shared/sponsor-strip'
 
 const STRINGS = {
   en: {
@@ -28,6 +30,7 @@ const STRINGS = {
     complete: 'Auction complete — thanks for watching!',
     nextUp: 'Next player coming up…',
     poolLine: (sold: number, available: number) => `${sold} sold · ${available} still to go`,
+    poweredBy: ['Powered by', ''] as [string, string],
   },
   bn: {
     roomNotFound: (code: string) => `রুম ${code} পাওয়া যায়নি`,
@@ -48,6 +51,7 @@ const STRINGS = {
     complete: 'নিলাম শেষ — দেখার জন্য ধন্যবাদ!',
     nextUp: 'পরের খেলোয়াড় আসছেন…',
     poolLine: (sold: number, available: number) => `${sold} জন বিক্রি · আরও ${available} জন বাকি`,
+    poweredBy: ['', 'দ্বারা চালিত'] as [string, string],
   },
 } satisfies Strings<{
   roomNotFound: (code: string) => string
@@ -68,6 +72,8 @@ const STRINGS = {
   complete: string
   nextUp: string
   poolLine: (sold: number, available: number) => string
+  /** Text before / after the brand name. */
+  poweredBy: [string, string]
 }>
 
 const OVERLAY_NAME = 'Stream overlay'
@@ -84,6 +90,10 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
   const [token, setToken] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  // Unknown until the room info loads — no mark rather than a flash of one on a Pro stream.
+  const [plan, setPlan] = useState<Plan | null>(null)
+  // PRO branding (brand colour + sponsors); FREE rooms get none from the API.
+  const [branding, setBranding] = useState<PublicBranding | null>(null)
 
   // Transparent page for OBS; restored if the user navigates back into the app.
   useEffect(() => {
@@ -103,7 +113,11 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
     let cancelled = false
     void (async () => {
       try {
-        await apiGet<RoomInfo>(`/api/rooms/${roomCode}`)
+        const info = await apiGet<RoomInfo & { branding?: PublicBranding }>(`/api/rooms/${roomCode}`)
+        if (!cancelled) {
+          setPlan(info.plan === 'PRO' ? 'PRO' : 'FREE')
+          setBranding(info.branding ?? null)
+        }
         const res = await apiPost<JoinResult>(`/api/rooms/${roomCode}/join`, { role: 'viewer', name: OVERLAY_NAME })
         if (!cancelled) setToken(res.socketToken)
       } catch (e) {
@@ -131,12 +145,69 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
   if (notFound) {
     return <OverlayShell green={green}><Bar><p className="text-[2vw] font-bold">{t.roomNotFound(roomCode)}</p></Bar></OverlayShell>
   }
-  if (!sock.state) return <OverlayShell green={green} />
-  return <OverlayContent state={sock.state} clockOffset={sock.clockOffset} green={green} />
+  // FREE: the "Powered by NeelamGhor" mark. PRO shows no NeelamGhor marks at all.
+  const watermark = plan === 'FREE' ? <PoweredBy /> : null
+  const sponsors =
+    plan === 'PRO' && branding && branding.sponsors.length > 0 ? (
+      <SponsorStrip
+        sponsors={branding.sponsors}
+        variant="overlay"
+        brandColor={branding.brandColor}
+        className="absolute left-[2vw] top-[2vw] max-w-[60vw]"
+      />
+    ) : null
+  if (!sock.state) {
+    return (
+      <OverlayShell green={green}>
+        {sponsors}
+        {watermark}
+      </OverlayShell>
+    )
+  }
+  return (
+    <OverlayContent
+      state={sock.state}
+      clockOffset={sock.clockOffset}
+      green={green}
+      brandColor={plan === 'PRO' ? (branding?.brandColor ?? null) : null}
+    >
+      {sponsors}
+      {watermark}
+    </OverlayContent>
+  )
 }
 
-function OverlayContent({ state, clockOffset, green }: { state: RoomState; clockOffset: number; green: boolean }) {
+/** Free-plan mark: small, bottom-right, below the lower third — never over the action. */
+function PoweredBy() {
   const t = useStrings(STRINGS)
+  return (
+    <div className="pointer-events-none absolute bottom-[0.6vw] right-[2vw] flex items-center gap-[0.4vw] rounded-full bg-slate-950/60 px-[0.8vw] py-[0.2vw] text-[0.75vw] font-semibold text-white/80">
+      {t.poweredBy[0] ? <span>{t.poweredBy[0]}</span> : null}
+      <span className="font-extrabold text-white">
+        Neelam<span className="text-teal-300">Ghor</span>
+      </span>
+      {t.poweredBy[1] ? <span>{t.poweredBy[1]}</span> : null}
+    </div>
+  )
+}
+
+function OverlayContent({
+  state,
+  clockOffset,
+  green,
+  brandColor,
+  children,
+}: {
+  state: RoomState
+  clockOffset: number
+  green: boolean
+  /** PRO brand colour (accent stripes and labels); null = NeelamGhor teal. */
+  brandColor: string | null
+  /** Extra layers: the sponsor strip, the free-plan mark. */
+  children?: React.ReactNode
+}) {
+  const t = useStrings(STRINGS)
+  const brand = brandPalette(brandColor)
   const live = state.status === 'LIVE' && !!state.currentPlayer
   const remaining = useCountdown(state.timerEndsAt, clockOffset, live)
   const seconds = state.status === 'PAUSED' ? Math.ceil((state.pausedRemainingMs ?? 0) / 1000) : Math.ceil(remaining / 1000)
@@ -161,14 +232,17 @@ function OverlayContent({ state, clockOffset, green }: { state: RoomState; clock
   return (
     <OverlayShell green={green}>
       {/* Top-right bug: tournament + status */}
-      <div className="absolute right-[2vw] top-[2vw] flex items-center gap-[0.8vw] rounded-[0.6vw] bg-slate-950/85 px-[1.2vw] py-[0.6vw] text-white shadow-2xl">
+      <div
+        className="absolute right-[2vw] top-[2vw] flex items-center gap-[0.8vw] rounded-[0.6vw] bg-slate-950/85 px-[1.2vw] py-[0.6vw] text-white shadow-2xl"
+        style={{ borderRight: `0.3vw solid ${brand.bg}` }}
+      >
         {state.status === 'LIVE' ? (
           <span className="flex items-center gap-[0.4vw] rounded-[0.3vw] bg-rose-600 px-[0.6vw] py-[0.15vw] text-[0.9vw] font-black tracking-widest">
             <span className="h-[0.5vw] w-[0.5vw] animate-pulse rounded-full bg-white" /> {t.live}
           </span>
         ) : null}
         <span className="text-[1.1vw] font-bold">{state.tournamentName}</span>
-        <span className="font-mono text-[0.9vw] text-teal-300">{state.roomCode}</span>
+        <span className="font-mono text-[0.9vw]" style={{ color: brand.onDark }}>{state.roomCode}</span>
       </div>
 
       {/* Lower third */}
@@ -209,16 +283,19 @@ function OverlayContent({ state, clockOffset, green }: { state: RoomState; clock
               exit={{ opacity: 0, y: 20 }}
               transition={{ duration: 0.35 }}
             >
-              <Bar>
+              <Bar brand={brand}>
                 {p.photoUrl ? (
                   <img src={p.photoUrl} alt="" className="h-[7vw] w-[7vw] shrink-0 rounded-[0.8vw] object-cover ring-[0.2vw] ring-white/30" />
                 ) : (
-                  <div className="flex h-[7vw] w-[7vw] shrink-0 items-center justify-center rounded-[0.8vw] bg-teal-700 text-[2.6vw] font-black">
+                  <div
+                    className="flex h-[7vw] w-[7vw] shrink-0 items-center justify-center rounded-[0.8vw] text-[2.6vw] font-black"
+                    style={{ backgroundColor: brand.bg, color: brand.fg }}
+                  >
                     {p.name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('')}
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-[1vw] font-bold tracking-[0.2em] text-teal-300">{t.playerNo(p.playerNumber)}</p>
+                  <p className="text-[1vw] font-bold tracking-[0.2em]" style={{ color: brand.onDark }}>{t.playerNo(p.playerNumber)}</p>
                   <p className="truncate text-[2.8vw] font-black leading-tight">{p.name}</p>
                   <p className="truncate text-[1.25vw] text-white/80">
                     {p.role}
@@ -254,7 +331,7 @@ function OverlayContent({ state, clockOffset, green }: { state: RoomState; clock
             </motion.div>
           ) : (
             <motion.div key={`idle-${state.status}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <Bar>
+              <Bar brand={brand}>
                 <p className="text-[2vw] font-extrabold">
                   {state.status === 'READY'
                     ? t.startsSoon
@@ -272,6 +349,7 @@ function OverlayContent({ state, clockOffset, green }: { state: RoomState; clock
           )}
         </AnimatePresence>
       </div>
+      {children}
     </OverlayShell>
   )
 }
@@ -284,10 +362,12 @@ function OverlayShell({ green, children }: { green: boolean; children?: React.Re
   )
 }
 
-function Bar({ children, className }: { children: React.ReactNode; className?: string }) {
+function Bar({ children, className, brand }: { children: React.ReactNode; className?: string; brand?: BrandPalette }) {
   return (
     <div
       className={`flex items-center gap-[1.6vw] rounded-[1vw] px-[2vw] py-[1.4vw] text-white shadow-2xl ${className ?? 'bg-slate-950/90'}`}
+      // Brand accent: a stripe along the top of the lower third.
+      style={brand ? { boxShadow: `inset 0 0.35vw 0 ${brand.bg}, 0 25px 50px -12px rgb(0 0 0 / 0.25)` } : undefined}
     >
       {children}
     </div>

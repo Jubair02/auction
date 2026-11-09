@@ -344,7 +344,7 @@ function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProp
         </CardHeader>
         <CardContent className="p-0">
           {state.mode === 'CATEGORY' && state.pool.uncategorized > 0 ? (
-            <p className="flex items-start gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-900">
+            <p className="flex items-start gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
                 {t.uncategorized(state.pool.uncategorized)}
@@ -360,8 +360,8 @@ function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProp
                 key={p.id}
                 className={cn(
                   'flex items-center gap-2 px-4 py-2.5 transition-colors sm:gap-3',
-                  selectable(p) && 'cursor-pointer hover:bg-emerald-50/70',
-                  p.status === 'LIVE' && 'bg-amber-50/80'
+                  selectable(p) && 'cursor-pointer hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30',
+                  p.status === 'LIVE' && 'bg-amber-50/80 dark:bg-amber-950/30'
                 )}
                 onClick={() => {
                   if (selectable(p)) setPendingSelect(p)
@@ -385,7 +385,7 @@ function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProp
                   </p>
                 </div>
                 {p.status === 'SOLD' && p.soldPrice !== null ? (
-                  <span className="shrink-0 text-sm font-bold tabular-nums text-teal-700">{formatBDT(p.soldPrice)}</span>
+                  <span className="shrink-0 text-sm font-bold tabular-nums text-teal-700 dark:text-teal-300">{formatBDT(p.soldPrice)}</span>
                 ) : (
                   <PlayerStatusBadge status={p.status} className="hidden sm:inline-flex" />
                 )}
@@ -546,20 +546,20 @@ export function SoldFeed({ feed, className }: { feed: RoomState['soldFeed']; cla
   const t = useStrings(STRINGS)
   if (feed.length === 0) return null
   return (
-    <Card className={cn('border-teal-200 bg-teal-50/50', className)}>
+    <Card className={cn('border-teal-200 bg-teal-50/50 dark:border-teal-900/60 dark:bg-teal-950/30', className)}>
       <CardContent className="p-3">
-        <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-teal-800">
+        <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-teal-800 dark:text-teal-300">
           <Gavel className="h-3.5 w-3.5" aria-hidden /> {t.latestSales}
         </p>
         <div className="flex flex-wrap gap-1.5">
           {feed.slice(0, 5).map((s, i) => (
             <span
               key={`${s.playerName}-${i}`}
-              className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-background px-2.5 py-1 text-xs"
+              className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-background dark:border-teal-900/60 px-2.5 py-1 text-xs"
             >
               <span className="font-semibold">{s.playerName}</span>
               <span className="text-muted-foreground">→</span>
-              <span className="font-medium text-teal-800">{s.teamName}</span>
+              <span className="font-medium text-teal-800 dark:text-teal-200">{s.teamName}</span>
               <span className="font-bold tabular-nums">{formatBDT(s.price)}</span>
             </span>
           ))}

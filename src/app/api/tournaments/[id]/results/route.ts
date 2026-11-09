@@ -1,43 +1,56 @@
 import { db } from '@/lib/db'
-import { jsonError } from '@/lib/auth'
+import { getSessionUser, jsonError } from '@/lib/auth'
+import { getPublicBranding } from '@/lib/branding'
 import {
-  isOwnerOrAdmin,
-  requireSession,
+  hiddenByArchive,
   serializePlayer,
   serializeTeam,
+  accessAllows,
+  tournamentAccess,
 } from '../../../_lib/helpers'
+import { resultsArePublic } from '../../../og/_lib/public-results'
 
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
 
-// GET /api/tournaments/:id/results — organizer/ADMIN, or a manager of a team in it
+// GET /api/tournaments/:id/results — tournament staff (owner, ADMIN,
+// co-organizer, auctioneer), a manager of a team in it, or — once the auction
+// is over and the organizer left results public — anyone, logged in or not.
 export async function GET(_req: Request, { params }: RouteParams) {
   const { id } = await params
-
-  const auth = await requireSession()
-  if ('response' in auth) return auth.response
-  const { user } = auth
+  const user = await getSessionUser()
 
   const tournament = await db.tournament.findUnique({ where: { id } })
-  if (!tournament) return jsonError('Tournament not found', 404)
+  if (!tournament || hiddenByArchive(tournament, user)) return jsonError('Tournament not found', 404)
 
-  if (!isOwnerOrAdmin(tournament, user)) {
+  const auction = await db.auction.findUnique({ where: { tournamentId: id } })
+  const isPublic = resultsArePublic(tournament, auction)
+
+  const access = user ? await tournamentAccess(tournament, user) : null
+  let viewer: 'staff' | 'manager' | 'public' = 'public'
+  if (access) viewer = 'staff'
+  else if (user) {
     const managesTeam = await db.team.findFirst({
       where: { tournamentId: id, managerUserId: user.id },
       select: { id: true },
     })
-    if (!managesTeam) return jsonError('You do not have permission to view these results', 403)
+    if (managesTeam) viewer = 'manager'
+  }
+  if (viewer === 'public' && !isPublic) {
+    return user
+      ? jsonError('You do not have permission to view these results', 403)
+      : jsonError('You must be logged in', 401)
   }
 
-  const [players, teams, auction] = await Promise.all([
+  const [players, teams, branding] = await Promise.all([
     db.player.findMany({ where: { tournamentId: id }, orderBy: { playerNumber: 'asc' } }),
     db.team.findMany({
       where: { tournamentId: id },
       orderBy: { name: 'asc' },
       include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
     }),
-    db.auction.findUnique({ where: { tournamentId: id } }),
+    getPublicBranding(tournament),
   ])
 
   const soldPlayers = players.filter((p) => p.status === 'SOLD')
@@ -52,8 +65,16 @@ export async function GET(_req: Request, { params }: RouteParams) {
       })
     : []
 
-  // The results report is a squad/spending view — personal contact details stay out of it.
+  // The results report is a squad/spending view — personal contact details
+  // (phone numbers, manager names and emails) stay out of it for every viewer,
+  // staff included (auctioneers must never get them); exports carry those.
   const withoutPhone = (p: (typeof players)[number]) => ({ ...serializePlayer(p), phone: null })
+  const publicTeam = (team: (typeof teams)[number]) => ({
+    ...serializeTeam(team),
+    managerName: null,
+    managerEmail: null,
+    ...(viewer === 'public' ? { managerUserId: null } : {}),
+  })
 
   return Response.json({
     tournament: {
@@ -76,7 +97,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       totalValue,
     },
     teams: teams.map((team) => ({
-      ...serializeTeam(team),
+      ...publicTeam(team),
       players: players
         .filter((p) => p.status === 'SOLD' && p.soldToTeamId === team.id)
         .map(withoutPhone),
@@ -87,7 +108,13 @@ export async function GET(_req: Request, { params }: RouteParams) {
       amount: b.amount,
       createdAt: b.createdAt.toISOString(),
     })),
-    // Exports are owner/ADMIN-only on the server; tell the UI so it can hide them.
-    canManage: isOwnerOrAdmin(tournament, user),
+    // CSV exports are for owner / ADMIN / co-organizer; tell the UI so it can hide them.
+    canManage: accessAllows(access, 'manage'),
+    resultsPublic: tournament.resultsPublic,
+    /** Anyone with the link can see these results right now (share bar). */
+    publicNow: isPublic,
+    viewer,
+    /** Logo, brand colour, sponsors and whether to hide NeelamGhor marks (PRO only). */
+    branding,
   })
 }

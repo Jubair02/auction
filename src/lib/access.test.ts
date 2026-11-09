@@ -27,8 +27,8 @@ describe('page access', () => {
     assert.equal(canOpen(path('/my-team'), 'ORGANIZER'), false)
   })
 
-  it('requires a login for the dashboard and results', () => {
-    for (const p of ['/dashboard', '/results/t1']) {
+  it('requires a login for the dashboard and account', () => {
+    for (const p of ['/dashboard', '/account']) {
       assert.equal(canOpen(path(p), null), false, p)
       assert.equal(canOpen(path(p), 'MANAGER'), true, p)
     }
@@ -40,9 +40,17 @@ describe('page access', () => {
   })
 
   it('leaves public pages open to everyone', () => {
-    for (const p of ['/', '/room/BD26-DEMO', '/join', '/register-player/abc', '/invite', '/reset-password']) {
+    for (const p of ['/', '/room/BD26-DEMO', '/join', '/register-player/abc', '/invite', '/reset-password', '/privacy', '/results/t1', '/league/t1']) {
       assert.equal(canOpen(path(p), null), true, p)
       assert.equal(canOpen(path(p), 'MANAGER'), true, p)
+    }
+  })
+})
+
+describe('public league page', () => {
+  it('is open to every role and to logged-out visitors', () => {
+    for (const role of [null, 'MANAGER', 'ORGANIZER', 'ADMIN'] as const) {
+      assert.equal(canOpen(path('/league/t1'), role), true, String(role))
     }
   })
 })
@@ -54,6 +62,10 @@ describe('post-login redirect', () => {
 
   it('returns to the saved page when the role may open it', () => {
     assert.equal(postLoginPath('/room/BD26-DEMO', 'MANAGER'), '/room/BD26-DEMO')
+    assert.equal(postLoginPath('/results/t1', 'MANAGER'), '/results/t1')
+    assert.equal(postLoginPath('/league/t1', 'MANAGER'), '/league/t1')
+    assert.equal(postLoginPath('/league/t1', 'ORGANIZER'), '/league/t1')
+    assert.equal(postLoginPath('/account', 'ORGANIZER'), '/account')
     assert.equal(postLoginPath('/tournaments/t1', 'ORGANIZER'), '/tournaments/t1')
   })
 

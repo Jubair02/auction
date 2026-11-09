@@ -1,6 +1,28 @@
-// Seed demo data — run with: bun prisma/seed.ts
+// Seed demo data — run with: ALLOW_DB_RESET=1 bun prisma/seed.ts
+//
+// DESTRUCTIVE: wipes every user, tournament, auction and setting in the
+// database DATABASE_URL points at. It refuses to run against production
+// (NODE_ENV / VERCEL_ENV = production) and needs ALLOW_DB_RESET=1, so a stray
+// `bun prisma/seed.ts` with the production URL in .env cannot erase real data.
+//
+// Admin password: SEED_ADMIN_PASSWORD, or a random one printed once below.
+import { randomBytes } from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 import { hashPassword } from '../src/lib/crypto'
+
+function refuse(reason: string): never {
+  console.error(`[seed] Refusing to run: ${reason}`)
+  console.error('[seed] The seed DELETES all users, tournaments and auctions. Point DATABASE_URL at a')
+  console.error('[seed] development / preview database branch and run it with ALLOW_DB_RESET=1.')
+  process.exit(1)
+}
+
+if (process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production') {
+  refuse('this looks like a production environment (NODE_ENV or VERCEL_ENV is "production").')
+}
+if (process.env.ALLOW_DB_RESET !== '1') {
+  refuse('ALLOW_DB_RESET=1 is not set.')
+}
 
 const db = new PrismaClient()
 
@@ -55,7 +77,9 @@ async function main() {
   await db.tournament.deleteMany()
   await db.user.deleteMany()
 
-  const pwAdmin = hashPassword('admin1234')
+  const envAdminPassword = process.env.SEED_ADMIN_PASSWORD?.trim()
+  const adminPassword = envAdminPassword || randomBytes(12).toString('base64url')
+  const pwAdmin = hashPassword(adminPassword)
   const pwDemo = hashPassword('demo1234')
 
   const admin = await db.user.create({
@@ -198,7 +222,11 @@ async function main() {
   })
 
   console.log('Seed complete.')
-  console.log('  admin@neelamghor.bd / admin1234  (ADMIN id:', admin.id + ')')
+  console.log(
+    envAdminPassword
+      ? `  admin@neelamghor.bd / (SEED_ADMIN_PASSWORD)  (ADMIN id: ${admin.id})`
+      : `  admin@neelamghor.bd / ${adminPassword}  (ADMIN id: ${admin.id}) — generated now, shown only once`,
+  )
   console.log('  organizer@neelamghor.bd / demo1234 (ORGANIZER)')
   console.log('  manager@neelamghor.bd / demo1234 (MANAGER — manager of Dhaka Warriors)')
   console.log('  Rooms: BD26-DEMO (cricket), BD26-FB01 (football)')

@@ -1,9 +1,12 @@
 'use client'
 
+import { useState } from 'react'
 import {
   ArrowRight,
   Check,
   ClipboardCopy,
+  Clock,
+  Crown,
   DoorOpen,
   Gavel,
   Info,
@@ -23,8 +26,11 @@ import { StatCard } from '@/components/shared/empty-state'
 import { navigate } from '@/lib/router'
 import { formatBDT, formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { TournamentDetail } from '@/lib/types'
-import { type Lang, type Strings, useStrings } from '@/lib/i18n'
+import type { PaymentDTO, PlanInfo, TournamentDetail } from '@/lib/types'
+import { type Lang, type Strings, useStrings, useLang } from '@/lib/i18n'
+import { useCachedGet } from '@/lib/api-cache'
+import { PLANS_URL, paymentsUrl, UpgradeDialog } from '@/components/organizer/upgrade-dialog'
+import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 type OverviewStrings = {
   viewResults: string
@@ -97,6 +103,19 @@ type OverviewStrings = {
   acrossTeams: string
   spentSoFar: string
   left: (amount: string) => string
+  planTitle: string
+  freePlan: string
+  proPlan: string
+  proSince: (date: string) => string
+  proPerks: string
+  usageTeams: (n: number, max: number) => string
+  usagePlayers: (n: number, max: number) => string
+  usageAria: (what: string, pct: number) => string
+  freeUnlocks: string
+  upgradeFor: (price: string) => string
+  paymentReview: string
+  paymentReviewDesc: string
+  askOwner: string
 }
 
 const STRINGS = {
@@ -171,6 +190,19 @@ const STRINGS = {
     acrossTeams: 'Across all teams',
     spentSoFar: 'Spent so far',
     left: (amount) => `${amount} left`,
+    planTitle: 'Plan',
+    freePlan: 'Free',
+    proPlan: 'Pro',
+    proSince: (date) => `Pro since ${date}`,
+    proPerks: 'Unlimited teams and players, SMS updates and no watermark on the stream overlay.',
+    usageTeams: (n, max) => `Teams ${n} / ${max}`,
+    usagePlayers: (n, max) => `Players ${n} / ${max}`,
+    usageAria: (what, pct) => `${what}: ${pct}% of the free limit used`,
+    freeUnlocks: 'Pro unlocks unlimited teams and players, SMS updates to players, and removes the watermark from the stream overlay.',
+    upgradeFor: (price) => `Upgrade to Pro — ${price}`,
+    paymentReview: 'Payment under review',
+    paymentReviewDesc: 'Pro turns on as soon as an admin verifies your Transaction ID.',
+    askOwner: 'Only the tournament owner can upgrade it to Pro.',
   },
   bn: {
     viewResults: 'ফলাফল দেখুন',
@@ -243,6 +275,19 @@ const STRINGS = {
     acrossTeams: 'সব দল মিলিয়ে',
     spentSoFar: 'এ পর্যন্ত খরচ',
     left: (amount) => `${amount} বাকি`,
+    planTitle: 'প্ল্যান',
+    freePlan: 'ফ্রি',
+    proPlan: 'Pro',
+    proSince: (date) => `${date} থেকে Pro`,
+    proPerks: 'সীমাহীন দল ও খেলোয়াড়, SMS আপডেট, আর স্ট্রিম ওভারলেতে কোনো জলছাপ নেই।',
+    usageTeams: (n, max) => `দল ${n} / ${max}`,
+    usagePlayers: (n, max) => `খেলোয়াড় ${n} / ${max}`,
+    usageAria: (what, pct) => `${what}: ফ্রি সীমার ${pct}% ব্যবহার হয়েছে`,
+    freeUnlocks: 'Pro-তে পাবেন সীমাহীন দল ও খেলোয়াড়, খেলোয়াড়দের SMS আপডেট, আর স্ট্রিম ওভারলেতে জলছাপ থাকবে না।',
+    upgradeFor: (price) => `Pro-তে আপগ্রেড — ${price}`,
+    paymentReview: 'পেমেন্ট যাচাই হচ্ছে',
+    paymentReviewDesc: 'অ্যাডমিন আপনার ট্রানজেকশন আইডি যাচাই করলেই Pro চালু হবে।',
+    askOwner: 'শুধু টুর্নামেন্টের মালিক এটি Pro-তে আপগ্রেড করতে পারেন।',
   },
 } satisfies Strings<OverviewStrings>
 
@@ -442,10 +487,10 @@ function SetupChecklist({ data, setTab }: { data: TournamentDetail; setTab: (tab
 }
 
 const ROOM_STATUS_CLASS: Record<string, string> = {
-  READY: 'bg-slate-100 text-slate-700',
-  LIVE: 'bg-amber-100 text-amber-900',
-  PAUSED: 'bg-slate-100 text-slate-700',
-  ENDED: 'bg-teal-100 text-teal-900',
+  READY: 'bg-muted text-muted-foreground',
+  LIVE: 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200',
+  PAUSED: 'bg-muted text-muted-foreground',
+  ENDED: 'bg-teal-100 text-teal-900 dark:bg-teal-950/50 dark:text-teal-200',
 }
 
 function copy(text: string, done: string) {
@@ -514,8 +559,110 @@ function RoomCard({ data, setTab }: { data: TournamentDetail; setTab: (tab: Deta
   )
 }
 
+function UsageBar({ label, n, max, what }: { label: string; n: number; max: number; what: string }) {
+  const s = useStrings(STRINGS)
+  const pct = max > 0 ? Math.min(100, Math.round((n / max) * 100)) : 0
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className={cn('font-medium', n >= max ? 'text-rose-700 dark:text-rose-400' : 'text-muted-foreground')}>{label}</span>
+        <span className="tabular-nums text-muted-foreground">{pct}%</span>
+      </div>
+      <Progress value={pct} className="h-1.5" aria-label={s.usageAria(what, pct)} />
+    </div>
+  )
+}
+
+/** FREE: usage against the limits + the way to Pro. PRO: a badge and since-date. */
+function PlanCard({ data }: { data: TournamentDetail }) {
+  const s = useStrings(STRINGS)
+  const lang = useLang()
+  const { tournament: t, teams, players, myAccess } = data
+  const plans = useCachedGet<PlanInfo>(PLANS_URL)
+  const canPay = myAccess === 'OWNER' || myAccess === 'ADMIN'
+
+  if (t.plan === 'PRO') {
+    return (
+      <Card className="gap-2 border-amber-300/70 bg-gradient-to-br from-amber-50 to-transparent dark:border-amber-900 dark:from-amber-950/30">
+        <CardContent className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{s.planTitle}</p>
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-black text-white">
+              <Crown className="h-3.5 w-3.5" aria-hidden /> {s.proPlan}
+            </span>
+          </div>
+          {t.proSince ? <p className="text-sm font-semibold">{s.proSince(formatDate(t.proSince, false, lang))}</p> : null}
+          <p className="text-xs text-muted-foreground">{s.proPerks}</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const limits = plans.data
+  return (
+    <Card className="gap-2">
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{s.planTitle}</p>
+          <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold">{s.freePlan}</span>
+        </div>
+        {limits ? (
+          <div className="space-y-2">
+            <UsageBar label={s.usageTeams(teams.length, limits.freeMaxTeams)} n={teams.length} max={limits.freeMaxTeams} what={s.teams} />
+            <UsageBar
+              label={s.usagePlayers(players.length, limits.freeMaxPlayers)}
+              n={players.length}
+              max={limits.freeMaxPlayers}
+              what={s.players}
+            />
+          </div>
+        ) : null}
+        <p className="text-xs text-muted-foreground">{s.freeUnlocks}</p>
+        {canPay ? (
+          <PlanUpgradeAction tournamentId={t.id} price={limits ? formatBDT(limits.proPrice) : null} />
+        ) : (
+          <p className="text-xs font-medium">{s.askOwner}</p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** The upgrade button, or "Payment under review" while a payment waits for an admin. Owner/ADMIN only. */
+function PlanUpgradeAction({ tournamentId, price }: { tournamentId: string; price: string | null }) {
+  const s = useStrings(STRINGS)
+  const payments = useCachedGet<{ payments: PaymentDTO[] }>(paymentsUrl(tournamentId))
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const pending = payments.data?.payments.some((p) => p.status === 'PENDING')
+  if (pending) {
+    return (
+      <div className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <div>
+          <p className="text-sm font-semibold">{s.paymentReview}</p>
+          <p className="text-xs">{s.paymentReviewDesc}</p>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <>
+      <Button className="h-10 w-full bg-amber-500 text-white hover:bg-amber-600" onClick={() => setUpgradeOpen(true)}>
+        <Crown className="mr-1.5 h-4 w-4" aria-hidden /> {s.upgradeFor(price ?? '…')}
+      </Button>
+      <UpgradeDialog
+        tournamentId={tournamentId}
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        onSubmitted={() => void payments.refetch()}
+      />
+    </>
+  )
+}
+
 export function TournamentOverview({ data, setTab }: { data: TournamentDetail; setTab: (tab: DetailTab) => void }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   const { tournament: t, players, teams } = data
   const sold = players.filter((p) => p.status === 'SOLD').length
   const unsold = players.filter((p) => p.status === 'UNSOLD').length
@@ -524,13 +671,13 @@ export function TournamentOverview({ data, setTab }: { data: TournamentDetail; s
   const managed = teams.filter((tm) => tm.managerUserId).length
 
   const details = [
-    { k: s.rowType, v: t.tournamentType ?? '—' },
+    { k: s.rowType, v: tournamentTypeLabel(t.tournamentType, lang) ?? '—' },
     { k: s.rowLocation, v: t.location ?? '—' },
-    { k: s.rowStart, v: formatDate(t.startDate) },
-    { k: s.rowAuctionAt, v: formatDate(t.auctionAt, true) },
+    { k: s.rowStart, v: formatDate(t.startDate, false, lang) },
+    { k: s.rowAuctionAt, v: formatDate(t.auctionAt, true, lang) },
     { k: s.rowMode, v: t.auctionMode === 'CATEGORY' ? s.categoryModeValue : s.normal },
     { k: s.rowBasePrice, v: t.auctionMode === 'NORMAL' ? formatBDT(t.basePrice) : s.setPerCategory },
-    { k: s.rowCreated, v: formatDate(t.createdAt, true) },
+    { k: s.rowCreated, v: formatDate(t.createdAt, true, lang) },
   ]
 
   return (
@@ -547,6 +694,7 @@ export function TournamentOverview({ data, setTab }: { data: TournamentDetail; s
 
         <div className="space-y-4">
           <RoomCard data={data} setTab={setTab} />
+          <PlanCard data={data} />
           <Card className="gap-3">
             <CardHeader className="pb-0">
               <CardTitle className="flex items-center gap-2 text-base">

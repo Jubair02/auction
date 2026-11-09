@@ -1,9 +1,35 @@
 'use client'
 
 import { type ReactNode, useState } from 'react'
-import { AlertTriangle, CheckCircle2, ExternalLink, Gavel, History, Info, Loader2, MessageCircle, MonitorPlay, Trophy } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Crown,
+  ExternalLink,
+  Gavel,
+  History,
+  Info,
+  Loader2,
+  MessageCircle,
+  MessageSquare,
+  MonitorPlay,
+  Send,
+  Trophy,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { copyText } from '@/lib/clipboard'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { peekCached } from '@/lib/api-cache'
+import { tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -16,7 +42,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { apiPatch, apiPost, ApiError } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { formatBDT } from '@/lib/format'
-import type { AuctionDTO, AuctionMode, PlayerDTO, TeamDTO } from '@/lib/types'
+import type { AuctionDTO, AuctionMode, PlayerDTO, TeamDTO, TournamentDetail } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
 
 const BID_TIMER_OPTIONS = ['10', '15', '20', '30', '45', '60']
@@ -24,10 +50,10 @@ const GOING_OPTIONS = ['5', '8', '10', '15']
 const INCREMENT_OPTIONS = ['1000', '2000', '5000', '10000']
 
 const AUCTION_STATUS_TONES: Record<string, string> = {
-  READY: 'bg-sky-100 text-sky-900 border-sky-200',
-  LIVE: 'bg-amber-100 text-amber-900 border-amber-300',
-  PAUSED: 'bg-slate-200 text-slate-700 border-slate-300',
-  ENDED: 'bg-teal-100 text-teal-900 border-teal-300',
+  READY: 'bg-sky-100 text-sky-900 border-sky-200 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-900/60',
+  LIVE: 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800',
+  PAUSED: 'bg-muted text-muted-foreground border-border',
+  ENDED: 'bg-teal-100 text-teal-900 border-teal-300 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-800',
 }
 
 const STRINGS = {
@@ -277,6 +303,7 @@ export function AuctionSetupTab({
   players,
   teams,
   refetch,
+  sms,
 }: {
   tournamentId: string
   tournamentName: string
@@ -285,8 +312,14 @@ export function AuctionSetupTab({
   players: PlayerDTO[]
   teams: TeamDTO[]
   refetch: () => Promise<void>
+  /** Plan + SMS settings; read from the cached tournament detail when not passed. */
+  sms?: SmsSettings
 }) {
   const t = useStrings(STRINGS)
+  const smsSettings = useSmsSettings(tournamentId, sms)
+  const smsCard = smsSettings ? (
+    <SmsNotificationsCard tournamentId={tournamentId} settings={smsSettings} auction={auction} refetch={refetch} />
+  ) : null
   const playerCount = players.length
   const teamCount = teams.length
   const [settings, setSettings] = useState<SettingsState>(() =>
@@ -384,10 +417,10 @@ export function AuctionSetupTab({
         />
 
         {!readyToCreate ? (
-          <Card className="border-amber-300 bg-amber-50/60">
+          <Card className="border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30">
             <CardContent className="flex items-start gap-3 p-4 text-sm">
-              <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden />
-              <p className="text-amber-900">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />
+              <p className="text-amber-900 dark:text-amber-200">
                 {t.needAtLeast(playerCount, teamCount)}
               </p>
             </CardContent>
@@ -416,6 +449,8 @@ export function AuctionSetupTab({
             </div>
           </CardContent>
         </Card>
+
+        {smsCard}
       </div>
     )
   }
@@ -446,7 +481,7 @@ export function AuctionSetupTab({
             <Button
               variant="outline"
               size="sm"
-              className="min-h-10 border-white/40 text-white hover:bg-white/10 hover:text-white"
+              className="min-h-10 border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white dark:border-white/40 dark:bg-transparent dark:hover:bg-white/10"
               onClick={copyInvite}
             >
               {t.copyInvite}
@@ -496,7 +531,7 @@ export function AuctionSetupTab({
             </div>
           </div>
           {settingsLocked ? (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <p>
                 {t.timingsLocked(t.statusLabel[auction.status] ?? auction.status)}
@@ -512,6 +547,8 @@ export function AuctionSetupTab({
           </div>
         </CardContent>
       </Card>
+
+      {smsCard}
     </div>
   )
 }
@@ -566,10 +603,10 @@ function ReadinessCheck({
 
   if (warnings.length === 0) {
     return (
-      <Card className="border-emerald-200 bg-emerald-50/50">
+      <Card className="border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/60 dark:bg-emerald-950/30">
         <CardContent className="flex items-start gap-3 p-4 text-sm">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
-          <p className="text-emerald-900">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden />
+          <p className="text-emerald-900 dark:text-emerald-200">
             {t.readinessPassed(players.length, teams.length)}
           </p>
         </CardContent>
@@ -578,17 +615,17 @@ function ReadinessCheck({
   }
 
   return (
-    <Card className="border-amber-300 bg-amber-50/60">
+    <Card className="border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30">
       <CardContent className="flex items-start gap-3 p-4 text-sm">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden />
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />
         <div className="min-w-0">
-          <p className="font-bold text-amber-900">{t.readinessCheck}</p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-900/90">
+          <p className="font-bold text-amber-900 dark:text-amber-200">{t.readinessCheck}</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-900/90 dark:text-amber-200/90">
             {warnings.map((w) => (
               <li key={w}>{w}</li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-amber-900/70">
+          <p className="mt-2 text-xs text-amber-900/70 dark:text-amber-200/70">
             {t.warningsNote}
           </p>
         </div>
@@ -744,6 +781,295 @@ function StreamOverlayCard({ roomCode }: { roomCode: string }) {
           </div>
         ))}
       </CardContent>
+    </Card>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+export interface SmsSettings {
+  plan: 'FREE' | 'PRO'
+  smsEnabled: boolean
+  smsLang: 'bn' | 'en'
+}
+
+const SMS_STRINGS = {
+  en: {
+    title: 'SMS notifications',
+    proBadge: 'Pro',
+    toggleLabel: 'Text players and managers',
+    toggleAria: 'Turn SMS notifications on or off',
+    on: 'On — messages go out automatically for the events below.',
+    off: 'Off — nobody is texted about this tournament.',
+    proOnly: 'Pro feature — upgrade this tournament to send SMS.',
+    langLabel: 'SMS language',
+    langBn: 'বাংলা (Bangla)',
+    langEn: 'English',
+    whatTitle: 'What gets sent',
+    whatReg: 'Registration decisions — to players who registered through your link and agreed to SMS.',
+    whatReminder: 'Auction reminder — to team managers and players, only when you press the button below.',
+    whatSold: '“You were sold” — to the player, with the team and price, when the hammer falls.',
+    consentNote:
+      'Players who registered themselves without agreeing to SMS are never texted. Numbers are never shown on public pages.',
+    sendReminder: 'Send SMS reminder now',
+    reminderNeedsAuction: 'Create the auction room first — the reminder links to it.',
+    reminderNeedsOn: 'Turn SMS on to send a reminder.',
+    reminderEnded: 'The auction has ended.',
+    confirmTitle: 'Send the auction reminder?',
+    confirmDesc: (n: number) =>
+      `This texts ${n} ${n === 1 ? 'person' : 'people'} (team managers and players) the auction time and the room link. Anyone already reminded today is skipped.`,
+    confirmNone: 'Nobody has a valid mobile number yet — add phone numbers to players or managers first.',
+    retryLater: (min: number) => `A reminder was sent recently. You can send another in about ${min} min.`,
+    cancel: 'Cancel',
+    send: 'Send',
+    queued: (q: number, s: number) => `Reminder queued for ${q} ${q === 1 ? 'number' : 'numbers'}${s ? ` (${s} skipped)` : ''}`,
+    saved: 'SMS settings saved',
+    saveFailed: 'Could not save the SMS settings',
+    sendFailed: 'Could not send the reminder',
+  },
+  bn: {
+    title: 'SMS নোটিফিকেশন',
+    proBadge: 'Pro',
+    toggleLabel: 'খেলোয়াড় ও ম্যানেজারদের SMS পাঠান',
+    toggleAria: 'SMS নোটিফিকেশন চালু বা বন্ধ করুন',
+    on: 'চালু — নিচের ঘটনাগুলোতে নিজে থেকেই বার্তা যাবে।',
+    off: 'বন্ধ — এই টুর্নামেন্ট নিয়ে কাউকে SMS পাঠানো হবে না।',
+    proOnly: 'Pro ফিচার — SMS পাঠাতে এই টুর্নামেন্ট Pro-তে আপগ্রেড করুন।',
+    langLabel: 'SMS-এর ভাষা',
+    langBn: 'বাংলা',
+    langEn: 'English (ইংরেজি)',
+    whatTitle: 'কী পাঠানো হয়',
+    whatReg: 'নিবন্ধনের সিদ্ধান্ত — যেসব খেলোয়াড় আপনার লিংকে নিবন্ধন করে SMS পেতে সম্মতি দিয়েছেন।',
+    whatReminder: 'নিলামের রিমাইন্ডার — টিম ম্যানেজার ও খেলোয়াড়দের, শুধু আপনি নিচের বাটন চাপলে।',
+    whatSold: '“আপনি বিক্রি হয়েছেন” — হাতুড়ি পড়লেই খেলোয়াড়কে, দল ও দামসহ।',
+    consentNote:
+      'যে খেলোয়াড়েরা নিজে নিবন্ধন করে SMS-এ সম্মতি দেননি, তাঁদের কখনো SMS পাঠানো হয় না। পাবলিক পেজে কারও নম্বর দেখানো হয় না।',
+    sendReminder: 'এখনই SMS রিমাইন্ডার পাঠান',
+    reminderNeedsAuction: 'আগে নিলামের রুম তৈরি করুন — রিমাইন্ডারে রুমের লিংক থাকে।',
+    reminderNeedsOn: 'রিমাইন্ডার পাঠাতে SMS চালু করুন।',
+    reminderEnded: 'নিলাম শেষ হয়ে গেছে।',
+    confirmTitle: 'নিলামের রিমাইন্ডার পাঠাবেন?',
+    confirmDesc: (n: number) =>
+      `${n} জনকে (টিম ম্যানেজার ও খেলোয়াড়) নিলামের সময় ও রুমের লিংকসহ SMS যাবে। আজ যাঁদের আগেই পাঠানো হয়েছে, তাঁদের বাদ দেওয়া হবে।`,
+    confirmNone: 'এখনো কারও সঠিক মোবাইল নম্বর নেই — আগে খেলোয়াড় বা ম্যানেজারদের নম্বর যোগ করুন।',
+    retryLater: (min: number) => `কিছুক্ষণ আগে রিমাইন্ডার পাঠানো হয়েছে। প্রায় ${min} মিনিট পর আবার পাঠাতে পারবেন।`,
+    cancel: 'বাতিল',
+    send: 'পাঠান',
+    queued: (q: number, s: number) => `${q}টি নম্বরে রিমাইন্ডার পাঠানোর জন্য রাখা হয়েছে${s ? ` (${s}টি বাদ)` : ''}`,
+    saved: 'SMS সেটিংস সংরক্ষণ হয়েছে',
+    saveFailed: 'SMS সেটিংস সংরক্ষণ করা যায়নি',
+    sendFailed: 'রিমাইন্ডার পাঠানো যায়নি',
+  },
+} satisfies Strings<{
+  title: string
+  proBadge: string
+  toggleLabel: string
+  toggleAria: string
+  on: string
+  off: string
+  proOnly: string
+  langLabel: string
+  langBn: string
+  langEn: string
+  whatTitle: string
+  whatReg: string
+  whatReminder: string
+  whatSold: string
+  consentNote: string
+  sendReminder: string
+  reminderNeedsAuction: string
+  reminderNeedsOn: string
+  reminderEnded: string
+  confirmTitle: string
+  confirmDesc: (n: number) => string
+  confirmNone: string
+  retryLater: (min: number) => string
+  cancel: string
+  send: string
+  queued: (q: number, s: number) => string
+  saved: string
+  saveFailed: string
+  sendFailed: string
+}>
+
+/**
+ * The tournament's SMS settings: from props when the page passes them,
+ * otherwise from the cached tournament detail the page already loaded. The
+ * last known value is kept so the card does not vanish if the cache ages out.
+ */
+function useSmsSettings(tournamentId: string, given: SmsSettings | undefined): SmsSettings | null {
+  const cached = peekCached<TournamentDetail>(tournamentDetailUrl(tournamentId))?.tournament
+  const fresh: SmsSettings | null =
+    given ?? (cached ? { plan: cached.plan === 'PRO' ? 'PRO' : 'FREE', smsEnabled: cached.smsEnabled === true, smsLang: cached.smsLang === 'en' ? 'en' : 'bn' } : null)
+  const [last, setLast] = useState<SmsSettings | null>(fresh)
+  if (fresh && (!last || fresh.plan !== last.plan || fresh.smsEnabled !== last.smsEnabled || fresh.smsLang !== last.smsLang)) {
+    setLast(fresh)
+  }
+  return fresh ?? last
+}
+
+function SmsNotificationsCard({
+  tournamentId,
+  settings,
+  auction,
+  refetch,
+}: {
+  tournamentId: string
+  settings: SmsSettings
+  auction: AuctionDTO | null
+  refetch: () => Promise<void>
+}) {
+  const t = useStrings(SMS_STRINGS)
+  // What the server confirmed on our last save, until the page data catches up.
+  const [saved, setSaved] = useState<Pick<SmsSettings, 'smsEnabled' | 'smsLang'> | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<{ recipients: number; retryAfter: number | null } | null>(null)
+  const [sending, setSending] = useState(false)
+
+  const isPro = settings.plan === 'PRO'
+  const enabled = saved?.smsEnabled ?? settings.smsEnabled
+  const lang = saved?.smsLang ?? settings.smsLang
+
+  const save = async (patch: Partial<Pick<SmsSettings, 'smsEnabled' | 'smsLang'>>) => {
+    setBusy(true)
+    try {
+      await apiPatch(`/api/tournaments/${tournamentId}`, patch)
+      setSaved({ smsEnabled: patch.smsEnabled ?? enabled, smsLang: patch.smsLang ?? lang })
+      toast.success(t.saved)
+      await refetch()
+    } catch (ex) {
+      toast.error(ex instanceof ApiError ? ex.message : t.saveFailed)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const askToSend = async () => {
+    setBusy(true)
+    try {
+      const res = await apiPost<{ recipients: number; retryAfter: number | null }>(`/api/tournaments/${tournamentId}/notify`, {
+        kind: 'AUCTION_REMINDER',
+        dryRun: true,
+      })
+      setPreview(res)
+    } catch (ex) {
+      toast.error(ex instanceof ApiError ? ex.message : t.sendFailed)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const send = async () => {
+    setSending(true)
+    try {
+      const res = await apiPost<{ queued: number; skipped: number }>(`/api/tournaments/${tournamentId}/notify`, {
+        kind: 'AUCTION_REMINDER',
+      })
+      toast.success(t.queued(res.queued, res.skipped))
+      setPreview(null)
+    } catch (ex) {
+      toast.error(ex instanceof ApiError ? ex.message : t.sendFailed)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const reminderBlocked = !isPro || !enabled ? t.reminderNeedsOn : !auction ? t.reminderNeedsAuction : auction.status === 'ENDED' ? t.reminderEnded : null
+  const canSend = !!preview && preview.recipients > 0 && preview.retryAfter === null
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-1.5 font-bold">
+              <MessageSquare className="h-4 w-4 text-primary" aria-hidden /> {t.title}
+              <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                <Crown className="mr-1 h-3 w-3" aria-hidden /> {t.proBadge}
+              </Badge>
+            </h3>
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 p-3">
+          <div className="min-w-0">
+            <Label htmlFor="sms-enabled" className="text-sm font-semibold">
+              {t.toggleLabel}
+            </Label>
+            <p className="mt-1 text-xs text-muted-foreground">{isPro ? (enabled ? t.on : t.off) : t.proOnly}</p>
+          </div>
+          <Switch
+            id="sms-enabled"
+            checked={isPro && enabled}
+            disabled={!isPro || busy}
+            onCheckedChange={(v) => void save({ smsEnabled: v })}
+            aria-label={t.toggleAria}
+          />
+        </div>
+
+        <div className="space-y-1.5 sm:max-w-xs">
+          <Label htmlFor="sms-lang">{t.langLabel}</Label>
+          <Select value={lang} onValueChange={(v) => void save({ smsLang: v === 'en' ? 'en' : 'bn' })} disabled={!isPro || busy}>
+            <SelectTrigger id="sms-lang" className="h-10 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bn">{t.langBn}</SelectItem>
+              <SelectItem value="en">{t.langEn}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5 text-sm">
+          <p className="font-semibold">{t.whatTitle}</p>
+          <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+            <li>{t.whatReg}</li>
+            <li>{t.whatReminder}</li>
+            <li>{t.whatSold}</li>
+          </ul>
+          <p className="text-xs text-muted-foreground">{t.consentNote}</p>
+        </div>
+
+        <Separator />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">{reminderBlocked ?? ''}</p>
+          <Button className="min-h-10" variant="outline" disabled={!!reminderBlocked || busy} onClick={() => void askToSend()}>
+            {busy && !preview ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Send className="mr-1.5 h-4 w-4" aria-hidden />}
+            {t.sendReminder}
+          </Button>
+        </div>
+      </CardContent>
+
+      <AlertDialog open={!!preview} onOpenChange={(open) => !open && !sending && setPreview(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.confirmTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {!preview
+                ? ''
+                : preview.retryAfter !== null
+                  ? t.retryLater(Math.max(1, Math.ceil(preview.retryAfter / 60)))
+                  : preview.recipients === 0
+                    ? t.confirmNone
+                    : t.confirmDesc(preview.recipients)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={sending}>{t.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!canSend || sending}
+              onClick={(e) => {
+                e.preventDefault()
+                void send()
+              }}
+            >
+              {sending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
+              {t.send}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }

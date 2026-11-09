@@ -59,6 +59,23 @@ export function slotsStillNeeded(players: RulePlayer[], team: RuleTeam, excludeP
 }
 
 /**
+ * The least a team must still spend to fill `slots` more places: the sum of
+ * the `slots` cheapest obtainable base prices (each player can only be bought
+ * once, so reserving N × the single cheapest price under-reserves).
+ */
+export function reserveFor(players: RulePlayer[], slots: number, excludePlayerId?: string): number {
+  if (slots <= 0) return 0
+  const prices: number[] = []
+  for (const p of players) {
+    if (p.id !== excludePlayerId && OBTAINABLE.has(p.status)) prices.push(p.basePrice)
+  }
+  prices.sort((a, b) => a - b)
+  let sum = 0
+  for (let i = 0; i < slots && i < prices.length; i++) sum += prices[i]
+  return sum
+}
+
+/**
  * The highest bid a team may legally place for the player on the block.
  * Their remaining purse, minus the minimum they must keep back to still
  * complete the minimum squad size — otherwise a team can spend everything on
@@ -66,7 +83,7 @@ export function slotsStillNeeded(players: RulePlayer[], team: RuleTeam, excludeP
  */
 export function maxBidFor(players: RulePlayer[], team: RuleTeam, excludePlayerId?: string): number {
   const remaining = team.budget - team.spent
-  const reserve = slotsStillNeeded(players, team, excludePlayerId) * cheapestAvailable(players, excludePlayerId)
+  const reserve = reserveFor(players, slotsStillNeeded(players, team, excludePlayerId), excludePlayerId)
   return Math.max(0, remaining - reserve)
 }
 

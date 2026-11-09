@@ -47,9 +47,9 @@ const STRINGS = {
 }>
 
 const ROLE_META: Record<RoomRole, { icon: typeof Crown; className: string }> = {
-  ORGANIZER: { icon: Crown, className: 'bg-amber-100 text-amber-900' },
-  MANAGER: { icon: UserCog, className: 'bg-teal-100 text-teal-900' },
-  VIEWER: { icon: Eye, className: 'bg-slate-200 text-slate-700' },
+  ORGANIZER: { icon: Crown, className: 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200' },
+  MANAGER: { icon: UserCog, className: 'bg-teal-100 text-teal-900 dark:bg-teal-950/60 dark:text-teal-200' },
+  VIEWER: { icon: Eye, className: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200' },
 }
 
 /** Who is in the room right now. Skips re-rendering on bids, which change none of this. */
@@ -87,7 +87,7 @@ function ParticipantsPanelView({ state, embedded = false }: { state: RoomState; 
             </div>
             <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{t.roles[p.role]}</span>
             <span
-              className={cn('h-2 w-2 shrink-0 rounded-full', p.online ? 'bg-emerald-500' : 'bg-slate-300')}
+              className={cn('h-2 w-2 shrink-0 rounded-full', p.online ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600')}
               aria-label={p.online ? t.online : t.offline}
             />
           </div>

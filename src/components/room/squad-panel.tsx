@@ -81,7 +81,7 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
                     {p.category ? t.cat(p.category) : ''}
                   </p>
                 </div>
-                <span className="text-sm font-bold tabular-nums text-teal-700">{formatBDT(p.soldPrice ?? p.basePrice)}</span>
+                <span className="text-sm font-bold tabular-nums text-teal-700 dark:text-teal-300">{formatBDT(p.soldPrice ?? p.basePrice)}</span>
               </li>
             ))}
           </ul>

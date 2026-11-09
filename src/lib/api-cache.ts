@@ -128,6 +128,7 @@ export function useCachedGet<T>(url: string, onError?: (err: unknown) => void): 
       }
     },
     // onError is a notification callback; a new identity must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [url],
   )
 

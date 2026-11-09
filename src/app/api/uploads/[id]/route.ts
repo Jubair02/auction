@@ -17,6 +17,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
     headers: {
       'Content-Type': row.mime,
       'Cache-Control': 'public, max-age=31536000, immutable',
+      // Vercel's edge honours CDN-Cache-Control: repeat views are served from
+      // the CDN instead of invoking a function and reading the database.
+      'CDN-Cache-Control': 'public, max-age=31536000, immutable',
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'",
     },

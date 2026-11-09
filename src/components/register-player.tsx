@@ -11,8 +11,17 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ImageUpload } from '@/components/shared/image-upload'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
-import { formatDate } from '@/lib/format'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { formatBDT, formatDate } from '@/lib/format'
+import type { PaymentMethod } from '@/lib/types'
+import {
+  looksLikeBdMobile,
+  normalizeTrx,
+  PayNumbers,
+  PaymentFields,
+  type PaymentFieldsValue,
+  usePaymentFieldsError,
+} from '@/components/organizer/upgrade-dialog'
+import { type Strings, useStrings, useLang } from '@/lib/i18n'
 
 type RegisterPlayerStrings = {
   loadFailed: string
@@ -37,6 +46,12 @@ type RegisterPlayerStrings = {
   previousTeamPlaceholder: string
   register: string
   phonePrivacy: string
+  phoneInvalid: string
+  feeTitle: (amount: string) => string
+  feeHelp: string
+  smsConsent: string
+  privacy: string
+  registeredPaid: string
 }
 
 const STRINGS = {
@@ -65,6 +80,12 @@ const STRINGS = {
     previousTeamPlaceholder: 'e.g. Mirpur Club',
     register: 'Register',
     phonePrivacy: 'Your phone number is shared only with the organizer.',
+    phoneInvalid: 'Enter a Bangladeshi mobile number, e.g. 01712345678.',
+    feeTitle: (amount) => `Registration fee: ${amount}`,
+    feeHelp: 'Send the fee to the organizer on bKash or Nagad (Send Money), then enter the Transaction ID from the confirmation SMS below.',
+    smsConsent: 'Send me SMS updates about my registration and the auction',
+    privacy: 'Privacy',
+    registeredPaid: 'The organizer will check your payment too.',
   },
   bn: {
     loadFailed: 'পেজটি খোলা যায়নি।',
@@ -91,6 +112,12 @@ const STRINGS = {
     previousTeamPlaceholder: 'যেমন: মিরপুর ক্লাব',
     register: 'রেজিস্টার করুন',
     phonePrivacy: 'আপনার ফোন নম্বর শুধু আয়োজক দেখতে পাবেন।',
+    phoneInvalid: 'বাংলাদেশি মোবাইল নম্বর দিন, যেমন 01712345678।',
+    feeTitle: (amount) => `নিবন্ধন ফি: ${amount}`,
+    feeHelp: 'আয়োজকের bKash বা Nagad নম্বরে ফি পাঠান (Send Money), তারপর কনফার্মেশন SMS থেকে ট্রানজেকশন আইডি নিচে লিখুন।',
+    smsConsent: 'আমার নিবন্ধন ও নিলাম নিয়ে আমাকে SMS-এ জানাবেন',
+    privacy: 'গোপনীয়তা নীতি',
+    registeredPaid: 'আয়োজক আপনার পেমেন্টও যাচাই করবেন।',
   },
 } satisfies Strings<RegisterPlayerStrings>
 
@@ -103,6 +130,11 @@ interface RegistrationInfo {
   logoUrl: string | null
   open: boolean
   roles: string[]
+  /** Optional fee in ৳, paid to the organizer's own bKash / Nagad number. */
+  registrationFee?: number | null
+  feeBkashNumber?: string | null
+  feeNagadNumber?: string | null
+  feeInstructions?: string | null
 }
 
 /** /register-player/<code> — public player sign-up (no account needed). */
@@ -114,10 +146,14 @@ export default function RegisterPlayer({ code }: { code: string }) {
   const [role, setRole] = useState('')
   const [previousTeam, setPreviousTeam] = useState('')
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [smsConsent, setSmsConsent] = useState(false)
+  const [payment, setPayment] = useState<PaymentFieldsValue>({ method: null, trxId: '', sender: '' })
+  const paymentError = usePaymentFieldsError()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const t = useStrings(STRINGS)
+  const lang = useLang()
 
   useEffect(() => {
     let cancelled = false
@@ -127,14 +163,25 @@ export default function RegisterPlayer({ code }: { code: string }) {
     return () => {
       cancelled = true
     }
-  }, [code])
+  }, [code, t.loadFailed])
+
+  const feeMethods: PaymentMethod[] = [
+    ...(info?.feeBkashNumber ? (['BKASH'] as const) : []),
+    ...(info?.feeNagadNumber ? (['NAGAD'] as const) : []),
+  ]
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     if (name.trim().length < 2) return setError(t.nameRequired)
     if (!phone.trim()) return setError(t.phoneRequired)
+    if (!looksLikeBdMobile(phone)) return setError(t.phoneInvalid)
     if (!role) return setError(t.roleRequired)
+    const pay = info?.registrationFee ? { ...payment, method: payment.method ?? (feeMethods.length === 1 ? feeMethods[0] : null) } : null
+    if (pay) {
+      const payErr = paymentError(pay)
+      if (payErr) return setError(payErr)
+    }
     setSubmitting(true)
     try {
       await apiPost(`/api/register/${encodeURIComponent(code)}`, {
@@ -143,6 +190,8 @@ export default function RegisterPlayer({ code }: { code: string }) {
         role,
         previousTeam: previousTeam.trim() || null,
         photoUrl,
+        smsConsent,
+        ...(pay ? { payMethod: pay.method, payTrxId: normalizeTrx(pay.trxId), paySender: pay.sender.trim() } : {}),
       })
       setDone(true)
     } catch (ex) {
@@ -183,16 +232,17 @@ export default function RegisterPlayer({ code }: { code: string }) {
                     <MapPin className="h-3.5 w-3.5" aria-hidden /> {info.location}
                   </span>
                 ) : null}
-                {info.startDate ? <span>{t.starts(formatDate(info.startDate))}</span> : null}
+                {info.startDate ? <span>{t.starts(formatDate(info.startDate, false, lang))}</span> : null}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {done ? (
                 <div className="space-y-2 py-4 text-center">
-                  <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" aria-hidden />
+                  <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600 dark:text-emerald-400" aria-hidden />
                   <p className="text-lg font-bold">{t.registeredTitle}</p>
                   <p className="text-sm text-muted-foreground">
                     {t.registeredBody(info.tournamentName)}
+                    {info.registrationFee ? ` ${t.registeredPaid}` : ''}
                   </p>
                 </div>
               ) : !info.open ? (
@@ -236,12 +286,40 @@ export default function RegisterPlayer({ code }: { code: string }) {
                     </Label>
                     <Input id="rp-prev" value={previousTeam} onChange={(e) => setPreviousTeam(e.target.value)} maxLength={80} className="h-11" placeholder={t.previousTeamPlaceholder} />
                   </div>
+                  {info.registrationFee ? (
+                    <div className="space-y-3 rounded-xl border-2 border-primary/20 bg-primary/5 p-3">
+                      <div>
+                        <p className="font-bold">{t.feeTitle(formatBDT(info.registrationFee))}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{info.feeInstructions || t.feeHelp}</p>
+                      </div>
+                      <PayNumbers bkash={info.feeBkashNumber ?? null} nagad={info.feeNagadNumber ?? null} amount={info.registrationFee} />
+                      <PaymentFields
+                        methods={feeMethods}
+                        value={{ ...payment, method: payment.method ?? (feeMethods.length === 1 ? feeMethods[0] : null) }}
+                        onChange={setPayment}
+                        idPrefix="rp-pay"
+                        disabled={submitting}
+                      />
+                    </div>
+                  ) : null}
+                  <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--primary)]"
+                      checked={smsConsent}
+                      onChange={(e) => setSmsConsent(e.target.checked)}
+                    />
+                    <span>{t.smsConsent}</span>
+                  </label>
                   <Button type="submit" className="h-12 w-full text-base font-bold" disabled={submitting}>
                     {submitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" aria-hidden /> : null}
                     {t.register}
                   </Button>
                   <p className="text-center text-xs text-muted-foreground">
-                    {t.phonePrivacy}
+                    {t.phonePrivacy}{' '}
+                    <a href="/privacy" className="font-medium underline underline-offset-2 hover:text-foreground">
+                      {t.privacy}
+                    </a>
                   </p>
                 </form>
               )}

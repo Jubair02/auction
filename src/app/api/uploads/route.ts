@@ -1,9 +1,11 @@
 import { db } from '@/lib/db'
 import { getSessionUser, jsonError } from '@/lib/auth'
-import { InvalidImageError, MAX_UPLOAD_BYTES, isImageKind, processImage } from '@/lib/images'
+import { InvalidImageError, MAX_UPLOAD_BYTES, MAX_UPLOAD_MESSAGE, isImageKind, processImage } from '@/lib/images'
 import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
 
 export const runtime = 'nodejs'
+
+const HOUR = 60 * 60 * 1000
 
 // POST /api/uploads — multipart form: file, kind (PHOTO | LOGO | BANNER)
 //   Organizers/admins: any kind.
@@ -24,24 +26,33 @@ export async function POST(req: Request) {
   if (!isImageKind(kind)) return jsonError('kind must be PHOTO, LOGO or BANNER', 400)
 
   const staff = user && (user.role === 'ORGANIZER' || user.role === 'ADMIN')
-  if (!staff) {
+  let retryAfter: number | null
+  if (user && staff) {
+    retryAfter = await rateLimit(`upload:${user.id}`, 120, HOUR)
+  } else {
     if (kind !== 'PHOTO') return jsonError('Log in as an organizer to upload logos and banners', 401)
     const code = form.get('registrationCode')
     const open =
       typeof code === 'string' && code !== ''
-        ? await db.tournament.findFirst({ where: { registrationCode: code, registrationOpen: true }, select: { id: true } })
+        ? await db.tournament.findFirst({
+            where: { registrationCode: code, registrationOpen: true, archivedAt: null },
+            select: { id: true },
+          })
         : null
     if (!open) return jsonError('Uploads need an organizer login or an open registration link', 401)
+    // Keyed on IP + tournament: a whole team signing up from one venue Wi-Fi
+    // (or one carrier-NAT address) must not run out, and one tournament's
+    // sign-up rush does not use up another's. The per-tournament cap bounds
+    // what a single open link can be used to store.
+    retryAfter =
+      (await rateLimit(`${clientKey(req, 'upload-anon')}:${open.id}`, 40, HOUR)) ??
+      (await rateLimit(`upload-anon-tournament:${open.id}`, 600, HOUR))
   }
-
-  const retryAfter = staff
-    ? await rateLimit(`upload:${user!.id}`, 120, 60 * 60 * 1000)
-    : await rateLimit(clientKey(req, 'upload-anon'), 10, 60 * 60 * 1000)
   if (retryAfter !== null) return jsonError(`Too many uploads. Please try again in ${retryAfter} seconds.`, 429)
 
   const file = form.get('file')
   if (!(file instanceof File)) return jsonError('Attach an image file', 400)
-  if (file.size > MAX_UPLOAD_BYTES) return jsonError('Images must be 8 MB or smaller', 413)
+  if (file.size > MAX_UPLOAD_BYTES) return jsonError(MAX_UPLOAD_MESSAGE, 413)
 
   try {
     const image = await processImage(Buffer.from(await file.arrayBuffer()), kind)

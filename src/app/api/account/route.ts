@@ -1,0 +1,85 @@
+import { randomBytes } from 'node:crypto'
+import { after } from 'next/server'
+import { db } from '@/lib/db'
+import { clearSessionCookie, jsonError } from '@/lib/auth'
+import { hashPassword, verifyPassword } from '@/lib/crypto'
+import { track } from '@/lib/analytics'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
+import { readJson, requireSession } from '../_lib/helpers'
+
+export const runtime = 'nodejs'
+
+// GET /api/account — what the account page needs before a deletion:
+// the tournaments still blocking it and how many teams the user manages.
+export async function GET() {
+  const auth = await requireSession()
+  if ('response' in auth) return auth.response
+  const { user } = auth
+
+  const [blocking, managedTeams, payments] = await Promise.all([
+    db.tournament.findMany({
+      where: { organizerId: user.id, archivedAt: null },
+      select: { id: true, name: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    db.team.count({ where: { managerUserId: user.id } }),
+    db.payment.count({ where: { userId: user.id } }),
+  ])
+  return Response.json({ user, activeTournaments: blocking, managedTeams, payments, canDelete: user.role !== 'ADMIN' })
+}
+
+// DELETE /api/account {password} — anonymizes the caller's account.
+// The row stays (bids, payments and archived tournaments keep a valid owner)
+// but every personal field is wiped and all sessions end.
+export async function DELETE(req: Request) {
+  const auth = await requireSession()
+  if ('response' in auth) return auth.response
+  const { user } = auth
+
+  // Password guesses against a stolen session are bounded.
+  const retryAfter = await rateLimit(`${clientKey(req, 'account-delete')}:${user.id}`, 5, 15 * 60 * 1000)
+  if (retryAfter !== null) return jsonError(`Too many attempts. Please try again in ${retryAfter} seconds.`, 429)
+
+  if (user.role === 'ADMIN') {
+    return jsonError('Admin accounts cannot be deleted here. Ask another admin to remove your admin role first.', 403)
+  }
+
+  const body = await readJson(req)
+  const password = typeof body?.password === 'string' ? body.password : ''
+  if (!password) return jsonError('Enter your password to confirm', 400)
+
+  const row = await db.user.findUnique({ where: { id: user.id }, select: { passwordHash: true, deletedAt: true } })
+  if (!row || row.deletedAt) return jsonError('Account not found', 404)
+  if (!verifyPassword(password, row.passwordHash)) return jsonError('Incorrect password', 401)
+
+  const owned = await db.tournament.count({ where: { organizerId: user.id, archivedAt: null } })
+  if (owned > 0) {
+    return jsonError(
+      `You still own ${owned} tournament${owned === 1 ? '' : 's'}. Delete or archive ${owned === 1 ? 'it' : 'them'} first, then delete your account.`,
+      409,
+    )
+  }
+
+  const now = new Date()
+  await db.$transaction([
+    db.user.update({
+      where: { id: user.id },
+      data: {
+        name: 'Deleted user',
+        email: `deleted-${user.id}@deleted.invalid`,
+        phone: null,
+        // Nobody knows this password, so the account can never be logged into again.
+        passwordHash: hashPassword(randomBytes(32).toString('hex')),
+        deletedAt: now,
+        sessionVersion: { increment: 1 },
+      },
+    }),
+    db.session.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now } }),
+    db.passwordResetToken.deleteMany({ where: { userId: user.id } }),
+    db.team.updateMany({ where: { managerUserId: user.id }, data: { managerUserId: null } }),
+    db.tournamentStaff.deleteMany({ where: { userId: user.id } }),
+  ])
+  await clearSessionCookie()
+  after(() => track('account_deleted', { userId: user.id, props: { role: user.role } }))
+  return Response.json({ ok: true })
+}

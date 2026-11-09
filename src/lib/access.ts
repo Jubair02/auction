@@ -19,7 +19,7 @@ export function pageAccess(segs: string[]): PageAccess {
     case 'register':
       return 'guest'
     case 'dashboard':
-    case 'results':
+    case 'account':
       return 'auth'
     case 'tournaments':
       return STAFF
@@ -27,8 +27,12 @@ export function pageAccess(segs: string[]): PageAccess {
       return ['MANAGER']
     case 'admin':
       return ['ADMIN']
-    // Landing, password reset, invites (they handle login themselves), the
-    // live room, overlay, player registration, join-by-code, 404.
+    // Landing, privacy notice, password reset, invites (they handle login
+    // themselves), the live room, overlay, player registration, join-by-code,
+    // 404 — and results / league pages (fixtures, points table): public ones are
+    // for everyone, and the API decides (private ones ask the visitor to log in).
+    case 'results':
+    case 'league':
     default:
       return 'public'
   }

@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
+import { assertWithinPlan } from '@/lib/plans'
 import type { TeamDTO } from '@/lib/types'
 import {
   coercePositiveInt,
@@ -79,6 +80,9 @@ export async function POST(req: Request, { params }: RouteParams) {
 
     valid.push({ name: name.slice(0, 60), color, captainName, logoUrl, budget, maxSquad, minSquad })
   }
+
+  const overLimit = await assertWithinPlan(loaded.tournament, { teams: valid.length })
+  if (overLimit) return overLimit
 
   const created: TeamDTO[] = []
   for (const t of valid) {

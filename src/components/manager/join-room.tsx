@@ -6,7 +6,7 @@ import { navigate } from '@/lib/router'
 import { DASHBOARD_PATH } from '@/lib/access'
 import { useCachedGet } from '@/lib/api-cache'
 import { DEMO_ROOM_CODE } from '@/lib/demo'
-import { useAppStore } from '@/lib/store'
+import { useAuthState } from '@/lib/store'
 import type { RoomInfo, UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -51,7 +51,7 @@ const STRINGS = {
 export default function JoinRoomView() {
   const [code, setCode] = useState('')
   const t = useStrings(STRINGS)
-  const role = useAppStore((s) => s.user?.role)
+  const role = useAuthState().user?.role
   // Only seeded databases have the demo room — never offer a room that 404s.
   const demo = useCachedGet<RoomInfo>(`/api/rooms/${DEMO_ROOM_CODE}`)
 

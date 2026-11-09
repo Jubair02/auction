@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { apiPost, ApiError } from '@/lib/api'
 import { consumeReturnTo, navigate, peekReturnTo } from '@/lib/router'
 import { postLoginPath } from '@/lib/access'
+import { AppLink } from '@/components/shared/app-link'
 import { useAppStore } from '@/lib/store'
 import type { SafeUser, UserRole } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
@@ -137,8 +138,11 @@ const STRINGS = {
   },
 } satisfies Strings<AuthStrings>
 
-// Demo logins shown on the sign-in page. The admin account is deliberately
-// NOT listed here — publishing platform-admin credentials is not a demo feature.
+// Demo logins shown on the sign-in page — only on deployments that opt in
+// with NEXT_PUBLIC_SHOW_DEMO_LOGINS=1 (a public demo site). A real deployment
+// must never advertise working credentials. The admin account is deliberately
+// never listed.
+const SHOW_DEMO_LOGINS = process.env.NEXT_PUBLIC_SHOW_DEMO_LOGINS === '1'
 const DEMO_ACCOUNTS = [
   { label: 'Organizer', email: 'organizer@neelamghor.bd', password: 'demo1234' },
   { label: 'Manager', email: 'manager@neelamghor.bd', password: 'demo1234' },
@@ -223,13 +227,10 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
   return (
     <div className="container mx-auto flex min-h-[calc(100vh-8rem)] max-w-md flex-col justify-center px-4 py-10">
       {/* Logged-out visitors have no menu, and the logo isn't a link. */}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2 mb-2 self-start text-muted-foreground"
-        onClick={() => navigate('/')}
-      >
-        <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {t.backHome}
+      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 self-start text-muted-foreground">
+        <AppLink href="/">
+          <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {t.backHome}
+        </AppLink>
       </Button>
       <Card className="w-full shadow-sm">
         <CardHeader className="text-center">
@@ -291,7 +292,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
                       aria-pressed={role === 'MANAGER'}
                       className={`flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
                         role === 'MANAGER'
-                          ? 'border-amber-500 bg-amber-50 text-amber-700'
+                          ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
                           : 'border-border bg-background hover:bg-accent'
                       }`}
                     >
@@ -339,13 +340,12 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
               <div className="flex items-center justify-between gap-2">
                 <Label htmlFor="password">{t.password}</Label>
                 {!isRegister ? (
-                  <button
-                    type="button"
+                  <AppLink
+                    href="/forgot-password"
                     className="text-xs font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                    onClick={() => navigate('/forgot-password')}
                   >
                     {t.forgotPassword}
-                  </button>
+                  </AppLink>
                 ) : null}
               </div>
               <Input
@@ -390,40 +390,43 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
 
           <Separator className="my-5" />
 
-          <div className="rounded-lg border border-dashed bg-muted/40 p-3">
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-              <Sparkles className="h-3.5 w-3.5 text-amber-600" aria-hidden /> {t.demoAccounts}
-            </p>
-            <ul className="mt-2 space-y-1.5">
-              {DEMO_ACCOUNTS.map((acc) => (
-                <li key={acc.email} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="min-w-0 truncate text-muted-foreground">
-                    <span className="font-semibold text-foreground">{t.demoLabel(acc.label)}</span> · {acc.email} / {acc.password}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 shrink-0 px-2 text-xs"
-                    onClick={() => fillDemo(acc)}
-                  >
-                    {t.fill}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </div>
+          {SHOW_DEMO_LOGINS ? (
+            <div className="rounded-lg border border-dashed bg-muted/40 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden /> {t.demoAccounts}
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {DEMO_ACCOUNTS.map((acc) => (
+                  <li key={acc.email} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      <span className="font-semibold text-foreground">{t.demoLabel(acc.label)}</span> · {acc.email} / {acc.password}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      onClick={() => fillDemo(acc)}
+                    >
+                      {t.fill}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
-          <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
+          <p
+            className={`${SHOW_DEMO_LOGINS ? 'mt-5 ' : ''}flex items-center justify-center gap-1.5 text-center text-sm text-muted-foreground`}
+          >
             <Users className="h-3.5 w-3.5" aria-hidden />
             {isRegister ? t.haveAccount : t.newHere}{' '}
-            <button
-              type="button"
+            <AppLink
+              href={isRegister ? '/login' : '/register'}
               className="font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-              onClick={() => navigate(isRegister ? '/login' : '/register')}
             >
               {isRegister ? t.logIn : t.createFree}
-            </button>
+            </AppLink>
           </p>
         </CardContent>
       </Card>

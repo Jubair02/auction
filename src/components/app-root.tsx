@@ -1,21 +1,29 @@
 'use client'
 
-// App shell + hash router. The entire SPA lives under the single Next.js route "/".
+// App shell + client router. Every path is served by src/app/[[...slug]]/page.tsx,
+// which passes the path in so the server HTML is the real page.
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Trophy, UserPlus, Users } from 'lucide-react'
+import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Trophy, UserCog, UserPlus, Users } from 'lucide-react'
 import { Toaster as SonnerToaster, toast } from 'sonner'
-import { useAppStore } from '@/lib/store'
-import { apiGet } from '@/lib/api'
+import { useAppStore, useAuthState } from '@/lib/store'
 import { useCachedGet } from '@/lib/api-cache'
 import { navigate, setReturnTo, useRoute } from '@/lib/router'
 import { useFullscreen } from '@/lib/use-fullscreen'
 import { canOpen, DASHBOARD_PATH, pageAccess } from '@/lib/access'
 import { type Strings, useLang, useLangBootstrap, useLangStore, useStrings } from '@/lib/i18n'
+import { useLowDataBootstrap } from '@/lib/low-data'
+import { useServiceWorker } from '@/lib/pwa'
 import type { UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { ErrorBoundary } from '@/components/shared/error-boundary'
+import { AppLink } from '@/components/shared/app-link'
+import { DataSaverMenuItem, DataSaverToggle } from '@/components/shared/data-saver'
+import { ThemeToggle } from '@/components/shared/theme-toggle'
+import { useTheme } from '@/lib/theme'
+import { InstallAppMenuItem, InstallHelpHost, InstallHint } from '@/components/shared/install-app'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,6 +53,9 @@ const JoinRoomView = dynamic(() => import('@/components/manager/join-room'), { l
 const AcceptInvite = dynamic(() => import('@/components/manager/accept-invite'), { loading: () => <CenterLoader /> })
 const RegisterPlayer = dynamic(() => import('@/components/register-player'), { loading: () => <CenterLoader /> })
 const ResultsView = dynamic(() => import('@/components/results/results-view'), { loading: () => <CenterLoader /> })
+const LeaguePublicView = dynamic(() => import('@/components/league/league-public-view'), { loading: () => <CenterLoader /> })
+const AccountView = dynamic(() => import('@/components/account/account-view'), { loading: () => <CenterLoader /> })
+const PrivacyView = dynamic(() => import('@/components/legal/privacy-view'), { loading: () => <CenterLoader /> })
 
 /**
  * Leaves a page the current user may not open. Replaces the history entry, so
@@ -87,21 +98,31 @@ function NotFound() {
     <AccessPanel
       title={t.notFoundTitle}
       description={t.notFoundDescription}
-      action={<Button variant="outline" onClick={() => navigate('/')}>{t.backHome}</Button>}
+      action={
+        <Button variant="outline" asChild>
+          <AppLink href="/">{t.backHome}</AppLink>
+        </Button>
+      }
     />
   )
 }
 
-export default function AppRoot() {
-  const { segs, fragment, ready: routeReady } = useRoute()
-  const user = useAppStore((s) => s.user)
-  const authLoading = useAppStore((s) => s.authLoading)
-  const authChecked = useAppStore((s) => s.authChecked)
+export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
+  const { segs, fragment, ready: routeReady } = useRoute(initialSegs)
+  const { user, authLoading, authChecked } = useAuthState()
   const fetchMe = useAppStore((s) => s.fetchMe)
+  // Signed-in pages read browser-only state (saved room seats, storage) while
+  // rendering, so they start after mount — one frame later, with the header
+  // already right from the server's session check.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const logout = useAppStore((s) => s.logout)
   useLangBootstrap()
+  useLowDataBootstrap()
+  useServiceWorker()
   const siteSettings = useSiteSettings()
   const t = useStrings(SHELL_STRINGS)
+  const { resolved: resolvedTheme } = useTheme()
 
   useEffect(() => {
     void fetchMe()
@@ -114,10 +135,14 @@ export default function AppRoot() {
   const roomFocus = useFullscreen().isFullscreen && inRoom
 
   const renderRoute = () => {
-    // The landing page doesn't depend on who is logged in — show it without
-    // waiting for the session check.
+    // Pages that don't depend on who is logged in render without waiting for
+    // the session check — so they are in the server HTML too. (Results are
+    // public or not per tournament; the API decides and the page explains.)
     if (head === '') return <Landing />
-    if (!authChecked) return <CenterLoader />
+    if (head === 'privacy' && segs.length === 1) return <PrivacyView />
+    if (head === 'results' && segs.length === 2) return <ResultsView tournamentId={segs[1]} />
+    if (head === 'league' && segs.length === 2) return <LeaguePublicView tournamentId={segs[1]} />
+    if (!authChecked || !mounted) return <CenterLoader />
 
     // One access check for every page (rules in lib/access.ts).
     if (!canOpen(segs, user?.role ?? null)) {
@@ -126,7 +151,10 @@ export default function AppRoot() {
       // Already logged in: login/register lead to the user's own dashboard.
       if (access === 'guest') return <Redirect to={DASHBOARD_PATH} />
       // Logged out: log in first, then come straight back here (if allowed).
-      if (!user) return <Redirect to="/login" returnTo={window.location.pathname + window.location.search} />
+      if (!user) {
+        const here = typeof window === 'undefined' ? `/${segs.join('/')}` : window.location.pathname + window.location.search
+        return <Redirect to="/login" returnTo={here} />
+      }
       // Logged in with the wrong role: back to their own dashboard.
       return <Redirect to={DASHBOARD_PATH} notice={t.noAccess} />
     }
@@ -145,6 +173,8 @@ export default function AppRoot() {
       // Each role's own dashboard, all at /dashboard.
       case head === 'dashboard' && segs.length === 1:
         return user?.role === 'ADMIN' ? <AdminView /> : user?.role === 'ORGANIZER' ? <OrganizerDashboard /> : <ManagerDashboard />
+      case head === 'account' && segs.length === 1:
+        return <AccountView />
       case head === 'tournaments' && segs.length === 1:
         return <TournamentsList />
       case head === 'tournaments' && segs[1] === 'new':
@@ -156,8 +186,6 @@ export default function AppRoot() {
         return <AuctionHistory tournamentId={segs[2]} />
       case head === 'tournaments' && !!segs[1]:
         return <TournamentDetail tournamentId={segs[1]} />
-      case head === 'results' && !!segs[1]:
-        return <ResultsView tournamentId={segs[1]} />
       case head === 'room' && !!segs[1]:
         return <AuctionRoom roomCode={(segs[1] || '').toUpperCase()} />
       case head === 'register-player' && segs.length === 2:
@@ -176,9 +204,8 @@ export default function AppRoot() {
     }
   }
 
-  // Until the URL is read (first client render), show only a neutral loader —
-  // otherwise a refreshed deep link flashes the landing page, and the OBS
-  // overlay briefly flashes the app header and footer.
+  // Only token links (/reset-password#…, /invite#…) wait here: their token is
+  // in the fragment, which only the browser can read after mount.
   if (!routeReady) return <div className="min-h-screen" aria-busy="true" />
 
   // Broadcast overlay: no header, footer, toasts or auth — just the overlay.
@@ -202,6 +229,7 @@ export default function AppRoot() {
           </div>
 
           <nav className="flex items-center gap-1.5" aria-label={t.mainNav}>
+            <ThemeToggle />
             <LangToggle />
             {user ? (
               <>
@@ -219,7 +247,7 @@ export default function AppRoot() {
                       <span className="hidden max-w-[120px] truncate text-sm font-medium md:inline">{user.name}</span>
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuContent align="end" className="w-60">
                     <DropdownMenuLabel>
                       <div className="text-sm font-semibold">{user.name}</div>
                       <div className="truncate text-xs font-normal text-muted-foreground">{user.email}</div>
@@ -229,34 +257,52 @@ export default function AppRoot() {
                     {/* Each role's way home — the logo deliberately isn't a link. */}
                     {user.role === 'MANAGER' && (
                       <>
-                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
-                          <Users className="mr-2 h-4 w-4" /> {t.myTeam}
+                        <DropdownMenuItem asChild>
+                          <AppLink href={DASHBOARD_PATH}>
+                            <Users className="mr-2 h-4 w-4" /> {t.myTeam}
+                          </AppLink>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => navigate('/join')}>
-                          <KeyRound className="mr-2 h-4 w-4" /> {t.joinRoom}
+                        <DropdownMenuItem asChild>
+                          <AppLink href="/join">
+                            <KeyRound className="mr-2 h-4 w-4" /> {t.joinRoom}
+                          </AppLink>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     )}
                     {user.role === 'ORGANIZER' && (
                       <>
-                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
-                          <Trophy className="mr-2 h-4 w-4" /> {t.myTournaments}
+                        <DropdownMenuItem asChild>
+                          <AppLink href={DASHBOARD_PATH}>
+                            <Trophy className="mr-2 h-4 w-4" /> {t.myTournaments}
+                          </AppLink>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => navigate('/tournaments/new')}>
-                          <Plus className="mr-2 h-4 w-4" /> {t.newTournament}
+                        <DropdownMenuItem asChild>
+                          <AppLink href="/tournaments/new">
+                            <Plus className="mr-2 h-4 w-4" /> {t.newTournament}
+                          </AppLink>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     )}
                     {user.role === 'ADMIN' && (
                       <>
-                        <DropdownMenuItem onClick={() => navigate(DASHBOARD_PATH)}>
-                          <ShieldCheck className="mr-2 h-4 w-4" /> {t.adminConsole}
+                        <DropdownMenuItem asChild>
+                          <AppLink href={DASHBOARD_PATH}>
+                            <ShieldCheck className="mr-2 h-4 w-4" /> {t.adminConsole}
+                          </AppLink>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     )}
+                    <DropdownMenuItem asChild>
+                      <AppLink href="/account">
+                        <UserCog className="mr-2 h-4 w-4" /> {t.myAccount}
+                      </AppLink>
+                    </DropdownMenuItem>
+                    <InstallAppMenuItem />
+                    <DataSaverMenuItem />
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => void logout()} variant="destructive">
                       <LogOut className="mr-2 h-4 w-4" /> {t.logout}
                     </DropdownMenuItem>
@@ -265,12 +311,16 @@ export default function AppRoot() {
               </>
             ) : (
               <>
-                <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
-                  {/* Icons drop out on very narrow phones (≤ 380px) so the header never overflows. */}
-                  <LogIn className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.login}
+                <Button variant="ghost" size="sm" asChild>
+                  <AppLink href="/login">
+                    {/* Icons drop out on very narrow phones (≤ 380px) so the header never overflows. */}
+                    <LogIn className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.login}
+                  </AppLink>
                 </Button>
-                <Button size="sm" onClick={() => navigate('/register')}>
-                  <UserPlus className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.register}
+                <Button size="sm" asChild>
+                  <AppLink href="/register">
+                    <UserPlus className="mr-1.5 hidden h-4 w-4 min-[380px]:inline" /> {t.register}
+                  </AppLink>
                 </Button>
               </>
             )}
@@ -279,8 +329,13 @@ export default function AppRoot() {
       </header>
 
       {roomFocus ? null : <AnnouncementBanner />}
+      {/* Phones only; not in the live room, where the stage needs the space. */}
+      {!inRoom && (user?.role === 'ORGANIZER' || user?.role === 'MANAGER') ? <InstallHint /> : null}
 
-      <main className="flex-1">{renderRoute()}</main>
+      <main className="flex-1">
+        {/* A crash on one page shows a fallback instead of a blank app; navigating away resets it. */}
+        <ErrorBoundary key={segs.join('/')}>{renderRoute()}</ErrorBoundary>
+      </main>
 
       <footer hidden={inRoom} className="mt-auto border-t bg-muted/40 pb-[env(safe-area-inset-bottom)] print:hidden">
         <div className="container mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-sm text-muted-foreground sm:flex-row">
@@ -290,7 +345,13 @@ export default function AppRoot() {
           </p>
           <p>
             {t.footerFacts}
+            {' · '}
+            <AppLink className="font-medium text-foreground hover:underline" href="/privacy">
+              {t.privacy}
+            </AppLink>
             {/* Admin → Settings → support phone */}
+            {' · '}
+            <DataSaverToggle />
             {siteSettings.supportPhone?.trim() ? (
               <>
                 {' · '}
@@ -303,7 +364,8 @@ export default function AppRoot() {
         </div>
       </footer>
 
-      <SonnerToaster richColors position="top-center" closeButton />
+      <SonnerToaster richColors position="top-center" closeButton theme={resolvedTheme} />
+      <InstallHelpHost />
     </div>
   )
 }
@@ -328,6 +390,8 @@ const SHELL_STRINGS = {
     backHome: 'Back to home',
     mainNav: 'Main navigation',
     accountMenu: 'Account menu',
+    myAccount: 'My account',
+    privacy: 'Privacy',
     role: { ADMIN: 'ADMIN', ORGANIZER: 'ORGANIZER', MANAGER: 'MANAGER' },
   },
   bn: {
@@ -349,9 +413,11 @@ const SHELL_STRINGS = {
     backHome: 'হোমে ফিরে যান',
     mainNav: 'প্রধান মেনু',
     accountMenu: 'অ্যাকাউন্ট মেনু',
+    myAccount: 'আমার অ্যাকাউন্ট',
+    privacy: 'গোপনীয়তা',
     role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'support' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'support' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount' | 'privacy', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {
@@ -387,8 +453,8 @@ function AnnouncementBanner() {
 
   if (!message) return null
   return (
-    <div className="border-b border-amber-200 bg-amber-50 print:hidden" role="status">
-      <div className="container mx-auto flex max-w-7xl items-start gap-2 px-4 py-2 text-sm text-amber-900">
+    <div className="border-b border-amber-200 bg-amber-50 print:hidden dark:border-amber-900/60 dark:bg-amber-950/40" role="status">
+      <div className="container mx-auto flex max-w-7xl items-start gap-2 px-4 py-2 text-sm text-amber-900 dark:text-amber-200">
         <Megaphone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
         <p className="min-w-0">{message}</p>
       </div>

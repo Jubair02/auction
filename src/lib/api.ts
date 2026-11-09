@@ -1,10 +1,17 @@
 'use client'
 
-// Typed fetch helpers for the REST API. Errors carry the server `error` message.
+// Typed fetch helpers for the REST API. Errors carry the server `error` message,
+// translated to Bangla (lib/server-messages) when the UI is in Bangla.
+import { currentLang } from '@/lib/i18n'
+import { localizeServerMessage } from '@/lib/server-messages'
+
 export class ApiError extends Error {
   status: number
+  /** The server's message as sent (English), e.g. for matching specific errors. */
+  serverMessage: string
   constructor(message: string, status: number) {
-    super(message)
+    super(localizeServerMessage(message, currentLang()))
+    this.serverMessage = message
     this.status = status
   }
 }

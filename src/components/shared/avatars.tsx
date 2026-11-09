@@ -1,7 +1,12 @@
 'use client'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useLowData } from '@/lib/low-data'
 import { cn } from '@/lib/utils'
+
+// Every player photo / team logo avatar in the app goes through these two
+// components. In low-data mode (lib/low-data.ts) they show initials on the
+// colour instead, so no image is downloaded.
 
 interface PlayerAvatarProps {
   name: string
@@ -11,6 +16,7 @@ interface PlayerAvatarProps {
 }
 
 export function PlayerAvatar({ name, photoUrl, className, fallbackClassName }: PlayerAvatarProps) {
+  const lowData = useLowData()
   const initials = name
     .split(/\s+/)
     .slice(0, 2)
@@ -18,7 +24,7 @@ export function PlayerAvatar({ name, photoUrl, className, fallbackClassName }: P
     .join('')
   return (
     <Avatar className={cn('h-10 w-10', className)}>
-      {photoUrl ? <AvatarImage src={photoUrl} alt={name} /> : null}
+      {photoUrl && !lowData ? <AvatarImage src={photoUrl} alt={name} /> : null}
       <AvatarFallback className={cn('bg-primary/10 text-primary font-semibold', fallbackClassName)}>
         {initials || '?'}
       </AvatarFallback>
@@ -34,6 +40,7 @@ interface TeamAvatarProps {
 }
 
 export function TeamAvatar({ name, color, logoUrl, className }: TeamAvatarProps) {
+  const lowData = useLowData()
   const initials = name
     .split(/\s+/)
     .slice(0, 2)
@@ -41,7 +48,7 @@ export function TeamAvatar({ name, color, logoUrl, className }: TeamAvatarProps)
     .join('')
   return (
     <Avatar className={cn('h-10 w-10', className)}>
-      {logoUrl ? <AvatarImage src={logoUrl} alt={name} /> : null}
+      {logoUrl && !lowData ? <AvatarImage src={logoUrl} alt={name} /> : null}
       <AvatarFallback
         className="font-bold text-white"
         style={color ? { backgroundColor: color } : { backgroundColor: '#0F766E' }}

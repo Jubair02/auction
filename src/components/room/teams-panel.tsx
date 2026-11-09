@@ -70,7 +70,7 @@ export function TeamsPanel({
                 <span
                   className={cn(
                     'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-background',
-                    t.online ? 'bg-emerald-500' : 'bg-slate-300'
+                    t.online ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
                   )}
                   aria-label={t.online ? s.managerOnline : s.managerOffline}
                 />
@@ -90,7 +90,7 @@ export function TeamsPanel({
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-black tabular-nums text-emerald-700">{formatBDT(t.remaining)}</p>
+                <p className="text-sm font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(t.remaining)}</p>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{s.remaining}</p>
               </div>
             </div>

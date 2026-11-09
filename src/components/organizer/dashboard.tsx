@@ -26,13 +26,14 @@ import { TournamentCard, copyRoomCode } from '@/components/organizer/tournament-
 import { useCachedGet } from '@/lib/api-cache'
 import { LoadError } from '@/components/shared/load-error'
 import { TOURNAMENTS_URL, prefetchTournamentProps } from '@/lib/tournament-prefetch'
-import { navigate } from '@/lib/router'
-import { useAppStore } from '@/lib/store'
+import { AppLink } from '@/components/shared/app-link'
+import { useAuthState } from '@/lib/store'
 import { formatAuctionWhen } from '@/lib/format'
 import { byUrgency, isDone, isLive, urgency } from '@/lib/tournament-status'
 import { cn } from '@/lib/utils'
 import { sportLabel, type TournamentSummary } from '@/lib/types'
-import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { type Lang, type Strings, useLang, useStrings } from '@/lib/i18n'
+import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 type DashboardStrings = {
   guideSteps: string[]
@@ -240,7 +241,7 @@ function Spotlight({ t }: { t: TournamentSummary }) {
   const s = useStrings(STRINGS)
   const level = urgency(t)
   const meta = { eyebrow: s.eyebrows[level], tone: SPOTLIGHT_TONE[level] }
-  const when = formatAuctionWhen(t.auctionAt)
+  const when = formatAuctionWhen(t.auctionAt, lang)
   const steps = setupSteps(t, s)
 
   const primary: { label: string; icon: LucideIcon; href: string } =
@@ -263,7 +264,7 @@ function Spotlight({ t }: { t: TournamentSummary }) {
             </span>
             <span className="truncate text-xs font-medium text-muted-foreground">
               {sportLabel(t.sport, lang, t.sportName)}
-              {t.tournamentType ? ` · ${t.tournamentType}` : ''}
+              {t.tournamentType ? ` · ${tournamentTypeLabel(t.tournamentType, lang)}` : ''}
               {t.location ? ` · ${t.location}` : ''}
             </span>
           </div>
@@ -289,12 +290,16 @@ function Spotlight({ t }: { t: TournamentSummary }) {
           </p>
 
           <div className="mt-6 flex flex-wrap gap-2 md:mt-auto md:pt-6">
-            <Button className="h-11 px-5 font-bold" onClick={() => navigate(primary.href)} {...(level === 2 ? prefetchTournamentProps(t.id) : {})}>
-              <primary.icon className="mr-1.5 h-4 w-4" aria-hidden /> {primary.label}
+            <Button asChild className="h-11 px-5 font-bold">
+              <AppLink href={primary.href} {...(level === 2 ? prefetchTournamentProps(t.id) : {})}>
+                <primary.icon className="mr-1.5 h-4 w-4" aria-hidden /> {primary.label}
+              </AppLink>
             </Button>
             {level !== 2 ? (
-              <Button variant="ghost" className="h-11" onClick={() => navigate(`/tournaments/${t.id}`)} {...prefetchTournamentProps(t.id)}>
-                {s.manage}
+              <Button asChild variant="ghost" className="h-11">
+                <AppLink href={`/tournaments/${t.id}`} {...prefetchTournamentProps(t.id)}>
+                  {s.manage}
+                </AppLink>
               </Button>
             ) : null}
           </div>
@@ -357,12 +362,12 @@ interface ActionItem {
 }
 
 /** Concrete to-dos across every unfinished tournament, most urgent first. */
-function actionItems(tournaments: TournamentSummary[], spotlightId: string, s: DashboardStrings): ActionItem[] {
+function actionItems(tournaments: TournamentSummary[], spotlightId: string, s: DashboardStrings, lang: Lang): ActionItem[] {
   const items: ActionItem[] = []
   for (const t of [...tournaments].sort(byUrgency)) {
     if (isDone(t)) continue
     const base = { tournament: t.name, id: t.id }
-    const when = formatAuctionWhen(t.auctionAt)
+    const when = formatAuctionWhen(t.auctionAt, lang)
     if (isLive(t)) {
       // The spotlight already puts a live room front and centre.
       if (t.id !== spotlightId) items.push({ ...base, key: `${t.id}-live`, text: t.auctionStatus === 'PAUSED' ? s.auctionPaused : s.auctionLive, action: s.enterRoom, href: `/room/${t.roomCode}` })
@@ -386,7 +391,8 @@ function actionItems(tournaments: TournamentSummary[], spotlightId: string, s: D
 
 function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentSummary[]; spotlightId: string }) {
   const s = useStrings(STRINGS)
-  const items = actionItems(tournaments, spotlightId, s)
+  const lang = useLang()
+  const items = actionItems(tournaments, spotlightId, s, lang)
   return (
     <Card className="gap-3">
       <CardHeader className="pb-0">
@@ -407,9 +413,8 @@ function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentS
           <ul className="-mx-2 divide-y">
             {items.slice(0, 5).map((item) => (
               <li key={item.key}>
-                <button
-                  type="button"
-                  onClick={() => navigate(item.href)}
+                <AppLink
+                  href={item.href}
                   {...prefetchTournamentProps(item.id)}
                   className="group flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-primary"
                 >
@@ -421,7 +426,7 @@ function NeedsAttention({ tournaments, spotlightId }: { tournaments: TournamentS
                     {item.action}
                     <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden />
                   </span>
-                </button>
+                </AppLink>
               </li>
             ))}
           </ul>
@@ -446,8 +451,10 @@ function FirstAuction() {
           <p className="mt-3 max-w-md text-sm text-muted-foreground sm:text-base">
             {s.firstBody}
           </p>
-          <Button className="mt-6 h-11 px-5 font-bold" onClick={() => navigate('/tournaments/new')}>
-            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.createFirst}
+          <Button asChild className="mt-6 h-11 px-5 font-bold">
+            <AppLink href="/tournaments/new">
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.createFirst}
+            </AppLink>
           </Button>
         </div>
         <ol className="space-y-2">
@@ -465,7 +472,7 @@ function FirstAuction() {
 }
 
 export default function OrganizerDashboard() {
-  const user = useAppStore((st) => st.user)
+  const { user } = useAuthState()
   const s = useStrings(STRINGS)
   // Shares its cache with the tournaments page — opening either after the other is instant.
   const { data, loading, error, refetch } = useCachedGet<{ tournaments: TournamentSummary[] }>(TOURNAMENTS_URL)
@@ -495,8 +502,10 @@ export default function OrganizerDashboard() {
           )}
         </div>
         {!loading && tournaments.length > 0 ? (
-          <Button size="lg" className="min-h-11" onClick={() => navigate('/tournaments/new')}>
-            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+          <Button asChild size="lg" className="min-h-11">
+            <AppLink href="/tournaments/new">
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+            </AppLink>
           </Button>
         ) : null}
       </div>
@@ -523,8 +532,10 @@ export default function OrganizerDashboard() {
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-lg font-bold">{s.yourTournaments}</h2>
               {tournaments.length > 6 ? (
-                <Button variant="ghost" size="sm" onClick={() => navigate('/tournaments')}>
-                  {s.all(tournaments.length)} <ArrowRight className="ml-1 h-4 w-4" aria-hidden />
+                <Button asChild variant="ghost" size="sm">
+                  <AppLink href="/tournaments">
+                    {s.all(tournaments.length)} <ArrowRight className="ml-1 h-4 w-4" aria-hidden />
+                  </AppLink>
                 </Button>
               ) : null}
             </div>
@@ -535,11 +546,15 @@ export default function OrganizerDashboard() {
                   t={t}
                   actions={
                     <>
-                      <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
-                        <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> {s.manage}
+                      <Button asChild className="min-h-10 flex-1">
+                        <AppLink href={`/tournaments/${t.id}`} {...prefetchTournamentProps(t.id)}>
+                          <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> {s.manage}
+                        </AppLink>
                       </Button>
-                      <Button variant="outline" className="min-h-10 flex-1" onClick={() => navigate(`/results/${t.id}`)}>
-                        <History className="mr-1.5 h-4 w-4" aria-hidden /> {s.results}
+                      <Button asChild variant="outline" className="min-h-10 flex-1">
+                        <AppLink href={`/results/${t.id}`}>
+                          <History className="mr-1.5 h-4 w-4" aria-hidden /> {s.results}
+                        </AppLink>
                       </Button>
                     </>
                   }

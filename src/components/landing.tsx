@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -17,7 +18,6 @@ import {
   Rocket,
   Share2,
   Shuffle,
-  Timer,
   Trophy,
   Users,
   Wallet,
@@ -26,11 +26,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import { navigate } from '@/lib/router'
+import { AppLink } from '@/components/shared/app-link'
 import { DASHBOARD_PATH } from '@/lib/access'
-import { type Strings, useStrings } from '@/lib/i18n'
-import { useAppStore } from '@/lib/store'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { useAuthState } from '@/lib/store'
+import { useLowData } from '@/lib/low-data'
 import type { UserRole } from '@/lib/types'
+import { TOURNAMENT_TYPES, tournamentTypeLabel } from '@/lib/tournament-types'
 
 type Step = { title: string; text: string }
 
@@ -72,7 +74,6 @@ interface LandingStrings {
   footballHint: string
   footballRoles: string[]
   popularTypes: string
-  tournamentTypes: string[]
   ctaTitle: string
   ctaSub: string
   loginAsOrganizer: string
@@ -165,15 +166,6 @@ const STRINGS = {
     footballHint: 'Normal mode with one base price is the classic choice',
     footballRoles: ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'],
     popularTypes: 'Popular tournament types',
-    tournamentTypes: [
-      'Corporate Cricket',
-      'University Tournament',
-      'Local Club Tournament',
-      'School Tournament',
-      'Community Tournament',
-      'Indoor Cricket',
-      '6-a-side Football',
-    ],
     ctaTitle: 'Your auction. One room. Zero spreadsheets.',
     ctaSub: 'Create a free account, load your players and share the room code. The gavel is waiting.',
     loginAsOrganizer: 'Log in as organizer',
@@ -264,15 +256,6 @@ const STRINGS = {
     footballHint: 'এক বেস প্রাইসের নরমাল মোডই ক্লাসিক পছন্দ',
     footballRoles: ['গোলকিপার', 'ডিফেন্ডার', 'মিডফিল্ডার', 'ফরোয়ার্ড'],
     popularTypes: 'জনপ্রিয় টুর্নামেন্টগুলো',
-    tournamentTypes: [
-      'কর্পোরেট ক্রিকেট',
-      'বিশ্ববিদ্যালয় টুর্নামেন্ট',
-      'লোকাল ক্লাব টুর্নামেন্ট',
-      'স্কুল টুর্নামেন্ট',
-      'মহল্লার টুর্নামেন্ট',
-      'ইনডোর ক্রিকেট',
-      '6 জনের ফুটবল',
-    ],
     ctaTitle: 'আপনার নিলাম। এক রুমে। কোনো এক্সেল শিট ছাড়াই।',
     ctaSub: 'ফ্রি অ্যাকাউন্ট খুলুন, খেলোয়াড় তুলুন আর রুম কোড শেয়ার করুন। হাতুড়ি অপেক্ষা করছে।',
     loginAsOrganizer: 'আয়োজক হিসেবে লগইন',
@@ -303,18 +286,18 @@ const MANAGER_STEP_ICONS = [KeyRound, DoorOpen, Trophy, HandCoins, ListChecks]
 const FEATURE_ICONS = [Gavel, ListChecks, Wallet, Shuffle, Users, FileSpreadsheet]
 
 export default function Landing() {
-  const user = useAppStore((s) => s.user)
+  const { user } = useAuthState()
   const t = useStrings(STRINGS)
+  const lang = useLang()
+  // Data saver: no hero image (the page's largest download).
+  const lowData = useLowData()
   return (
     <div className="bg-background">
       {/* ---------------- Hero ---------------- */}
       <section className="relative overflow-hidden border-b bg-gradient-to-b from-primary/5 via-background to-background">
         <div className="container mx-auto grid max-w-7xl items-center gap-10 px-4 py-12 sm:py-16 lg:grid-cols-2 lg:gap-12 lg:py-20">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, ease: 'easeOut' }}
-          >
+          {/* Above the fold: rendered visible in the server HTML (no fade-in from opacity 0). */}
+          <div>
             <Badge variant="outline" className="gap-1.5 border-primary/30 bg-primary/5 px-3 py-1 text-primary">
               <MapPin className="h-3.5 w-3.5" aria-hidden /> {t.madeFor}
             </Badge>
@@ -325,45 +308,50 @@ export default function Landing() {
               {t.heroSub}
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="min-h-11" onClick={() => navigate(user ? DASHBOARD_PATH : '/register')}>
-                {user ? t.homeLabel[user.role] : t.createAuction} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
+              <Button size="lg" className="min-h-11" asChild>
+                <AppLink href={user ? DASHBOARD_PATH : '/register'}>
+                  {user ? t.homeLabel[user.role] : t.createAuction} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
+                </AppLink>
               </Button>
-              <Button size="lg" variant="outline" className="min-h-11" onClick={() => navigate('/join')}>
-                <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> {t.haveRoomCode}
+              <Button size="lg" variant="outline" className="min-h-11" asChild>
+                <AppLink href="/join">
+                  <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> {t.haveRoomCode}
+                </AppLink>
               </Button>
             </div>
             <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
-                <BadgeCheck className="h-4 w-4 text-emerald-600" aria-hidden /> {t.bdtNative}
+                <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.bdtNative}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <BadgeCheck className="h-4 w-4 text-emerald-600" aria-hidden /> {t.cricketFootball}
+                <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.cricketFootball}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <BadgeCheck className="h-4 w-4 text-emerald-600" aria-hidden /> {t.freeBeta}
+                <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.freeBeta}
               </span>
             </p>
-          </motion.div>
+          </div>
 
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.6, ease: 'easeOut', delay: 0.1 }}
-            className="relative"
-          >
-            <div className="rounded-2xl border bg-card p-2 shadow-xl shadow-primary/10">
-              <img
-                src="/images/hero.png"
-                alt={t.heroAlt}
-                className="h-auto w-full rounded-xl object-cover"
-                loading="eager"
-              />
+          {lowData ? null : (
+            <div className="relative">
+              <div className="rounded-2xl border bg-card p-2 shadow-xl shadow-primary/10">
+                {/* Intrinsic size reserves the box before the image loads — no layout shift. */}
+                <Image
+                  src="/images/hero.png"
+                  alt={t.heroAlt}
+                  width={1344}
+                  height={768}
+                  sizes="(min-width: 1280px) 600px, (min-width: 1024px) 46vw, 100vw"
+                  preload
+                  className="h-auto w-full rounded-xl object-cover"
+                />
+              </div>
+              <div className="absolute -bottom-4 left-4 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-md sm:flex">
+                <Gavel className="h-4 w-4 text-primary" aria-hidden />
+                <span className="text-sm font-semibold">{t.soldFor('৳1,25,000')}</span>
+              </div>
             </div>
-            <div className="absolute -bottom-4 left-4 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-md sm:flex">
-              <Gavel className="h-4 w-4 text-primary" aria-hidden />
-              <span className="text-sm font-semibold">{t.soldFor('৳1,25,000')}</span>
-            </div>
-          </motion.div>
+          )}
         </div>
       </section>
 
@@ -371,10 +359,10 @@ export default function Landing() {
       <section className="border-b bg-muted/40">
         <div className="container mx-auto grid max-w-7xl grid-cols-2 gap-px overflow-hidden px-4 py-8 sm:grid-cols-4">
           {t.stats.map((s, i) => (
-            <motion.div key={i} {...fadeUp} className="px-2 py-3 text-center sm:py-4">
+            <div key={i} className="px-2 py-3 text-center sm:py-4">
               <p className="text-2xl font-extrabold tracking-tight text-primary sm:text-3xl">{s.value}</p>
               <p className="mt-1 text-xs text-muted-foreground sm:text-sm">{s.label}</p>
-            </motion.div>
+            </div>
           ))}
         </div>
       </section>
@@ -423,7 +411,7 @@ export default function Landing() {
           </motion.div>
 
           <motion.div {...fadeUp}>
-            <Card className="h-full border-amber-200/70 bg-amber-50/40 dark:bg-amber-950/10">
+            <Card className="h-full border-amber-200/70 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20">
               <CardContent className="p-6">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500 text-white">
@@ -439,12 +427,12 @@ export default function Landing() {
                     const StepIcon = MANAGER_STEP_ICONS[i]
                     return (
                     <li key={i} className="flex items-start gap-3">
-                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-700">
+                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-700 dark:text-amber-300">
                         {i + 1}
                       </span>
                       <div className="min-w-0">
                         <p className="flex items-center gap-2 text-sm font-semibold">
-                          <StepIcon className="h-4 w-4 text-amber-700" aria-hidden /> {step.title}
+                          <StepIcon className="h-4 w-4 text-amber-700 dark:text-amber-400" aria-hidden /> {step.title}
                         </p>
                         <p className="text-sm text-muted-foreground">{step.text}</p>
                       </div>
@@ -540,9 +528,9 @@ export default function Landing() {
         <motion.div {...fadeUp} className="mt-8 text-center">
           <p className="text-sm font-semibold text-muted-foreground">{t.popularTypes}</p>
           <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {t.tournamentTypes.map((type) => (
+            {TOURNAMENT_TYPES.map((type) => (
               <Badge key={type} variant="outline" className="border-primary/25 bg-primary/5 px-3 py-1.5 text-sm text-foreground">
-                {type}
+                {tournamentTypeLabel(type, lang)}
               </Badge>
             ))}
           </div>
@@ -553,7 +541,7 @@ export default function Landing() {
       {user ? null : (
         <section className="container mx-auto max-w-7xl px-4 pb-16">
           <motion.div {...fadeUp}>
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 px-6 py-12 text-center text-white shadow-lg sm:px-12 sm:py-16">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 px-6 py-12 text-center text-white shadow-lg sm:px-12 sm:py-16 dark:from-teal-800 dark:via-teal-900 dark:to-emerald-950 dark:ring-1 dark:ring-white/10">
               <Zap className="pointer-events-none absolute -left-8 -top-8 h-40 w-40 text-white/5" aria-hidden />
               <Trophy className="pointer-events-none absolute -bottom-10 -right-6 h-44 w-44 text-white/5" aria-hidden />
               <h2 className="relative text-2xl font-extrabold tracking-tight sm:text-3xl">
@@ -563,16 +551,20 @@ export default function Landing() {
                 {t.ctaSub}
               </p>
               <div className="relative mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-                <Button size="lg" variant="secondary" className="min-h-11 bg-white text-teal-900 hover:bg-teal-50" onClick={() => navigate('/register')}>
-                  <Rocket className="mr-1.5 h-4 w-4" aria-hidden /> {t.createAuction}
+                <Button size="lg" variant="secondary" className="min-h-11 bg-white text-teal-900 hover:bg-teal-50" asChild>
+                  <AppLink href="/register">
+                    <Rocket className="mr-1.5 h-4 w-4" aria-hidden /> {t.createAuction}
+                  </AppLink>
                 </Button>
                 <Button
                   size="lg"
                   variant="outline"
-                  className="min-h-11 border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
-                  onClick={() => navigate('/login')}
+                  className="min-h-11 border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white dark:border-white/40 dark:bg-transparent dark:hover:bg-white/10"
+                  asChild
                 >
-                  <PencilLine className="mr-1.5 h-4 w-4" aria-hidden /> {t.loginAsOrganizer}
+                  <AppLink href="/login">
+                    <PencilLine className="mr-1.5 h-4 w-4" aria-hidden /> {t.loginAsOrganizer}
+                  </AppLink>
                 </Button>
               </div>
               <p className="relative mt-5 flex items-center justify-center gap-1.5 text-xs text-teal-200">

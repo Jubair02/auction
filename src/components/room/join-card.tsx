@@ -7,7 +7,7 @@ import { formatNumber } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
 import type { JoinResult, RoomInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { useAppStore } from '@/lib/store'
+import { useAuthState } from '@/lib/store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -154,12 +154,13 @@ interface JoinCardProps {
 /** Gate before the live room — pick a seat as team manager or watch as viewer. */
 export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending = false }: JoinCardProps) {
   const t = useStrings(STRINGS)
-  const user = useAppStore((s) => s.user)
+  const { user } = useAuthState()
   const myManagedTeam = user
     ? info.teams.find((team) => team.isMine)
     : undefined
 
-  const [roleTab, setRoleTab] = useState<'MANAGER' | 'VIEWER'>('MANAGER')
+  // Only a manager login can bid, so everyone else starts on the Viewer tab.
+  const [roleTab, setRoleTab] = useState<'MANAGER' | 'VIEWER'>(() => (user?.role === 'MANAGER' ? 'MANAGER' : 'VIEWER'))
   const [name, setName] = useState(user?.name ?? myManagedTeam?.captainName ?? '')
   const [teamId, setTeamId] = useState<string>(myManagedTeam?.id ?? '')
   const [submitting, setSubmitting] = useState(false)
@@ -299,7 +300,7 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
                             {t.budget(formatNumber(team.budget))}
                           </span>
                           {team.isMine ? (
-                            <span className="text-[10px] font-bold uppercase text-teal-700">{t.tagYourTeam}</span>
+                            <span className="text-[10px] font-bold uppercase text-teal-700 dark:text-teal-300">{t.tagYourTeam}</span>
                           ) : team.claimed ? (
                             <span className="text-[10px] font-bold uppercase text-muted-foreground">{t.tagTaken}</span>
                           ) : !info.allowOpenClaim ? (

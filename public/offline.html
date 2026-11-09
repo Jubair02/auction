@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="robots" content="noindex">
+<title>Offline — NeelamGhor</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px; background: #f6faf9; color: #171717;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Bengali", "Nirmala UI", sans-serif;
+    line-height: 1.5;
+  }
+  main {
+    width: 100%; max-width: 400px; background: #fff; border: 1px solid #e5e5e5; border-radius: 16px;
+    padding: 28px 24px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .mark { width: 48px; height: 48px; margin: 0 auto 16px; display: block; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
+  p { margin: 0 0 4px; color: #525252; font-size: 15px; }
+  .lang + .lang { margin-top: 18px; padding-top: 18px; border-top: 1px solid #f0f0f0; }
+  a.btn {
+    display: inline-block; margin-top: 22px; min-height: 44px; padding: 11px 22px; border-radius: 10px;
+    background: #0f766e; color: #fff; font-weight: 700; text-decoration: none; font-size: 15px;
+  }
+  a.btn:focus-visible { outline: 3px solid #5eead4; outline-offset: 2px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0b1416; color: #f1f5f5; }
+    main { background: #111d20; border-color: rgba(255,255,255,.11); box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+    p { color: #a8b5b6; }
+    .lang + .lang { border-top-color: rgba(255,255,255,.08); }
+    a.btn { background: #2dd4bf; color: #062a27; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <img class="mark" src="/favicon.svg" alt="NeelamGhor" width="48" height="48">
+  <div class="lang" lang="bn">
+    <h1>ইন্টারনেট সংযোগ নেই</h1>
+    <p>সংযোগ ফিরলে পেজটি নিজে থেকেই আবার লোড হবে।</p>
+  </div>
+  <div class="lang" lang="en">
+    <h2>You're offline</h2>
+    <p>This page will reload by itself when your connection is back.</p>
+  </div>
+  <a class="btn" href="" id="retry">আবার চেষ্টা করুন · Try again</a>
+</main>
+<script>
+  // Reload the page the visitor was trying to open (this file is served in its place).
+  document.getElementById('retry').addEventListener('click', function (e) { e.preventDefault(); location.reload() })
+  window.addEventListener('online', function () { location.reload() })
+</script>
+</body>
+</html>

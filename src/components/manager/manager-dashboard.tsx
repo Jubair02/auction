@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CalendarClock, ChevronDown, DoorOpen, History, Plus, Radio, Users } from 'lucide-react'
 import { apiGet } from '@/lib/api'
 import { useCachedGet } from '@/lib/api-cache'
 import { tournamentDetailUrl } from '@/lib/tournament-prefetch'
-import { navigate } from '@/lib/router'
-import { useAppStore } from '@/lib/store'
+import { AppLink } from '@/components/shared/app-link'
+import { useAuthState } from '@/lib/store'
 import { formatAuctionWhen, formatBDT } from '@/lib/format'
 import { plural } from '@/lib/tournament-status'
 import { sportLabel, type AuctionStatus, type Sport, type TeamDTO, type TournamentDetail, type TournamentStatus } from '@/lib/types'
@@ -19,6 +19,7 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Arena } from '@/components/shared/arena'
 import { EmptyState } from '@/components/shared/empty-state'
+import { LoadError } from '@/components/shared/load-error'
 import { PlayerAvatar, TeamAvatar } from '@/components/shared/avatars'
 
 interface MyTeamRow extends TeamDTO {
@@ -82,8 +83,7 @@ const STRINGS = {
     welcome: (name) => `Welcome back, ${name}`,
     summary: (teams, bought) => `${plural(teams, 'team')} · ${plural(bought, 'player')} bought`,
     joinWithCode: 'Join with a room code',
-    teamsDidntLoad: 'Your teams didn’t load',
-    refreshToRetry: 'Refresh the page to try again.',
+    teamsWhat: 'your teams',
     loadingTeams: 'Loading your teams',
     noTeamTitle: 'You don’t manage a team yet',
     noTeamDesc:
@@ -131,8 +131,7 @@ const STRINGS = {
     welcome: (name) => `আবার স্বাগতম, ${name}`,
     summary: (teams, bought) => `${teams}টি দল · ${bought} জন খেলোয়াড় কেনা হয়েছে`,
     joinWithCode: 'রুম কোড দিয়ে যোগ দিন',
-    teamsDidntLoad: 'আপনার দলগুলো লোড হয়নি',
-    refreshToRetry: 'আবার চেষ্টা করতে পেজটি রিফ্রেশ করুন।',
+    teamsWhat: 'আপনার দলগুলো',
     loadingTeams: 'আপনার দলগুলো লোড হচ্ছে',
     noTeamTitle: 'আপনি এখনো কোনো দলের ম্যানেজার নন',
     noTeamDesc:
@@ -180,8 +179,7 @@ const STRINGS = {
   welcome: (name: string) => string
   summary: (teams: number, bought: number) => string
   joinWithCode: string
-  teamsDidntLoad: string
-  refreshToRetry: string
+  teamsWhat: string
   loadingTeams: string
   noTeamTitle: string
   noTeamDesc: string
@@ -191,9 +189,9 @@ const STRINGS = {
 
 const PHASE_ORDER: Record<Phase, number> = { live: 0, open: 1, upcoming: 2, finished: 3 }
 const PHASE_CHIP: Record<Phase, { className: string }> = {
-  live: { className: 'bg-amber-100 text-amber-900' },
-  open: { className: 'bg-teal-50 text-teal-800' },
-  upcoming: { className: 'bg-slate-100 text-slate-700' },
+  live: { className: 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200' },
+  open: { className: 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-200' },
+  upcoming: { className: 'bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300' },
   finished: { className: 'bg-muted text-muted-foreground' },
 }
 
@@ -209,7 +207,7 @@ function AuctionBanner({ team }: { team: MyTeamRow }) {
   const t = useStrings(STRINGS)
   const lang = useLang()
   const phase = phaseOf(team)
-  const when = formatAuctionWhen(team.auctionAt ?? null)
+  const when = formatAuctionWhen(team.auctionAt ?? null, lang)
   const needed = shortBy(team)
   const enterable = (phase === 'live' || phase === 'open') && !!team.roomCode
 
@@ -260,8 +258,10 @@ function AuctionBanner({ team }: { team: MyTeamRow }) {
 
           {enterable ? (
             <div className="mt-6 md:mt-auto md:pt-6">
-              <Button className="h-11 px-5 font-bold" onClick={() => navigate(`/room/${team.roomCode}`)}>
-                <DoorOpen className="mr-1.5 h-4 w-4" aria-hidden /> {phase === 'live' ? t.enterLiveRoom : t.enterAuctionRoom}
+              <Button asChild className="h-11 px-5 font-bold">
+                <AppLink href={`/room/${team.roomCode}`}>
+                  <DoorOpen className="mr-1.5 h-4 w-4" aria-hidden /> {phase === 'live' ? t.enterLiveRoom : t.enterAuctionRoom}
+                </AppLink>
               </Button>
             </div>
           ) : null}
@@ -327,7 +327,7 @@ function SquadList({ team }: { team: MyTeamRow }) {
                 {p.category ? t.cat(p.category) : ''}
               </p>
             </div>
-            <span className="shrink-0 text-sm font-bold tabular-nums text-teal-700">{formatBDT(p.soldPrice ?? p.basePrice)}</span>
+            <span className="shrink-0 text-sm font-bold tabular-nums text-teal-700 dark:text-teal-300">{formatBDT(p.soldPrice ?? p.basePrice)}</span>
           </li>
         ))}
       </ul>
@@ -362,7 +362,7 @@ function TeamCard({ team, defaultOpen }: { team: MyTeamRow; defaultOpen: boolean
 
           <div>
             <div className="flex items-baseline justify-between gap-3">
-              <p className="text-xl font-black tabular-nums text-emerald-700">
+              <p className="text-xl font-black tabular-nums text-emerald-700 dark:text-emerald-400">
                 {formatBDT(team.remaining)} <span className="text-xs font-medium text-muted-foreground">{t.left}</span>
               </p>
               <p className="text-xs tabular-nums text-muted-foreground">
@@ -370,7 +370,7 @@ function TeamCard({ team, defaultOpen }: { team: MyTeamRow; defaultOpen: boolean
               </p>
             </div>
             <Progress value={spendPct} className="mt-2 h-1.5" aria-label={t.budgetUsedAria(team.name)} />
-            <p className={cn('mt-2 flex items-center gap-1 text-xs', needed > 0 && phase !== 'finished' ? 'text-amber-700' : 'text-muted-foreground')}>
+            <p className={cn('mt-2 flex items-center gap-1 text-xs', needed > 0 && phase !== 'finished' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
               {needed > 0 && phase !== 'finished' ? <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden /> : null}
               {t.squad} <span className="font-semibold tabular-nums text-foreground">{team.squadCount}/{team.maxSquad}</span>
               {needed === 0
@@ -383,12 +383,16 @@ function TeamCard({ team, defaultOpen }: { team: MyTeamRow; defaultOpen: boolean
 
           <div className="flex flex-wrap items-center gap-2">
             {enterable ? (
-              <Button size="sm" className="h-9 font-semibold" onClick={() => navigate(`/room/${team.roomCode}`)}>
-                <DoorOpen className="mr-1.5 h-4 w-4" aria-hidden /> {t.enterRoom}
+              <Button asChild size="sm" className="h-9 font-semibold">
+                <AppLink href={`/room/${team.roomCode}`}>
+                  <DoorOpen className="mr-1.5 h-4 w-4" aria-hidden /> {t.enterRoom}
+                </AppLink>
               </Button>
             ) : null}
-            <Button size="sm" variant="ghost" className="h-9" onClick={() => navigate(`/results/${team.tournamentId}`)}>
-              <History className="mr-1.5 h-4 w-4" aria-hidden /> {t.results}
+            <Button asChild size="sm" variant="ghost" className="h-9">
+              <AppLink href={`/results/${team.tournamentId}`}>
+                <History className="mr-1.5 h-4 w-4" aria-hidden /> {t.results}
+              </AppLink>
             </Button>
             <CollapsibleTrigger asChild>
               <Button size="sm" variant="outline" className="ml-auto h-9">
@@ -408,24 +412,55 @@ function TeamCard({ team, defaultOpen }: { team: MyTeamRow; defaultOpen: boolean
 
 /** The manager's home: their next auction first, then every team with its squad one tap away. */
 export default function ManagerDashboard() {
-  const user = useAppStore((s) => s.user)
+  const { user } = useAuthState()
   const t = useStrings(STRINGS)
   const [teams, setTeams] = useState<MyTeamRow[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<Error | null>(null)
+  const mounted = useRef(true)
+  const hasTeams = useRef(false)
 
-  useEffect(() => {
-    let cancelled = false
-    apiGet<{ teams: MyTeamRow[] }>('/api/my/teams')
-      .then((res) => {
-        if (!cancelled) setTeams([...res.teams].sort(byPhase))
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : STRINGS[useLangStore.getState().lang].couldNotLoad)
-      })
-    return () => {
-      cancelled = true
+  const load = useCallback(async () => {
+    try {
+      const res = await apiGet<{ teams: MyTeamRow[] }>('/api/my/teams')
+      if (!mounted.current) return
+      hasTeams.current = true
+      setTeams([...res.teams].sort(byPhase))
+      setError(null)
+    } catch (e: unknown) {
+      // A failed background refresh keeps the teams already on screen.
+      if (!mounted.current || hasTeams.current) return
+      setError(e instanceof Error ? e : new Error(STRINGS[useLangStore.getState().lang].couldNotLoad))
     }
   }, [])
+
+  useEffect(() => {
+    mounted.current = true
+    void load()
+    return () => {
+      mounted.current = false
+    }
+  }, [load])
+
+  // Coming back to the tab refreshes the cards, so "Enter live room" shows up
+  // without a manual page refresh once the organizer opens the auction.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load])
+
+  // While an auction is still ahead (none live yet), check every 30s while the page is visible.
+  const waitingForAuction =
+    !!teams && !teams.some((team) => phaseOf(team) === 'live') && teams.some((team) => phaseOf(team) !== 'finished')
+  useEffect(() => {
+    if (!waitingForAuction) return
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, 30_000)
+    return () => clearInterval(id)
+  }, [waitingForAuction, load])
 
   const firstName = user?.name.split(/\s+/)[0] ?? t.managerFallback
   const featured = teams?.find((team) => phaseOf(team) !== 'finished')
@@ -442,20 +477,14 @@ export default function ManagerDashboard() {
             </p>
           ) : null}
         </div>
-        <Button size="lg" variant={featured && phaseOf(featured) !== 'upcoming' ? 'outline' : 'default'} className="min-h-11 font-semibold" onClick={() => navigate('/join')}>
-          <DoorOpen className="mr-2 h-4 w-4" aria-hidden /> {t.joinWithCode}
+        <Button asChild size="lg" variant={featured && phaseOf(featured) !== 'upcoming' ? 'outline' : 'default'} className="min-h-11 font-semibold">
+          <AppLink href="/join">
+            <DoorOpen className="mr-2 h-4 w-4" aria-hidden /> {t.joinWithCode}
+          </AppLink>
         </Button>
       </header>
 
-      {error ? (
-        <div className="mt-6 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <div>
-            <p className="font-semibold">{t.teamsDidntLoad}</p>
-            <p>{error} {t.refreshToRetry}</p>
-          </div>
-        </div>
-      ) : null}
+      {error ? <LoadError className="mt-6" what={t.teamsWhat} error={error} onRetry={load} /> : null}
 
       {!teams && !error ? (
         <div className="mt-6 space-y-4" aria-busy="true" aria-label={t.loadingTeams}>
@@ -474,8 +503,10 @@ export default function ManagerDashboard() {
             title={t.noTeamTitle}
             description={t.noTeamDesc}
             action={
-              <Button onClick={() => navigate('/join')}>
-                <Plus className="mr-2 h-4 w-4" aria-hidden /> {t.joinWithCode}
+              <Button asChild>
+                <AppLink href="/join">
+                  <Plus className="mr-2 h-4 w-4" aria-hidden /> {t.joinWithCode}
+                </AppLink>
               </Button>
             }
           />

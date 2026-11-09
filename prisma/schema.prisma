@@ -10,23 +10,28 @@ datasource db {
 // NOTE: status/role fields are plain strings (kept from the original SQLite schema) — not DB enums.
 
 model User {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
-  email          String   @unique
+  email          String    @unique
   phone          String?
   passwordHash   String
-  role           String   @default("ORGANIZER") // ADMIN | ORGANIZER | MANAGER
-  status         String   @default("ACTIVE") // ACTIVE | BLOCKED
+  role           String    @default("ORGANIZER") // ADMIN | ORGANIZER | MANAGER
+  status         String    @default("ACTIVE") // ACTIVE | BLOCKED
   // Embedded in every session cookie; bumping it (e.g. on password reset)
   // invalidates all of the user's existing sessions at once.
-  sessionVersion Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  sessionVersion Int       @default(0)
+  // Set when the person deleted their account: personal fields are wiped and
+  // the row stays only so audit records (bids, payments) keep a valid owner.
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   tournaments         Tournament[]
   managedTeams        Team[]
   passwordResetTokens PasswordResetToken[]
   sessions            Session[]
+  staffRoles          TournamentStaff[]
+  payments            Payment[]
 }
 
 // Single-use password reset links. Only the SHA-256 of the token is stored,
@@ -45,38 +50,73 @@ model PasswordResetToken {
 }
 
 model Tournament {
-  id               String    @id @default(cuid())
-  name             String
-  sport            String    @default("CRICKET") // CRICKET | FOOTBALL | OTHER
+  id                String    @id @default(cuid())
+  name              String
+  sport             String    @default("CRICKET") // CRICKET | FOOTBALL | OTHER
   // OTHER only — which game it is and how it is played. Cricket/football use
   // the built-in roles and these stay empty.
-  sportName        String? // e.g. Kabaddi, Volleyball
-  playerRoles      String[]  @default([]) // e.g. Raider, Defender, All-rounder
-  playersPerTeam   Int? // squad size; the default max squad for new teams
-  playersOnField   Int? // how many play at once
-  tournamentType   String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
-  description      String?
-  logoUrl          String?
-  bannerUrl        String?
-  location         String?
-  startDate        DateTime?
-  auctionAt        DateTime?
-  auctionMode      String    @default("CATEGORY") // CATEGORY | NORMAL
-  basePrice        Int       @default(10000) // used in NORMAL mode
-  status           String    @default("DRAFT") // DRAFT | READY | LIVE | COMPLETED
+  sportName         String? // e.g. Kabaddi, Volleyball
+  playerRoles       String[]  @default([]) // e.g. Raider, Defender, All-rounder
+  playersPerTeam    Int? // squad size; the default max squad for new teams
+  playersOnField    Int? // how many play at once
+  tournamentType    String? // Corporate Cricket, University Tournament, Local Club, School, Community, Indoor, 6-a-side...
+  description       String?
+  logoUrl           String?
+  bannerUrl         String?
+  location          String?
+  startDate         DateTime?
+  auctionAt         DateTime?
+  auctionMode       String    @default("CATEGORY") // CATEGORY | NORMAL
+  basePrice         Int       @default(10000) // used in NORMAL mode
+  status            String    @default("DRAFT") // DRAFT | READY | LIVE | COMPLETED
   // Public self-registration link (#/register-player/<code>). The code is
   // random, not the tournament id, so it can be rotated if it leaks.
-  registrationCode String?   @unique
-  registrationOpen Boolean   @default(false)
-  organizerId      String
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  registrationCode  String?   @unique
+  registrationOpen  Boolean   @default(false)
+  // Set instead of deleting once an auction has bids or audit events, so the
+  // money trail (Bid / AuctionEvent cascade from Auction) is never destroyed.
+  // Archived tournaments are hidden from organizers and their links stop working;
+  // only an ADMIN can see them or delete them for good.
+  archivedAt        DateTime?
+  // Pricing: FREE tournaments have team/player limits and a watermark on the
+  // stream overlay; PRO is unlocked per tournament by an approved Payment.
+  plan              String    @default("FREE") // FREE | PRO
+  proSince          DateTime?
+  // Public results page (/results/:id) and share cards, once the auction ended.
+  resultsPublic     Boolean   @default(true)
+  // Optional player registration fee, paid straight to the organizer's own
+  // bKash / Nagad number; the organizer verifies each Transaction ID.
+  registrationFee   Int? // ৳; null = free
+  feeBkashNumber    String?
+  feeNagadNumber    String?
+  feeInstructions   String?
+  // SMS notifications (PRO): registration decisions, auction reminder, "you were sold".
+  smsEnabled        Boolean   @default(false)
+  smsLang           String    @default("bn") // bn | en
+  // League (after the auction): fixture format and points rules. Null points =
+  // sport defaults (cricket 2/1/0 with NRR, football 3/1/0 with goal difference).
+  leagueFormat      String? // ROUND_ROBIN | DOUBLE_ROUND_ROBIN | GROUPS_KNOCKOUT | KNOCKOUT
+  pointsWin         Int?
+  pointsDraw        Int?
+  pointsLoss        Int?
+  oversPerInnings   Int? // cricket: a side bowled out counts the full quota for net run rate
+  // Branding (PRO): accent colour and hiding NeelamGhor branding on public
+  // pages, the stream overlay and share cards. Logo/banner already exist.
+  brandColor        String?
+  brandHidePlatform Boolean   @default(false)
+  organizerId       String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   organizer     User                 @relation(fields: [organizerId], references: [id])
   players       Player[]
   teams         Team[]
   auction       Auction?
   registrations PlayerRegistration[]
+  staff         TournamentStaff[]
+  payments      Payment[]
+  matches       Match[]
+  sponsors      Sponsor[]
 
   // Postgres does not index foreign keys on its own.
   @@index([organizerId])
@@ -102,8 +142,9 @@ model Player {
   auctionCycle Int      @default(0)
   createdAt    DateTime @default(now())
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  soldToTeam Team?      @relation("soldPlayers", fields: [soldToTeamId], references: [id])
+  tournament Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  soldToTeam Team?             @relation("soldPlayers", fields: [soldToTeamId], references: [id])
+  matchStats MatchPlayerStat[]
 
   // Two imports racing for the next number must collide, not duplicate "#12".
   @@unique([tournamentId, playerNumber])
@@ -126,11 +167,14 @@ model Team {
   inviteExpiresAt DateTime?
   minSquad        Int       @default(9)
   spent           Int       @default(0)
+  groupName       String? // league group (A, B, …) for GROUPS_KNOCKOUT
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  manager    User?      @relation(fields: [managerUserId], references: [id])
-  players    Player[]   @relation("soldPlayers")
-  bids       Bid[]
+  tournament  Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  manager     User?      @relation(fields: [managerUserId], references: [id])
+  players     Player[]   @relation("soldPlayers")
+  bids        Bid[]
+  homeMatches Match[]    @relation("homeTeam")
+  awayMatches Match[]    @relation("awayTeam")
 
   // One team per manager per tournament. Enforced here because the "already
   // manages a team" check in the API can't stop two simultaneous requests.
@@ -250,10 +294,19 @@ model PlayerRegistration {
   photoUrl     String?
   status       String   @default("PENDING") // PENDING | APPROVED | REJECTED
   playerId     String? // set on approval
+  // Registration fee claimed by the player; verified by the organizer.
+  feeAmount    Int?
+  payMethod    String? // BKASH | NAGAD
+  payTrxId     String?
+  paySender    String?
+  payStatus    String   @default("NONE") // NONE | CLAIMED | VERIFIED | REJECTED
+  smsConsent   Boolean  @default(false)
   createdAt    DateTime @default(now())
 
   tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 
+  // A Transaction ID can be claimed once per payment network.
+  @@unique([payMethod, payTrxId])
   @@index([tournamentId, status])
 }
 
@@ -298,4 +351,178 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// Payment for a PRO tournament via manual bKash / Nagad: the organizer sends the
+// money and submits the Transaction ID; an admin verifies and approves it.
+// A financial record: it survives tournament or account deletion (snapshots below).
+model Payment {
+  id             String    @id @default(cuid())
+  kind           String    @default("TOURNAMENT_PRO")
+  tournamentId   String?
+  tournamentName String // snapshot
+  userId         String?
+  payerName      String // snapshot
+  amount         Int
+  method         String // BKASH | NAGAD
+  trxId          String
+  senderNumber   String
+  status         String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewNote     String?
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  tournament Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([method, trxId])
+  @@index([status, createdAt])
+  @@index([tournamentId])
+  @@index([userId])
+}
+
+// Extra people who help run a tournament. CO_ORGANIZER can manage everything
+// except billing, staff and deletion; AUCTIONEER can only run the live room.
+model TournamentStaff {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String
+  role         String // CO_ORGANIZER | AUCTIONEER
+  addedById    String?
+  createdAt    DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@index([userId])
+}
+
+// Outbox for SMS (and later WhatsApp). Rows are written by the web app and the
+// auction service and delivered by the always-on auction service, so a send
+// never blocks a request. dedupeKey stops the same message going out twice.
+model Notification {
+  id           String    @id @default(cuid())
+  channel      String    @default("SMS")
+  to           String
+  body         String
+  kind         String // REG_APPROVED | REG_REJECTED | AUCTION_REMINDER | PLAYER_SOLD | PAYMENT_APPROVED | ...
+  tournamentId String?
+  dedupeKey    String?   @unique
+  status       String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  attempts     Int       @default(0)
+  lastError    String?
+  sendAfter    DateTime  @default(now())
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([status, sendAfter])
+  @@index([tournamentId])
+}
+
+// First-party product analytics: server-side events only, no cookies or
+// third-party trackers. Powers the admin funnel (sign-ups → auctions → Pro).
+model AnalyticsEvent {
+  id           String   @id @default(cuid())
+  name         String
+  userId       String?
+  tournamentId String?
+  props        Json?
+  createdAt    DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([createdAt])
+}
+
+// League fixtures and results (after the auction). Teams are optional so
+// knockout slots can wait for "Winner SF1"-style placeholders.
+model Match {
+  id              String    @id @default(cuid())
+  tournamentId    String
+  stage           String    @default("LEAGUE") // LEAGUE | GROUP | ROUND_OF_16 | QUARTER_FINAL | SEMI_FINAL | THIRD_PLACE | FINAL
+  groupName       String?
+  round           Int       @default(1)
+  matchNumber     Int
+  homeTeamId      String?
+  awayTeamId      String?
+  homeLabel       String? // placeholder shown until the team is known, e.g. "Winner SF1"
+  awayLabel       String?
+  scheduledAt     DateTime?
+  venue           String?
+  status          String    @default("SCHEDULED") // SCHEDULED | LIVE | COMPLETED | ABANDONED | POSTPONED
+  // Score: goals (football), runs (cricket) or points (other sports).
+  homeScore       Int?
+  awayScore       Int?
+  // Cricket only: wickets lost and legal balls faced (net run rate).
+  homeWickets     Int?
+  awayWickets     Int?
+  homeBalls       Int?
+  awayBalls       Int?
+  winnerTeamId    String?
+  resultType      String? // NORMAL | TIE | NO_RESULT | WALKOVER
+  resultNote      String? // e.g. "Alpha won by 5 wickets"
+  playerOfMatchId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tournament Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  homeTeam   Team?             @relation("homeTeam", fields: [homeTeamId], references: [id], onDelete: SetNull)
+  awayTeam   Team?             @relation("awayTeam", fields: [awayTeamId], references: [id], onDelete: SetNull)
+  stats      MatchPlayerStat[]
+
+  @@unique([tournamentId, matchNumber])
+  @@index([tournamentId, scheduledAt])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+}
+
+// One player's numbers in one match; leaderboards add these up.
+model MatchPlayerStat {
+  id           String   @id @default(cuid())
+  matchId      String
+  playerId     String
+  teamId       String?
+  // Cricket
+  runs         Int?
+  ballsFaced   Int?
+  fours        Int?
+  sixes        Int?
+  wickets      Int?
+  ballsBowled  Int?
+  runsConceded Int?
+  catches      Int?
+  // Football
+  goals        Int?
+  assists      Int?
+  yellowCards  Int?
+  redCards     Int?
+  saves        Int?
+  // Other sports
+  points       Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  match  Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, playerId])
+  @@index([playerId])
+}
+
+// Sponsors shown on the stream overlay, live room, results / league pages and
+// share cards (PRO).
+model Sponsor {
+  id           String   @id @default(cuid())
+  tournamentId String
+  name         String
+  logoUrl      String?
+  url          String?
+  tier         String   @default("SPONSOR") // TITLE | ASSOCIATE | SPONSOR | PARTNER
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId, sortOrder])
 }

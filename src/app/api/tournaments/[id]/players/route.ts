@@ -1,4 +1,5 @@
 import { jsonError } from '@/lib/auth'
+import { assertWithinPlan } from '@/lib/plans'
 import {
   coercePositiveInt,
   insertPlayersNumbered,
@@ -89,6 +90,9 @@ export async function POST(req: Request, { params }: RouteParams) {
     if (typeof result === 'string') return jsonError(result, 400)
     validated.push(result)
   }
+
+  const overLimit = await assertWithinPlan(loaded.tournament, { players: validated.length })
+  if (overLimit) return overLimit
 
   const inserted = await insertPlayersNumbered(id, validated)
   if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)

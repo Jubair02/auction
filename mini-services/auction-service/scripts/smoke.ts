@@ -10,6 +10,21 @@ import { signToken } from '../../../src/lib/crypto'
 import { io, type Socket } from 'socket.io-client'
 import type { RoomState } from '../../../src/lib/types'
 
+// This script WIPES the BD26-DEMO room (bids, participants, sales, purses).
+// Never against production, and only when explicitly allowed.
+if (process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production') {
+  console.error('Refusing to run: smoke.ts resets the BD26-DEMO room and must never run against production (NODE_ENV/VERCEL_ENV is "production").')
+  process.exit(1)
+}
+if (process.env.ALLOW_DB_RESET !== '1') {
+  console.error(
+    'Refusing to run: smoke.ts resets the BD26-DEMO room in the database at DATABASE_URL (bids, participants, sales, team spend).\n' +
+      'If that database is a disposable dev/test database, re-run with ALLOW_DB_RESET=1, e.g.\n' +
+      '  ALLOW_DB_RESET=1 bun mini-services/auction-service/scripts/smoke.ts',
+  )
+  process.exit(1)
+}
+
 const db = new PrismaClient()
 const URL = 'http://localhost:3003'
 const ROOM = 'BD26-DEMO'

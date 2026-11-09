@@ -41,17 +41,7 @@ import {
   type OtherSportValue,
 } from '@/components/organizer/other-sport-fields'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
-
-// Stored on the tournament and shown as-is elsewhere, so they stay in English.
-const TOURNAMENT_TYPES = [
-  'Corporate Cricket',
-  'University Tournament',
-  'Local Club Tournament',
-  'School Tournament',
-  'Friends/Community Tournament',
-  'Indoor Cricket',
-  '6-a-side / 7-a-side Football',
-]
+import { TOURNAMENT_TYPES, tournamentTypeLabel } from '@/lib/tournament-types'
 
 const SPORT_CHOICES: { value: Sport; icon: LucideIcon }[] = [
   { value: 'CRICKET', icon: Trophy },
@@ -268,7 +258,7 @@ export default function TournamentCreate() {
 
   const [creating, setCreating] = useState(false)
 
-  const otherError = sport === 'OTHER' ? otherSportError(other) : null
+  const otherError = sport === 'OTHER' ? otherSportError(other, lang) : null
   const step1Valid = name.trim().length >= 2 && isSport(sport) && !otherError
 
   const parsedBasePrice = useMemo(() => {
@@ -340,7 +330,7 @@ export default function TournamentCreate() {
                   active
                     ? 'border-primary bg-primary/5 text-primary'
                     : done
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
                       : 'border-border bg-background text-muted-foreground'
                 }`}
                 aria-current={active ? 'step' : undefined}
@@ -369,7 +359,7 @@ export default function TournamentCreate() {
               <CardContent className="space-y-5 p-6">
                 <div className="space-y-1.5">
                   <Label htmlFor="t-name">
-                    {s.tournamentName} <span className="text-rose-600">*</span>
+                    {s.tournamentName} <span className="text-rose-600 dark:text-rose-400">*</span>
                   </Label>
                   <Input
                     id="t-name"
@@ -383,7 +373,7 @@ export default function TournamentCreate() {
 
                 <div className="space-y-3">
                   <Label>
-                    {s.sport} <span className="text-rose-600">*</span>
+                    {s.sport} <span className="text-rose-600 dark:text-rose-400">*</span>
                   </Label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     {SPORT_CHOICES.map((choice) => {
@@ -424,7 +414,7 @@ export default function TournamentCreate() {
                     <SelectContent>
                       {TOURNAMENT_TYPES.map((t) => (
                         <SelectItem key={t} value={t}>
-                          {t}
+                          {tournamentTypeLabel(t, lang)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -523,12 +513,12 @@ export default function TournamentCreate() {
                     aria-pressed={auctionMode === 'NORMAL'}
                     className={`rounded-xl border-2 p-4 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
                       auctionMode === 'NORMAL'
-                        ? 'border-amber-500 bg-amber-50'
+                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40'
                         : 'border-border bg-background hover:bg-accent'
                     }`}
                   >
                     <span className="flex items-center gap-2 font-bold">
-                      <Gavel className="h-4.5 w-4.5 text-amber-600" aria-hidden /> {s.normal}
+                      <Gavel className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" aria-hidden /> {s.normal}
                     </span>
                     <p className="mt-1.5 text-sm text-muted-foreground">{s.normalDesc}</p>
                   </button>
@@ -555,9 +545,9 @@ export default function TournamentCreate() {
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
                     <Label htmlFor="t-base" className="flex items-center gap-1.5">
-                      <Wallet className="h-4 w-4 text-amber-600" aria-hidden /> {s.basePriceEvery}
+                      <Wallet className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden /> {s.basePriceEvery}
                     </Label>
                     <Input
                       id="t-base"
@@ -607,7 +597,7 @@ export default function TournamentCreate() {
                           },
                         ]
                       : []),
-                    { k: s.rowType, v: tournamentType || '—' },
+                    { k: s.rowType, v: tournamentTypeLabel(tournamentType, lang) ?? '—' },
                     { k: s.rowLocation, v: location || '—' },
                     { k: s.rowStart, v: startDate ? new Date(startDate).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
                     { k: s.rowAuctionAt, v: auctionAt ? new Date(auctionAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },

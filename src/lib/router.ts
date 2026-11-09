@@ -1,8 +1,8 @@
 'use client'
 
 // Tiny client router over real URL paths (/room/BD26-DEMO). The server renders
-// the same app shell for every path (src/app/[[...slug]]/page.tsx) and adds
-// per-path link-preview metadata; navigation after that is history.pushState.
+// the app for the requested path (src/app/[[...slug]]/page.tsx passes it in) and
+// adds per-path link-preview metadata; navigation after that is history.pushState.
 //
 // Secrets (password-reset and invite tokens) travel in the URL *fragment*
 // (/reset-password#<token>): browsers never send fragments to the server or in
@@ -24,22 +24,30 @@ function upgradeLegacyHashUrl(): void {
   if (hash.startsWith('#/')) window.history.replaceState(null, '', hash.slice(1) || '/')
 }
 
+/** Pages whose token is in the fragment, which only the browser can read. */
+const needsFragment = (segs: string[]) => (segs[0] === 'reset-password' || segs[0] === 'invite') && !segs[1]
+
 /**
- * Current path segments, e.g. ['room', 'BD26-DEMO']. `ready` is false until
- * the URL has been read after mount (the server render can't know it) — show
- * a neutral loader until then, never the landing page or the app chrome.
+ * Current path segments, e.g. ['room', 'BD26-DEMO'].
+ *
+ * Pass `initialSegs` (the path the server rendered, from page.tsx) and the
+ * first render — on the server and while hydrating — already uses the real
+ * route, so the server HTML is the actual page. The fragment is read after
+ * mount; until then `ready` stays false on pages that need it (the token
+ * links), so they show a neutral loader. Without `initialSegs`, `ready` is
+ * false until the URL has been read after mount.
  */
-export function useRoute(): { segs: string[]; fragment: string; ready: boolean } {
-  const [route, setRoute] = useState<{ segs: string[]; fragment: string; ready: boolean }>({
-    segs: [],
+export function useRoute(initialSegs?: string[]): { segs: string[]; fragment: string; ready: boolean } {
+  const [route, setRoute] = useState<{ segs: string[]; fragment: string; mounted: boolean }>(() => ({
+    segs: initialSegs ?? [],
     fragment: '',
-    ready: false,
-  })
+    mounted: false,
+  }))
 
   useEffect(() => {
     upgradeLegacyHashUrl()
     const update = () =>
-      setRoute({ segs: currentSegs(), fragment: window.location.hash.replace(/^#/, ''), ready: true })
+      setRoute({ segs: currentSegs(), fragment: window.location.hash.replace(/^#/, ''), mounted: true })
     update()
     window.addEventListener('popstate', update)
     window.addEventListener(NAV_EVENT, update)
@@ -49,7 +57,8 @@ export function useRoute(): { segs: string[]; fragment: string; ready: boolean }
     }
   }, [])
 
-  return route
+  const ready = route.mounted || (initialSegs !== undefined && !needsFragment(route.segs))
+  return { segs: route.segs, fragment: route.fragment, ready }
 }
 
 // Where to land after login/register (e.g. back into the auction room the

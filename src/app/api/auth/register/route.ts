@@ -1,5 +1,7 @@
+import { after } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { track } from '@/lib/analytics'
 import { hashPassword } from '@/lib/crypto'
 import { createSession, setSessionCookie, jsonError } from '@/lib/auth'
 import { isUniqueViolation, readJson, toSafeUser, EMAIL_RE } from '../../_lib/helpers'
@@ -16,7 +18,9 @@ const registerSchema = z.object({
 })
 
 export async function POST(req: Request) {
-  const retryAfter = await rateLimit(clientKey(req, 'register'), 5, 60 * 60 * 1000)
+  // 20/hour per IP: several organizers or managers at one venue (shared
+  // Wi-Fi, carrier NAT) can each still create an account.
+  const retryAfter = await rateLimit(clientKey(req, 'register'), 20, 60 * 60 * 1000)
   if (retryAfter !== null) {
     return jsonError(`Too many accounts created from here. Please try again in ${retryAfter} seconds.`, 429)
   }
@@ -52,5 +56,7 @@ export async function POST(req: Request) {
   }
 
   await setSessionCookie(await createSession(user.id, user.role as 'ORGANIZER' | 'MANAGER', user.sessionVersion))
+  const signedUp = user
+  after(() => track('signup', { userId: signedUp.id, props: { role: signedUp.role } }))
   return Response.json({ user: toSafeUser(user) }, { status: 201 })
 }

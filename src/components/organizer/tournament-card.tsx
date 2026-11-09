@@ -10,8 +10,9 @@ import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { formatAuctionWhen } from '@/lib/format'
 import { isDone, isLive } from '@/lib/tournament-status'
 import { cn } from '@/lib/utils'
-import { sportLabel, type TournamentSummary } from '@/lib/types'
+import { sportLabel, type Plan, type TournamentSummary } from '@/lib/types'
 import { type Lang, type Strings, useLang, useStrings } from '@/lib/i18n'
+import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 const STRINGS = {
   en: {
@@ -28,6 +29,9 @@ const STRINGS = {
     roomCode: 'Room code',
     copyCode: (code: string) => `Copy room code ${code}`,
     noRoom: 'No room yet — set up auction',
+    plan: { FREE: 'Free', PRO: 'Pro' },
+    staffRole: { CO_ORGANIZER: 'Co-organizer', AUCTIONEER: 'Auctioneer' },
+    planAria: (plan: string) => `${plan} plan`,
   },
   bn: {
     codeCopied: 'রুম কোড কপি হয়েছে',
@@ -43,6 +47,9 @@ const STRINGS = {
     roomCode: 'রুম কোড',
     copyCode: (code: string) => `রুম কোড ${code} কপি করুন`,
     noRoom: 'এখনো রুম নেই — নিলাম সেট আপ করুন',
+    plan: { FREE: 'ফ্রি', PRO: 'প্রো' },
+    staffRole: { CO_ORGANIZER: 'সহ-আয়োজক', AUCTIONEER: 'নিলাম পরিচালক' },
+    planAria: (plan: string) => `${plan} প্ল্যান`,
   },
 } satisfies Strings<{
   codeCopied: string
@@ -58,6 +65,9 @@ const STRINGS = {
   roomCode: string
   copyCode: (code: string) => string
   noRoom: string
+  plan: Record<Plan, string>
+  staffRole: Record<'CO_ORGANIZER' | 'AUCTIONEER', string>
+  planAria: (plan: string) => string
 }>
 
 export function copyRoomCode(code: string, lang: Lang = 'en') {
@@ -72,13 +82,13 @@ export function TournamentCard({
   /** Primary row of buttons rendered at the bottom (e.g. Manage). */
   actions?: React.ReactNode
 }) {
+  const lang = useLang()
   const soldPct = t.playerCount > 0 ? Math.round((t.soldCount / t.playerCount) * 100) : 0
-  const when = formatAuctionWhen(t.auctionAt)
+  const when = formatAuctionWhen(t.auctionAt, lang)
   const live = isLive(t)
   const done = isDone(t)
   // A date that has passed while the auction never ran needs the organizer's attention.
   const overdue = !!when?.past && !live && !done
-  const lang = useLang()
   const s = useStrings(STRINGS)
 
   return (
@@ -93,9 +103,26 @@ export function TournamentCard({
               <h3 className="truncate text-base font-bold leading-tight">{t.name}</h3>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 {sportLabel(t.sport, lang, t.sportName)}
-                {t.tournamentType ? ` · ${t.tournamentType}` : ''}
+                {t.tournamentType ? ` · ${tournamentTypeLabel(t.tournamentType, lang)}` : ''}
                 {t.location ? ` · ${t.location}` : ''}
               </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                <Badge
+                  variant="outline"
+                  aria-label={s.planAria(s.plan[t.plan])}
+                  className={cn(
+                    'h-5 px-1.5 text-[10px] font-semibold uppercase tracking-wide',
+                    t.plan === 'PRO' ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'text-muted-foreground',
+                  )}
+                >
+                  {s.plan[t.plan]}
+                </Badge>
+                {t.staffRole ? (
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-semibold">
+                    {s.staffRole[t.staffRole]}
+                  </Badge>
+                ) : null}
+              </div>
             </div>
           </div>
           <TournamentStatusBadge status={live ? 'LIVE' : t.status} className="shrink-0" />

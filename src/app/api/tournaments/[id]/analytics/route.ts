@@ -7,13 +7,13 @@ type RouteParams = { params: Promise<{ id: string }> }
 
 const TOP_N = 10
 
-// GET /api/tournaments/:id/analytics — owner/ADMIN. Post-auction insights over
+// GET /api/tournaments/:id/analytics — any tournament staff (read-only). Post-auction insights over
 // the complete bid history (the results page only carries the last 50 bids).
 export async function GET(_req: Request, { params }: RouteParams) {
   const { id } = await params
   const auth = await requireSession()
   if ('response' in auth) return auth.response
-  const loaded = await loadTournamentForOwner(id, auth.user)
+  const loaded = await loadTournamentForOwner(id, auth.user, 'run')
   if ('response' in loaded) return loaded.response
   const tournament = loaded.tournament
 

@@ -8,6 +8,36 @@ import { mergeRoomState } from '@/lib/room-state'
 export { seatBelongsTo } from '@/lib/room-state'
 import type { OrganizerAction, RoomNotification, RoomState, RoomStateWire } from '@/lib/types'
 
+/** How long a bid / organizer action waits for the server's acknowledgement. */
+const ACK_TIMEOUT_MS = 8000
+
+/**
+ * Outcome of a bid or organizer action:
+ *  - `offline`: not sent at all (the room isn't connected and joined);
+ *  - `timeout`: sent, but the server never confirmed it (it may or may not have landed);
+ *  - `rejected`: the server refused it — `error` says why.
+ */
+export type ActionResult =
+  | { ok: true }
+  | { ok: false; reason: 'offline' | 'timeout' | 'rejected'; error?: string }
+
+type AckResponse = { ok: true } | { ok: false; error?: string }
+
+/** Notification kinds that are only feed entries — never worth a toast. */
+const QUIET_KINDS = new Set<RoomNotification['kind']>(['bid', 'going'])
+
+/** Room toasts: errors/warnings and sold/unsold always; every bid and "going once" stays in the feed only. */
+function toastNotification(n: RoomNotification) {
+  const kind = n.kind
+  if (kind && QUIET_KINDS.has(kind)) return
+  if (n.level === 'error') toast.error(n.message)
+  else if (n.level === 'warning') toast.warning(n.message)
+  else if (n.level === 'success') toast.success(n.message)
+  // Plain info is only toasted when the server marks it as something that matters
+  // (an older server sends no `kind`, and its info messages are bids and "going").
+  else if (kind) toast(n.message)
+}
+
 export interface AuctionSocketApi {
   connected: boolean
   joined: boolean
@@ -18,8 +48,9 @@ export interface AuctionSocketApi {
   /** serverTime - clientTime at last snapshot, to correct countdowns */
   clockOffset: number
   notifications: RoomNotification[]
-  placeBid: (amount: number) => void
-  organizerAction: (action: OrganizerAction, payload?: Record<string, unknown>) => void
+  /** Places a bid on `playerId` (the player the manager saw on the block). Never queued while offline. */
+  placeBid: (amount: number, playerId: string) => Promise<ActionResult>
+  organizerAction: (action: OrganizerAction, payload?: Record<string, unknown>) => Promise<ActionResult>
   rejoin: () => void
 }
 
@@ -60,6 +91,11 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
   const [state, setState] = useState<RoomState | null>(null)
   const [clockOffset, setRawClockOffset] = useState(0)
   const [notifications, setNotifications] = useState<RoomNotification[]>([])
+  // Read by placeBid / organizerAction, which must not emit unless seated.
+  const joinedRef = useRef(false)
+  useEffect(() => {
+    joinedRef.current = joined
+  }, [joined])
 
   // Every 1s timer tick measures the offset again, and network jitter moves it
   // by a few ms each time. Re-rendering the whole room for that is wasted work,
@@ -76,11 +112,13 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     if (!socket || !socket.connected || !tokenRef.current) return
     socket.emit('join_room', { roomCode, token: tokenRef.current }, (ack: { ok: boolean; error?: string; state?: RoomState }) => {
       if (ack?.ok && ack.state) {
+        joinedRef.current = true
         setJoined(true)
         setJoinError(null)
         setState(ack.state)
         setClockOffset(ack.state.serverTime - Date.now())
       } else {
+        joinedRef.current = false
         setJoined(false)
         setJoinError(ack?.error || 'Failed to join room')
       }
@@ -93,6 +131,8 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     const socket = io(endpoint.url, {
       path: endpoint.path,
       transports: ['websocket', 'polling'],
+      // Networks that block WebSocket (some offices, captive Wi-Fi) fall back to long-polling.
+      tryAllTransports: true,
       forceNew: true,
       // A live auction must survive a service restart or a phone switching
       // networks: keep retrying (backing off to 5s) instead of giving up.
@@ -113,6 +153,10 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       doJoin()
     })
     socket.on('disconnect', () => {
+      // Never replay a bid or organizer action after a reconnect: whatever was
+      // waiting in the send buffer is dropped, and its ack resolves as unconfirmed.
+      socket.sendBuffer = []
+      joinedRef.current = false
       setConnected(false)
       setJoined(false)
     })
@@ -134,10 +178,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
     socket.on('notification', (n: RoomNotification) => {
       setNotifications((prev) => [n, ...prev].slice(0, 50))
-      if (n.level === 'error') toast.error(n.message)
-      else if (n.level === 'warning') toast.warning(n.message)
-      else if (n.level === 'success') toast.success(n.message)
-      else toast(n.message)
+      toastNotification(n)
     })
 
     socket.on('error', (e: { message: string }) => {
@@ -148,6 +189,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     // account, password reset, lost ownership). Surface it as a join error so
     // the room page can re-seat or send the user back to the join card.
     socket.on('seat_revoked', (e: { message?: string }) => {
+      joinedRef.current = false
       setJoined(false)
       setJoinError(e?.message || 'Your seat is no longer valid — log in again.')
     })
@@ -162,13 +204,30 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     }
   }, [roomCode, token, doJoin, setClockOffset])
 
-  const placeBid = useCallback((amount: number) => {
-    socketRef.current?.emit('place_bid', { amount })
+  /** Emits with an acknowledgement and a timeout; refuses (never buffers) while offline. */
+  const emitWithAck = useCallback((event: string, data: unknown): Promise<ActionResult> => {
+    const socket = socketRef.current
+    if (!socket || !socket.connected || !joinedRef.current) {
+      return Promise.resolve({ ok: false, reason: 'offline' })
+    }
+    return new Promise<ActionResult>((resolve) => {
+      socket.timeout(ACK_TIMEOUT_MS).emit(event, data, (err: Error | null, res?: AckResponse) => {
+        if (err) resolve({ ok: false, reason: 'timeout' })
+        else if (res?.ok) resolve({ ok: true })
+        else resolve({ ok: false, reason: 'rejected', error: res && !res.ok ? res.error : undefined })
+      })
+    })
   }, [])
 
-  const organizerAction = useCallback((action: OrganizerAction, payload?: Record<string, unknown>) => {
-    socketRef.current?.emit('organizer_action', { action, payload })
-  }, [])
+  const placeBid = useCallback(
+    (amount: number, playerId: string) => emitWithAck('place_bid', { amount, playerId }),
+    [emitWithAck],
+  )
+
+  const organizerAction = useCallback(
+    (action: OrganizerAction, payload?: Record<string, unknown>) => emitWithAck('organizer_action', { action, payload }),
+    [emitWithAck],
+  )
 
   const rejoin = useCallback(() => doJoin(), [doJoin])
 

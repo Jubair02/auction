@@ -1,4 +1,6 @@
+import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { track } from '@/lib/analytics'
 import { isSport, type TournamentDetail } from '@/lib/types'
 import { jsonError } from '@/lib/auth'
 import {
@@ -16,16 +18,21 @@ import {
 
 export const runtime = 'nodejs'
 
-// GET /api/tournaments — ORGANIZER → own tournaments, ADMIN → all, MANAGER → [] (use /api/my/teams)
+// GET /api/tournaments — ORGANIZER → own tournaments plus the ones they help run
+// as staff (with staffRole set), ADMIN → all, MANAGER → [] (use /api/my/teams).
+// Archived tournaments are left out for everyone (ADMIN sees them in /api/admin/tournaments).
 export async function GET() {
   const auth = await requireSession()
   if ('response' in auth) return auth.response
   const { user } = auth
 
-  const where = user.role === 'ADMIN' ? {} : { organizerId: user.id }
-  // Sold counts filter by the same owner condition, so both queries run at once
+  const where: Prisma.TournamentWhereInput =
+    user.role === 'ADMIN'
+      ? { archivedAt: null }
+      : { archivedAt: null, OR: [{ organizerId: user.id }, { staff: { some: { userId: user.id } } }] }
+  // Sold counts filter by the same condition, so all queries run at once
   // instead of the second waiting for the first one's ids.
-  const [tournaments, soldGroups] = await Promise.all([
+  const [tournaments, soldGroups, staffRows] = await Promise.all([
     db.tournament.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -39,13 +46,21 @@ export async function GET() {
       where: { status: 'SOLD', tournament: where },
       _count: { _all: true },
     }),
+    user.role === 'ADMIN'
+      ? Promise.resolve([] as { tournamentId: string; role: string }[])
+      : db.tournamentStaff.findMany({ where: { userId: user.id }, select: { tournamentId: true, role: true } }),
   ])
   const soldMap = new Map(soldGroups.map((g) => [g.tournamentId, g._count._all]))
+  const staffMap = new Map(staffRows.map((s) => [s.tournamentId, s.role]))
 
   return Response.json({
-    tournaments: tournaments.map((t) =>
-      serializeTournamentSummary({ ...t, soldCount: soldMap.get(t.id) ?? 0 }),
-    ),
+    tournaments: tournaments.map((t) => {
+      const staffRole = t.organizerId === user.id ? null : staffMap.get(t.id)
+      return {
+        ...serializeTournamentSummary({ ...t, soldCount: soldMap.get(t.id) ?? 0 }),
+        staffRole: staffRole === 'CO_ORGANIZER' || staffRole === 'AUCTIONEER' ? staffRole : null,
+      }
+    }),
   })
 }
 
@@ -115,12 +130,14 @@ export async function POST(req: Request) {
       organizerId: user.id,
     },
   })
+  void track('tournament_created', { userId: user.id, tournamentId: tournament.id })
 
   // A new tournament has no players, teams or auction yet, so this is exactly
   // what GET /api/tournaments/:id would return. Sending it now lets the Manage
   // page open instantly instead of making a second round trip for it.
   const detail: TournamentDetail = {
     tournament: serializeTournamentFull(tournament),
+    myAccess: user.role === 'ADMIN' ? 'ADMIN' : 'OWNER',
     players: [],
     teams: [],
     auction: null,

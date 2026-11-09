@@ -1,8 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Ban, Gavel, ShieldAlert, Wallet } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { Ban, Gavel, Loader2, ShieldAlert, Wallet, WifiOff } from 'lucide-react'
+import { toast } from 'sonner'
 import { formatBDT, formatNumber } from '@/lib/format'
+import type { ActionResult } from '@/lib/use-auction-socket'
 import type { RoomState, RoomTeam } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -53,6 +55,12 @@ const STRINGS = {
     bid: 'Bid',
     biddingAs: 'Bidding as',
     disabledSuffix: '— bidding is disabled.',
+    offline: 'Reconnecting to the room',
+    placing: 'Placing…',
+    placingBid: (amount: string) => `Placing your bid of ${amount}…`,
+    bidOffline: 'You are offline — your bid was not sent.',
+    bidUnconfirmed: 'Bid not confirmed — check the bid ladder before bidding again.',
+    bidRejected: 'Your bid was not accepted.',
   },
   bn: {
     notStarted: 'নিলাম এখনো শুরু হয়নি',
@@ -94,6 +102,12 @@ const STRINGS = {
     bid: 'বিড',
     biddingAs: 'যে দলের হয়ে বিড করছেন:',
     disabledSuffix: '— বিড বন্ধ আছে।',
+    offline: 'রুমের সাথে আবার সংযোগ করা হচ্ছে',
+    placing: 'পাঠানো হচ্ছে…',
+    placingBid: (amount: string) => `আপনার ${amount}-এর বিড পাঠানো হচ্ছে…`,
+    bidOffline: 'আপনি অফলাইনে আছেন — বিডটি পাঠানো হয়নি।',
+    bidUnconfirmed: 'বিড নিশ্চিত হয়নি — আবার বিড করার আগে বিডের তালিকা দেখে নিন।',
+    bidRejected: 'আপনার বিডটি গ্রহণ করা হয়নি।',
   },
 } satisfies Strings<{
   notStarted: string
@@ -132,19 +146,61 @@ const STRINGS = {
   bid: string
   biddingAs: string
   disabledSuffix: string
+  offline: string
+  placing: string
+  placingBid: (amount: string) => string
+  bidOffline: string
+  bidUnconfirmed: string
+  bidRejected: string
 }>
 
 interface BidPanelProps {
   state: RoomState
   myTeam: RoomTeam | undefined
-  onBid: (amount: number) => void
+  /** Connected to the live service and seated — bids are refused otherwise. */
+  online: boolean
+  /** The bid awaiting the server's confirmation, if any (blocks further bids). */
+  pendingAmount: number | null
+  /** Sends a bid for `playerId`; resolves true once the server accepted it. */
+  onBid: (amount: number, playerId: string) => Promise<boolean>
+}
+
+/**
+ * One bid in flight at a time for the whole room page, shared by the full
+ * console and the phone bid bar: a second tap while the first bid awaits the
+ * server is ignored, and a refused or unconfirmed bid is explained in a toast.
+ */
+export function useBidSubmitter(placeBid: (amount: number, playerId: string) => Promise<ActionResult>) {
+  const t = useStrings(STRINGS)
+  const [pendingAmount, setPendingAmount] = useState<number | null>(null)
+  const inFlight = useRef(false)
+  const submit = useCallback(
+    async (amount: number, playerId: string): Promise<boolean> => {
+      if (inFlight.current) return false
+      inFlight.current = true
+      setPendingAmount(amount)
+      try {
+        const res = await placeBid(amount, playerId)
+        if (res.ok) return true
+        if (res.reason === 'offline') toast.error(t.bidOffline)
+        else if (res.reason === 'timeout') toast.warning(t.bidUnconfirmed)
+        else toast.error(res.error || t.bidRejected)
+        return false
+      } finally {
+        inFlight.current = false
+        setPendingAmount(null)
+      }
+    },
+    [placeBid, t],
+  )
+  return { pendingAmount, submit }
 }
 
 /**
  * Bidding rules shared by the full console and the mobile bid bar, so both
  * enable, label and validate bids exactly the same way.
  */
-function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
+function useBidConsole({ state, myTeam, online, pendingAmount, onBid }: BidPanelProps) {
   const t = useStrings(STRINGS)
   const [error, setError] = useState<string | null>(null)
 
@@ -166,9 +222,10 @@ function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
   const lockedOut =
     !!myTeam && state.allowPreviousOwnerRebid === false && state.previousOwnerTeamId === myTeam.id
   const biddingOpen =
-    state.status === 'LIVE' && !!player && !!myTeam && !squadFull && !leadingBid && !pricedOut && !lockedOut
+    online && state.status === 'LIVE' && !!player && !!myTeam && !squadFull && !leadingBid && !pricedOut && !lockedOut
 
   function reason(): string | null {
+    if (!online) return t.offline
     if (state.status === 'READY') return t.notStarted
     if (state.status === 'PAUSED') return t.pausedByOrganizer
     if (state.status === 'ENDED') return t.ended
@@ -196,16 +253,16 @@ function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
     return null
   }
 
-  /** Validates, then bids. Returns whether the bid was sent. */
-  function submit(amount: number): boolean {
+  /** Validates, then bids. Resolves whether the server accepted the bid. */
+  async function submit(amount: number): Promise<boolean> {
+    if (pendingAmount !== null) return false
     const err = validate(amount)
-    if (err) {
-      setError(err)
+    if (err || !player) {
+      setError(err ?? t.noPlayer)
       return false
     }
     setError(null)
-    onBid(amount)
-    return true
+    return onBid(amount, player.id)
   }
 
   // Quick increments always start from the minimum legal next bid, so no quick
@@ -226,6 +283,9 @@ function useBidConsole({ state, myTeam, onBid }: BidPanelProps) {
     squadFull,
     pricedOut,
     disabled: !biddingOpen,
+    pending: pendingAmount !== null,
+    pendingAmount,
+    online,
     disableReason: reason(),
     quickAmounts,
     quickLabels,
@@ -247,6 +307,9 @@ export function BidPanel(props: BidPanelProps) {
     squadFull,
     pricedOut,
     disabled,
+    pending,
+    pendingAmount,
+    online,
     disableReason,
     quickAmounts,
     quickLabels,
@@ -255,14 +318,20 @@ export function BidPanel(props: BidPanelProps) {
     submit,
   } = useBidConsole(props)
   const [custom, setCustom] = useState('')
+  const [customSending, setCustomSending] = useState(false)
 
   function submitCustom() {
+    if (pending) return
     const n = Number(custom.replace(/[^0-9]/g, ''))
     if (!custom.trim() || Number.isNaN(n) || n <= 0) {
       setError(t.invalidAmount)
       return
     }
-    if (submit(Math.round(n))) setCustom('')
+    setCustomSending(true)
+    void submit(Math.round(n)).then((ok) => {
+      setCustomSending(false)
+      if (ok) setCustom('')
+    })
   }
 
   return (
@@ -286,7 +355,7 @@ export function BidPanel(props: BidPanelProps) {
             </div>
             <div className="text-right">
               <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
-              <p className="text-lg font-black tabular-nums text-emerald-700">{formatBDT(myTeam.remaining)}</p>
+              <p className="text-lg font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(myTeam.remaining)}</p>
             </div>
           </div>
         ) : (
@@ -305,7 +374,7 @@ export function BidPanel(props: BidPanelProps) {
             <p
               className={cn(
                 'text-2xl font-black tabular-nums',
-                pricedOut ? 'text-rose-600' : 'text-foreground',
+                pricedOut ? 'text-rose-600 dark:text-rose-400' : 'text-foreground',
               )}
             >
               {myTeam ? formatBDT(maxBid) : '—'}
@@ -323,13 +392,15 @@ export function BidPanel(props: BidPanelProps) {
           {quickAmounts.map((amount, i) => {
             const overBudget = myTeam ? amount > maxBid : true
             const btnDisabled = disabled || overBudget || squadFull
+            const sending = pending && !customSending && pendingAmount === amount
             return (
               <button
                 key={i}
                 type="button"
-                disabled={btnDisabled}
-                onClick={() => submit(amount)}
+                disabled={btnDisabled || pending}
+                onClick={() => void submit(amount)}
                 aria-label={t.bidAmount(formatBDT(amount))}
+                aria-busy={sending || undefined}
                 className={cn(
                   'flex h-14 min-w-11 flex-col items-center justify-center rounded-lg border-2 border-primary/30 bg-primary/5 text-primary transition-all',
                   'hover:border-primary hover:bg-primary hover:text-primary-foreground active:scale-95',
@@ -338,10 +409,19 @@ export function BidPanel(props: BidPanelProps) {
                   btnDisabled && overBudget && 'line-through decoration-rose-500'
                 )}
               >
-                <span className="text-sm font-black leading-none">{quickLabels[i]}</span>
-                <span className="mt-0.5 text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(amount)}</span>
+                {sending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    <span className="mt-0.5 text-[10px] font-semibold">{t.placing}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-black leading-none">{quickLabels[i]}</span>
+                    <span className="mt-0.5 text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(amount)}</span>
+                  </>
+                )}
                 {!btnDisabled || !overBudget ? null : (
-                  <span className="text-[9px] font-semibold uppercase text-rose-600 no-underline">{t.overBudget}</span>
+                  <span className="text-[9px] font-semibold uppercase text-rose-600 dark:text-rose-400 no-underline">{t.overBudget}</span>
                 )}
               </button>
             )
@@ -369,13 +449,22 @@ export function BidPanel(props: BidPanelProps) {
               className="h-11 tabular-nums"
               aria-label={t.customAria}
             />
-            <Button className="h-11 w-20 shrink-0 font-bold" disabled={disabled} onClick={submitCustom}>
-              {t.bid}
+            <Button
+              className="h-11 w-20 shrink-0 font-bold"
+              disabled={disabled || pending}
+              onClick={submitCustom}
+              aria-busy={customSending || undefined}
+            >
+              {customSending ? <Loader2 className="h-4 w-4 animate-spin" aria-label={t.placing} /> : t.bid}
             </Button>
           </div>
           {error ? (
-            <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-rose-600" role="alert">
+            <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-rose-600 dark:text-rose-400" role="alert">
               <Ban className="h-3 w-3" aria-hidden /> {error}
+            </p>
+          ) : pendingAmount !== null ? (
+            <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-primary" role="status">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> {t.placingBid(formatBDT(pendingAmount))}
             </p>
           ) : (
             <p className="mt-1.5 text-xs text-muted-foreground">
@@ -386,7 +475,12 @@ export function BidPanel(props: BidPanelProps) {
 
         {disableReason ? (
           <p className="flex items-center justify-center gap-1.5 rounded-lg bg-muted px-3 py-2 text-center text-xs font-medium text-muted-foreground">
-            <Wallet className="h-3.5 w-3.5 shrink-0" aria-hidden /> {disableReason} {t.disabledSuffix}
+            {online ? (
+              <Wallet className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            ) : (
+              <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            )}{' '}
+            {disableReason} {t.disabledSuffix}
           </p>
         ) : null}
       </CardContent>
@@ -401,11 +495,18 @@ export function BidPanel(props: BidPanelProps) {
  */
 export function MobileBidBar(props: BidPanelProps) {
   const { state, myTeam } = props
-  const { t, player, maxBid, disabled, disableReason, quickAmounts, quickLabels, error, submit } = useBidConsole(props)
+  const { t, player, maxBid, disabled, pending, pendingAmount, disableReason, quickAmounts, quickLabels, error, submit } =
+    useBidConsole(props)
   if (!myTeam || state.status === 'ENDED') return null
 
   const [first, second] = quickAmounts
-  const message = error ?? (disableReason ? `${disableReason} ${t.disabledSuffix}` : null)
+  const message =
+    error ??
+    (pendingAmount !== null
+      ? t.placingBid(formatBDT(pendingAmount))
+      : disableReason
+        ? `${disableReason} ${t.disabledSuffix}`
+        : null)
 
   return (
     <div
@@ -416,7 +517,7 @@ export function MobileBidBar(props: BidPanelProps) {
       <div className="mx-auto flex max-w-xl items-center gap-2">
         <div className="min-w-0 flex-1 leading-tight">
           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
-          <p className="truncate text-base font-black tabular-nums text-emerald-700">{formatBDT(myTeam.remaining)}</p>
+          <p className="truncate text-base font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(myTeam.remaining)}</p>
           <p className="truncate text-[10px] text-muted-foreground tabular-nums">
             {t.maxShort(formatBDT(maxBid))}
           </p>
@@ -424,26 +525,41 @@ export function MobileBidBar(props: BidPanelProps) {
         <Button
           variant="outline"
           className="h-12 shrink-0 flex-col gap-0 border-2 border-primary/30 px-3 text-primary"
-          disabled={disabled || !player || second > maxBid}
-          onClick={() => submit(second)}
+          disabled={disabled || pending || !player || second > maxBid}
+          onClick={() => void submit(second)}
           aria-label={t.bidAmount(formatBDT(second))}
+          aria-busy={(pending && pendingAmount === second) || undefined}
         >
-          <span className="text-sm font-black leading-none">{quickLabels[1]}</span>
-          <span className="text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(second)}</span>
+          {pending && pendingAmount === second ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <>
+              <span className="text-sm font-black leading-none">{quickLabels[1]}</span>
+              <span className="text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(second)}</span>
+            </>
+          )}
         </Button>
         <Button
           className="h-12 min-w-[9.5rem] shrink-0 text-base font-black"
-          disabled={disabled || !player || first > maxBid}
-          onClick={() => submit(first)}
+          disabled={disabled || pending || !player || first > maxBid}
+          onClick={() => void submit(first)}
+          aria-busy={(pending && pendingAmount !== second) || undefined}
         >
-          <Gavel className="mr-1.5 h-4 w-4" aria-hidden />
-          {player ? t.bidAmount(formatBDT(first)) : t.bid}
+          {pending && pendingAmount !== second ? (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Gavel className="mr-1.5 h-4 w-4" aria-hidden />
+          )}
+          {pending && pendingAmount !== second ? t.placing : player ? t.bidAmount(formatBDT(first)) : t.bid}
         </Button>
       </div>
       {message ? (
         <p
-          className={cn('mx-auto mt-1 max-w-xl truncate text-center text-[11px] font-medium', error ? 'text-rose-600' : 'text-muted-foreground')}
-          role={error ? 'alert' : undefined}
+          className={cn(
+            'mx-auto mt-1 max-w-xl truncate text-center text-[11px] font-medium',
+            error ? 'text-rose-600 dark:text-rose-400' : pendingAmount !== null ? 'text-primary' : 'text-muted-foreground',
+          )}
+          role={error ? 'alert' : pendingAmount !== null ? 'status' : undefined}
         >
           {message}
         </p>

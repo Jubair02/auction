@@ -10,7 +10,8 @@ export async function GET() {
   const { user } = auth
 
   const teams = await db.team.findMany({
-    where: { managerUserId: user.id },
+    // Archived (deleted) tournaments drop off the manager's list too.
+    where: { managerUserId: user.id, tournament: { archivedAt: null } },
     orderBy: { name: 'asc' },
     include: {
       tournament: {

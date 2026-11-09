@@ -53,3 +53,5 @@ prompt
 server.log
 # Skills directory
 /skills/
+# database backups (npm run db:backup) — may contain personal data
+/backups/

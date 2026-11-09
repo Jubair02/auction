@@ -1,5 +1,6 @@
 'use client'
 
+import { createContext, useContext } from 'react'
 import { create } from 'zustand'
 import { apiGet, apiPost } from '@/lib/api'
 import { clearCached } from '@/lib/api-cache'
@@ -56,3 +57,29 @@ export const useAppStore = create<AppState>((set, get) => {
     },
   }
 })
+
+/**
+ * Who is signed in, as the server saw it when it rendered this page
+ * (undefined = the server didn't check). Lets the very first render — the
+ * server HTML and the browser's hydration — show the right header and page
+ * instead of a signed-out header that flips a second later.
+ *
+ * The zustand store above is one per browser tab; on the server it always
+ * reads its initial (signed-out) state, so the per-request answer travels in
+ * this context instead and never leaks between visitors.
+ */
+export const AuthSeedContext = createContext<SafeUser | null | undefined>(undefined)
+
+/**
+ * The signed-in user for rendering: the live store once the browser has
+ * checked the session, otherwise the server's answer. Use this instead of
+ * reading `user` / `authChecked` from the store directly.
+ */
+export function useAuthState(): { user: SafeUser | null; authChecked: boolean; authLoading: boolean } {
+  const seed = useContext(AuthSeedContext)
+  const user = useAppStore((s) => s.user)
+  const authChecked = useAppStore((s) => s.authChecked)
+  const authLoading = useAppStore((s) => s.authLoading)
+  if (!authChecked && seed !== undefined) return { user: seed, authChecked: true, authLoading: false }
+  return { user, authChecked, authLoading }
+}

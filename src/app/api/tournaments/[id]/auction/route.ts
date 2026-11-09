@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { generateRoomCode } from '@/lib/crypto'
+import { track } from '@/lib/analytics'
 import {
   clampInt,
   loadTournamentForOwner,
@@ -18,7 +19,7 @@ const TIMER = { min: 5, max: 600, fallback: 20 } // same range as the live contr
 const GOING = { min: 3, max: 60, fallback: 8 }
 const INCREMENT = { min: 500, max: 100000, fallback: 5000 }
 
-// POST /api/tournaments/:id/auction — create auction (roomCode, READY) — owner/ADMIN
+// POST /api/tournaments/:id/auction — create auction (roomCode, READY) — owner/ADMIN/co-organizer
 export async function POST(req: Request, { params }: RouteParams) {
   const { id } = await params
 
@@ -26,9 +27,8 @@ export async function POST(req: Request, { params }: RouteParams) {
   if ('response' in auth) return auth.response
   const { user } = auth
 
-  const loaded = await loadTournamentForOwner(id, user)
+  const loaded = await loadTournamentForOwner(id, user, 'manage')
   if ('response' in loaded) return loaded.response
-  const tournament = loaded.tournament
 
   const body = (await readJson(req)) ?? {}
 
@@ -83,6 +83,7 @@ export async function POST(req: Request, { params }: RouteParams) {
   }
 
   await db.tournament.update({ where: { id }, data: { status: 'READY' } })
+  void track('auction_created', { userId: user.id, tournamentId: id })
 
   return Response.json({ auction: serializeAuction(auction) }, { status: 201 })
 }
@@ -96,7 +97,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   if ('response' in auth) return auth.response
   const { user } = auth
 
-  const loaded = await loadTournamentForOwner(id, user)
+  const loaded = await loadTournamentForOwner(id, user, 'manage')
   if ('response' in loaded) return loaded.response
 
   const auction = await db.auction.findUnique({ where: { tournamentId: id } })

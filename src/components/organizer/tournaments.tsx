@@ -49,12 +49,13 @@ import { TournamentCard, copyRoomCode } from '@/components/organizer/tournament-
 import { apiDelete, apiDownload, ApiError } from '@/lib/api'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, prefetchTournamentProps, tournamentDetailUrl } from '@/lib/tournament-prefetch'
-import { navigate } from '@/lib/router'
+import { AppLink } from '@/components/shared/app-link'
 import { formatAuctionWhen, slugify } from '@/lib/format'
 import { auctionTime, byUrgency, isDone, isLive, PHASE_LABELS, tournamentPhase, type TournamentPhase } from '@/lib/tournament-status'
 import { cn } from '@/lib/utils'
 import { sportLabel, type TournamentSummary } from '@/lib/types'
 import { type Lang, type Strings, useLang, useStrings } from '@/lib/i18n'
+import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 // CSV export types — these keys go to the API and into the file name.
 const EXPORT_TYPES = ['players', 'sold', 'unsold', 'squads', 'bids', 'spending', 'audit'] as const
@@ -84,6 +85,7 @@ const STRINGS = {
     exported: (type: string) => `Exported ${type} CSV`,
     exportFailed: 'Export failed',
     deleted: (name: string) => `Deleted "${name}"`,
+    archived: (name: string) => `Archived "${name}" — its auction record is kept`,
     deleteFailed: 'Delete failed',
     moreActions: (name: string) => `More actions for ${name}`,
     openAuctionRoom: 'Open auction room',
@@ -124,7 +126,7 @@ const STRINGS = {
     manage: 'Manage',
     deleteTitle: 'Delete tournament?',
     deleteDesc: (name: string | null) =>
-      `${name ? `"${name}"` : 'This tournament'} and all its players, teams and bid history will be permanently removed. This cannot be undone.`,
+      `${name ? `"${name}"` : 'This tournament'} and all its players, teams and bid history will be permanently removed. This cannot be undone. If its auction has bids, it is archived instead, so the auction record is kept.`,
     cancel: 'Cancel',
     deleting: 'Deleting…',
     deleteTournament: 'Delete tournament',
@@ -140,6 +142,7 @@ const STRINGS = {
     exported: (type: string) => `${type} CSV এক্সপোর্ট হয়েছে`,
     exportFailed: 'এক্সপোর্ট করা যায়নি',
     deleted: (name: string) => `"${name}" মুছে ফেলা হয়েছে`,
+    archived: (name: string) => `"${name}" আর্কাইভ হয়েছে — নিলামের রেকর্ড রাখা আছে`,
     deleteFailed: 'মুছে ফেলা যায়নি',
     moreActions: (name: string) => `${name} — আরও অপশন`,
     openAuctionRoom: 'নিলাম রুম খুলুন',
@@ -180,7 +183,7 @@ const STRINGS = {
     manage: 'ম্যানেজ করুন',
     deleteTitle: 'টুর্নামেন্ট মুছবেন?',
     deleteDesc: (name: string | null) =>
-      `${name ? `"${name}"` : 'এই টুর্নামেন্ট'} আর এর সব খেলোয়াড়, দল ও বিডের ইতিহাস চিরতরে মুছে যাবে। এটা আর ফেরানো যাবে না।`,
+      `${name ? `"${name}"` : 'এই টুর্নামেন্ট'} আর এর সব খেলোয়াড়, দল ও বিডের ইতিহাস চিরতরে মুছে যাবে। এটা আর ফেরানো যাবে না। নিলামে বিড হয়ে থাকলে এটা মুছে না গিয়ে আর্কাইভ হবে, যাতে নিলামের রেকর্ড থেকে যায়।`,
     cancel: 'বাতিল',
     deleting: 'মুছে ফেলা হচ্ছে…',
     deleteTournament: 'টুর্নামেন্ট মুছুন',
@@ -196,6 +199,7 @@ const STRINGS = {
   exported: (type: string) => string
   exportFailed: string
   deleted: (name: string) => string
+  archived: (name: string) => string
   deleteFailed: string
   moreActions: (name: string) => string
   openAuctionRoom: string
@@ -242,13 +246,14 @@ const STRINGS = {
 }>
 
 const subtitle = (t: TournamentSummary, lang: Lang) =>
-  [sportLabel(t.sport, lang, t.sportName), t.tournamentType, t.location].filter(Boolean).join(' · ')
+  [sportLabel(t.sport, lang, t.sportName), tournamentTypeLabel(t.tournamentType, lang), t.location].filter(Boolean).join(' · ')
 
 /** The auction time as the table shows it — flagged when the date passed and it never ran. */
 function AuctionWhen({ t }: { t: TournamentSummary }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   if (isLive(t)) return <span className="font-medium text-amber-700 dark:text-amber-400">{s.underWay}</span>
-  const when = formatAuctionWhen(t.auctionAt)
+  const when = formatAuctionWhen(t.auctionAt, lang)
   if (!when) return <span className="text-muted-foreground">{s.notSet}</span>
   const overdue = when.past && !isDone(t)
   return (
@@ -314,9 +319,9 @@ export default function TournamentsList() {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await apiDelete(`/api/tournaments/${deleteTarget.id}`)
+      const res = await apiDelete<{ archived?: boolean }>(`/api/tournaments/${deleteTarget.id}`)
       invalidateCached(tournamentDetailUrl(deleteTarget.id))
-      toast.success(s.deleted(deleteTarget.name))
+      toast.success(res?.archived ? s.archived(deleteTarget.name) : s.deleted(deleteTarget.name))
       setDeleteTarget(null)
       void load()
     } catch (ex) {
@@ -336,8 +341,10 @@ export default function TournamentsList() {
       <DropdownMenuContent align="end" className="w-56">
         {t.roomCode ? (
           <>
-            <DropdownMenuItem onClick={() => navigate(`/room/${t.roomCode}`)}>
-              <DoorOpen className="mr-2 h-4 w-4" /> {s.openAuctionRoom}
+            <DropdownMenuItem asChild>
+              <AppLink href={`/room/${t.roomCode}`}>
+                <DoorOpen className="mr-2 h-4 w-4" /> {s.openAuctionRoom}
+              </AppLink>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => copyRoomCode(t.roomCode as string, lang)}>
               <Copy className="mr-2 h-4 w-4" /> {s.copyRoomCode}
@@ -345,11 +352,15 @@ export default function TournamentsList() {
             <DropdownMenuSeparator />
           </>
         ) : null}
-        <DropdownMenuItem onClick={() => navigate(`/tournaments/${t.id}/history`)}>
-          <History className="mr-2 h-4 w-4" /> {s.auctionHistory}
+        <DropdownMenuItem asChild>
+          <AppLink href={`/tournaments/${t.id}/history`}>
+            <History className="mr-2 h-4 w-4" /> {s.auctionHistory}
+          </AppLink>
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate(`/results/${t.id}`)}>
-          <Trophy className="mr-2 h-4 w-4" /> {s.results}
+        <DropdownMenuItem asChild>
+          <AppLink href={`/results/${t.id}`}>
+            <Trophy className="mr-2 h-4 w-4" /> {s.results}
+          </AppLink>
         </DropdownMenuItem>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
@@ -386,8 +397,10 @@ export default function TournamentsList() {
             {loading ? s.intro : s.countLine(tournaments.length, liveCount)}
           </p>
         </div>
-        <Button size="lg" className="min-h-11" onClick={() => navigate('/tournaments/new')}>
-          <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+        <Button asChild size="lg" className="min-h-11">
+          <AppLink href="/tournaments/new">
+            <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+          </AppLink>
         </Button>
       </div>
 
@@ -405,8 +418,10 @@ export default function TournamentsList() {
           title={s.emptyTitle}
           description={s.emptyDesc}
           action={
-            <Button onClick={() => navigate('/tournaments/new')}>
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+            <Button asChild>
+              <AppLink href="/tournaments/new">
+                <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {s.newTournament}
+              </AppLink>
             </Button>
           }
         />
@@ -500,14 +515,13 @@ export default function TournamentsList() {
                       return (
                         <TableRow key={t.id}>
                           <TableCell className="max-w-72 py-3">
-                            <button
-                              type="button"
+                            <AppLink
+                              href={`/tournaments/${t.id}`}
                               className="block max-w-full truncate text-left font-semibold hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
                               {...prefetchTournamentProps(t.id)}
-                              onClick={() => navigate(`/tournaments/${t.id}`)}
                             >
                               {t.name}
-                            </button>
+                            </AppLink>
                             <p className="truncate text-xs text-muted-foreground">{subtitle(t, lang)}</p>
                           </TableCell>
                           <TableCell>
@@ -549,14 +563,10 @@ export default function TournamentsList() {
                           </TableCell>
                           <TableCell>
                             <div className="flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-9"
-                                {...prefetchTournamentProps(t.id)}
-                                onClick={() => navigate(`/tournaments/${t.id}`)}
-                              >
-                                {s.manage}
+                              <Button asChild variant="outline" size="sm" className="h-9">
+                                <AppLink href={`/tournaments/${t.id}`} {...prefetchTournamentProps(t.id)}>
+                                  {s.manage}
+                                </AppLink>
                               </Button>
                               {moreMenu(t)}
                             </div>
@@ -576,8 +586,10 @@ export default function TournamentsList() {
                     t={t}
                     actions={
                       <>
-                        <Button className="min-h-10 flex-1" {...prefetchTournamentProps(t.id)} onClick={() => navigate(`/tournaments/${t.id}`)}>
-                          <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> {s.manage}
+                        <Button asChild className="min-h-10 flex-1">
+                          <AppLink href={`/tournaments/${t.id}`} {...prefetchTournamentProps(t.id)}>
+                            <LayoutList className="mr-1.5 h-4 w-4" aria-hidden /> {s.manage}
+                          </AppLink>
                         </Button>
                         {moreMenu(t)}
                       </>

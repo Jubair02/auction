@@ -1,7 +1,7 @@
 // Run: npm test (node --test). Pure rules only — no DB, no sockets.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { cheapestAvailable, maxBidFor, slotsStillNeeded, validateBid, type BidContext, type RuleTeam } from './rules.ts'
+import { cheapestAvailable, maxBidFor, reserveFor, slotsStillNeeded, validateBid, type BidContext, type RuleTeam } from './rules.ts'
 
 const player = (id: string, basePrice: number, status = 'AVAILABLE') => ({ id, basePrice, status })
 
@@ -44,10 +44,28 @@ describe('purse maths', () => {
 
   it('maxBidFor holds back enough purse to finish the minimum squad', () => {
     const players = [onBlock, player('p1', 20_000), player('p2', 30_000)]
-    // needs 2 more after this one, cheapest obtainable is 20k → reserve 40k
+    // needs 2 more after this one: the two cheapest obtainable are 20k + 30k → reserve 50k
     const t = team({ budget: 100_000, minSquad: 3 })
-    assert.equal(maxBidFor(players, t, onBlock.id), 60_000)
+    assert.equal(maxBidFor(players, t, onBlock.id), 50_000)
     assert.equal(maxBidFor(players, team({ budget: 10_000, spent: 0, minSquad: 3 }), onBlock.id), 0)
+  })
+
+  it('reserveFor sums the N cheapest obtainable base prices, not N × the cheapest', () => {
+    const players = [
+      onBlock,
+      player('a', 10_000),
+      player('b', 40_000, 'UNSOLD'),
+      player('c', 25_000, 'SKIPPED'),
+      player('d', 1_000, 'SOLD'), // already bought — never counts
+      player('e', 5_000, 'LIVE'),
+    ]
+    assert.equal(reserveFor(players, 0, onBlock.id), 0)
+    assert.equal(reserveFor(players, 1, onBlock.id), 10_000)
+    assert.equal(reserveFor(players, 2, onBlock.id), 35_000)
+    assert.equal(reserveFor(players, 3, onBlock.id), 75_000)
+    assert.equal(reserveFor(players, 9, onBlock.id), 75_000) // capped at what exists
+    // minSquad 4, owns 0: needs 3 more after this one → 10k + 25k + 40k
+    assert.equal(maxBidFor(players, team({ budget: 200_000, minSquad: 4 }), onBlock.id), 125_000)
   })
 })
 
@@ -86,8 +104,9 @@ describe('validateBid', () => {
 
   it('cannot spend the reserve needed for the minimum squad', () => {
     const t = team({ budget: 100_000, minSquad: 3 })
-    assert.match(validateBid(ctx(), t, onBlock, 65_000, { manual: false })!, /Maximum bid is ৳60,000/)
-    assert.equal(validateBid(ctx(), t, onBlock, 60_000, { manual: false }), null)
+    // reserve = 20k + 30k for the two remaining slots → max 50k
+    assert.match(validateBid(ctx(), t, onBlock, 55_000, { manual: false })!, /Maximum bid is ৳50,000/)
+    assert.equal(validateBid(ctx(), t, onBlock, 50_000, { manual: false }), null)
   })
 
   it('previous-owner lockout only applies when the policy is off', () => {

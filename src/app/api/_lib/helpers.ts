@@ -15,13 +15,23 @@ import type {
   TeamDTO,
   TournamentStatus,
   TournamentSummary,
+  LeagueFormat,
 } from '@/lib/types'
 import { OTHER_SPORT_LIMITS } from '@/lib/types'
 import { Prisma } from '@prisma/client'
 import type { Auction, Player, Team, Tournament } from '@prisma/client'
 
 // ---------- Body parsing ----------
+/**
+ * Parses a JSON object body. Requires `Content-Type: application/json`: a
+ * cross-site HTML form can only send form/text content types without a CORS
+ * preflight, so this check stops login CSRF and other forged form posts even
+ * where the SameSite cookie would not (e.g. a login that has no cookie yet).
+ * Returns null for any other content type, a non-object, or invalid JSON.
+ */
 export async function readJson(req: Request): Promise<Record<string, unknown> | null> {
+  const contentType = req.headers.get('content-type') ?? ''
+  if (!contentType.toLowerCase().includes('application/json')) return null
   try {
     const body: unknown = await req.json()
     if (!body || typeof body !== 'object' || Array.isArray(body)) return null
@@ -53,17 +63,60 @@ export function isOwnerOrAdmin(tournament: Pick<Tournament, 'organizerId'>, user
   return user.role === 'ADMIN' || tournament.organizerId === user.id
 }
 
-/** Loads a tournament and verifies the user is its organizer or an ADMIN. */
+/**
+ * Archived tournaments (deleted by their organizer, kept for the audit trail)
+ * behave as if they no longer exist for everyone except an ADMIN.
+ */
+export function hiddenByArchive(tournament: Pick<Tournament, 'archivedAt'>, user: SafeUser | null): boolean {
+  return tournament.archivedAt !== null && user?.role !== 'ADMIN'
+}
+
+/** Staff access levels, see TournamentAccess in lib/types.ts. */
+export type StaffAccess = 'OWNER' | 'ADMIN' | 'CO_ORGANIZER' | 'AUCTIONEER'
+/**
+ * What a route needs: 'owner' — billing, staff, deletion; 'manage' — edit teams,
+ * players, settings; 'run' — view the tournament and run the live room.
+ */
+export type AccessNeed = 'owner' | 'manage' | 'run'
+
+const ACCESS_RANK: Record<StaffAccess, number> = { AUCTIONEER: 1, CO_ORGANIZER: 2, OWNER: 3, ADMIN: 3 }
+const NEED_RANK: Record<AccessNeed, number> = { run: 1, manage: 2, owner: 3 }
+
+/** The user's staff-level access to a tournament, or null (none / only a manager). */
+export async function tournamentAccess(
+  tournament: Pick<Tournament, 'id' | 'organizerId'>,
+  user: SafeUser,
+): Promise<StaffAccess | null> {
+  if (user.role === 'ADMIN') return 'ADMIN'
+  if (tournament.organizerId === user.id) return 'OWNER'
+  const staff = await db.tournamentStaff.findUnique({
+    where: { tournamentId_userId: { tournamentId: tournament.id, userId: user.id } },
+    select: { role: true },
+  })
+  return staff?.role === 'CO_ORGANIZER' || staff?.role === 'AUCTIONEER' ? staff.role : null
+}
+
+export function accessAllows(access: StaffAccess | null, need: AccessNeed): boolean {
+  return access !== null && ACCESS_RANK[access] >= NEED_RANK[need]
+}
+
+/**
+ * Loads a tournament and verifies the user's access: by default 'manage'
+ * (owner, ADMIN or co-organizer). Use 'owner' for billing/staff/deletion and
+ * 'run' for read + live room.
+ */
 export async function loadTournamentForOwner(
   tournamentId: string,
   user: SafeUser,
-): Promise<{ tournament: Tournament } | { response: Response }> {
+  need: AccessNeed = 'manage',
+): Promise<{ tournament: Tournament; access: StaffAccess } | { response: Response }> {
   const tournament = await db.tournament.findUnique({ where: { id: tournamentId } })
-  if (!tournament) return { response: jsonError('Tournament not found', 404) }
-  if (!isOwnerOrAdmin(tournament, user)) {
+  if (!tournament || hiddenByArchive(tournament, user)) return { response: jsonError('Tournament not found', 404) }
+  const access = await tournamentAccess(tournament, user)
+  if (!accessAllows(access, need)) {
     return { response: jsonError('You do not have permission to manage this tournament', 403) }
   }
-  return { tournament }
+  return { tournament, access: access! }
 }
 
 /** Loads a player and verifies the caller manages its tournament (owner or ADMIN). */
@@ -74,8 +127,8 @@ export async function loadPlayerForOwner(
   const player = await db.player.findUnique({ where: { id: playerId } })
   if (!player) return { response: jsonError('Player not found', 404) }
   const tournament = await db.tournament.findUnique({ where: { id: player.tournamentId } })
-  if (!tournament) return { response: jsonError('Tournament not found', 404) }
-  if (!isOwnerOrAdmin(tournament, user)) {
+  if (!tournament || hiddenByArchive(tournament, user)) return { response: jsonError('Tournament not found', 404) }
+  if (!accessAllows(await tournamentAccess(tournament, user), 'manage')) {
     return { response: jsonError('You do not have permission to manage this player', 403) }
   }
   return { player }
@@ -89,8 +142,8 @@ export async function loadTeamForOwner(
   const team = await db.team.findUnique({ where: { id: teamId } })
   if (!team) return { response: jsonError('Team not found', 404) }
   const tournament = await db.tournament.findUnique({ where: { id: team.tournamentId } })
-  if (!tournament) return { response: jsonError('Tournament not found', 404) }
-  if (!isOwnerOrAdmin(tournament, user)) {
+  if (!tournament || hiddenByArchive(tournament, user)) return { response: jsonError('Tournament not found', 404) }
+  if (!accessAllows(await tournamentAccess(tournament, user), 'manage')) {
     return { response: jsonError('You do not have permission to manage this team', 403) }
   }
   return { team }
@@ -319,6 +372,7 @@ export function serializeTournamentSummary(
     teamCount: t._count?.teams ?? 0,
     roomCode: t.auction?.roomCode ?? null,
     auctionStatus: (t.auction?.status as AuctionStatus) ?? null,
+    plan: t.plan === 'PRO' ? 'PRO' : 'FREE',
   }
 }
 
@@ -341,6 +395,22 @@ export function serializeTournamentFull(t: Tournament) {
     organizerId: t.organizerId,
     createdAt: t.createdAt.toISOString(),
     ...otherSportDetails(t),
+    plan: (t.plan === 'PRO' ? 'PRO' : 'FREE') as 'FREE' | 'PRO',
+    proSince: t.proSince ? t.proSince.toISOString() : null,
+    resultsPublic: t.resultsPublic,
+    registrationFee: t.registrationFee,
+    feeBkashNumber: t.feeBkashNumber,
+    feeNagadNumber: t.feeNagadNumber,
+    feeInstructions: t.feeInstructions,
+    smsEnabled: t.smsEnabled,
+    smsLang: (t.smsLang === 'en' ? 'en' : 'bn') as 'bn' | 'en',
+    leagueFormat: (t.leagueFormat ?? null) as LeagueFormat | null,
+    pointsWin: t.pointsWin,
+    pointsDraw: t.pointsDraw,
+    pointsLoss: t.pointsLoss,
+    oversPerInnings: t.oversPerInnings,
+    brandColor: t.brandColor,
+    brandHidePlatform: t.brandHidePlatform,
   }
 }
 

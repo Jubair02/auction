@@ -1,8 +1,9 @@
+import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
-import { getSessionUserWithVersion, jsonError } from '@/lib/auth'
-import { signToken } from '@/lib/crypto'
+import { getSessionUserWithVersion, jsonError, SESSION_COOKIE } from '@/lib/auth'
+import { signToken, verifyToken } from '@/lib/crypto'
 import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
-import { isUniqueViolation, ONE_TEAM_PER_MANAGER, readJson } from '../../../_lib/helpers'
+import { isUniqueViolation, ONE_TEAM_PER_MANAGER, readJson, tournamentAccess } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
@@ -13,6 +14,18 @@ const SOCKET_TOKEN_TTL = 12 * 3600 // 12 hours
 // kept generous for many viewers behind one carrier-NAT address.
 const JOINS_PER_WINDOW = 60
 const JOIN_WINDOW_MS = 10 * 60 * 1000
+
+/**
+ * The login session (`sid`) behind the request's cookie. Only called once
+ * getSessionUserWithVersion() has accepted that same cookie (signature,
+ * session row, expiry, version), so this just reads the id back out. Seat
+ * passes carry it so the auction service can end a seat when that one
+ * session logs out — not only on a password reset.
+ */
+async function currentSessionId(): Promise<string | undefined> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value
+  return (token ? verifyToken<{ sid?: string }>(token)?.sid : undefined) || undefined
+}
 
 // POST /api/rooms/:code/join — public; returns a signed socket token + identity
 export async function POST(req: Request, { params }: RouteParams) {
@@ -29,9 +42,11 @@ export async function POST(req: Request, { params }: RouteParams) {
 
   const auction = await db.auction.findUnique({
     where: { roomCode },
-    include: { tournament: { select: { id: true, organizerId: true } } },
+    include: { tournament: { select: { id: true, organizerId: true, archivedAt: true } } },
   })
+  // An archived tournament's room is gone as far as anyone joining is concerned.
   if (!auction) return jsonError('Room not found. Check the code and try again.', 404)
+  if (auction.tournament.archivedAt) return jsonError('Room not found', 404)
 
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)
@@ -43,8 +58,9 @@ export async function POST(req: Request, { params }: RouteParams) {
 
   const session = await getSessionUserWithVersion()
   const sessionUser = session?.user ?? null
+  // Owner, ADMIN and tournament staff (co-organizer / auctioneer) all run the room.
   const isOrganizer =
-    sessionUser && (sessionUser.role === 'ADMIN' || sessionUser.id === auction.tournament.organizerId)
+    role === 'organizer' && sessionUser ? (await tournamentAccess(auction.tournament, sessionUser)) !== null : false
 
   const upsertParticipant = async (data: {
     role: 'ORGANIZER' | 'MANAGER' | 'VIEWER'
@@ -74,7 +90,7 @@ export async function POST(req: Request, { params }: RouteParams) {
 
   if (role === 'organizer') {
     if (!sessionUser || !isOrganizer) {
-      return jsonError('Only the tournament organizer can join as organizer', 403)
+      return jsonError('Only the tournament organizer or its staff can join as organizer', 403)
     }
     const token = signToken(
       {
@@ -84,6 +100,7 @@ export async function POST(req: Request, { params }: RouteParams) {
         name: sessionUser.name,
         userId: sessionUser.id,
         sv: session!.sessionVersion,
+        sid: await currentSessionId(),
       },
       SOCKET_TOKEN_TTL,
     )
@@ -163,6 +180,7 @@ export async function POST(req: Request, { params }: RouteParams) {
         teamName: team.name,
         userId: sessionUser.id,
         sv: session!.sessionVersion,
+        sid: await currentSessionId(),
       },
       SOCKET_TOKEN_TTL,
     )

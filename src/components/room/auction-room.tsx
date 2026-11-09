@@ -14,7 +14,8 @@ import {
   useAuctionSocket,
   type StoredIdentity,
 } from '@/lib/use-auction-socket'
-import type { AuctionStatus, JoinResult, RoomInfo, RoomState, RoomTeam } from '@/lib/types'
+import type { AuctionStatus, JoinResult, PublicBranding, RoomInfo, RoomState, RoomTeam } from '@/lib/types'
+import { brandPalette } from '@/lib/brand-color'
 import { cn } from '@/lib/utils'
 import {
   AlertDialog,
@@ -32,13 +33,15 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AuctionStage } from './stage'
-import { BidPanel, MobileBidBar } from './bid-panel'
-import { OrganizerControls } from './organizer-controls'
+import { BidPanel, MobileBidBar, useBidSubmitter } from './bid-panel'
+import { ErrorBoundary } from '@/components/shared/error-boundary'
+import { OrganizerControls, useOrganizerAction } from './organizer-controls'
 import { TeamsPanel } from './teams-panel'
 import { ActivityFeed, ParticipantsPanel } from './participants-panel'
 import { PlayerPoolPanel, SoldFeed } from './player-pool-panel'
 import { SquadPanel } from './squad-panel'
 import { JoinCard } from './join-card'
+import { SponsorStrip } from '@/components/shared/sponsor-strip'
 import { type Strings, useStrings } from '@/lib/i18n'
 
 const STRINGS = {
@@ -85,6 +88,9 @@ const STRINGS = {
     kpiSkipped: 'Skipped',
     kpiTotal: 'Total',
     organizerSeat: 'Organizer seat',
+    offlineTitle: 'Connection lost — reconnecting…',
+    rejoiningTitle: 'Reconnected — rejoining the room…',
+    offlineBody: 'Bidding and controls are paused until you are back. What you see may be out of date.',
   },
   bn: {
     unreachable: 'রুমে পৌঁছানো যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।',
@@ -129,6 +135,9 @@ const STRINGS = {
     kpiSkipped: 'বাদ',
     kpiTotal: 'মোট',
     organizerSeat: 'আয়োজকের আসন',
+    offlineTitle: 'সংযোগ বিচ্ছিন্ন — আবার যুক্ত হচ্ছে…',
+    rejoiningTitle: 'আবার সংযুক্ত — রুমে ফিরছে…',
+    offlineBody: 'সংযোগ ফিরে না আসা পর্যন্ত বিড ও নিয়ন্ত্রণ বন্ধ থাকবে। স্ক্রিনে যা দেখছেন তা হালনাগাদ না-ও হতে পারে।',
   },
 } satisfies Strings<{
   unreachable: string
@@ -173,7 +182,13 @@ const STRINGS = {
   kpiSkipped: string
   kpiTotal: string
   organizerSeat: string
+  offlineTitle: string
+  rejoiningTitle: string
+  offlineBody: string
 }>
+
+/** GET /api/rooms/:code also carries the tournament's public branding (PRO: colour + sponsors). */
+type RoomInfoWithBranding = RoomInfo & { branding?: PublicBranding }
 
 /** fatalError marker for a network failure — rendered in the viewer's language. */
 const UNREACHABLE = '__unreachable__'
@@ -181,21 +196,23 @@ const UNREACHABLE = '__unreachable__'
 type Phase = 'loading' | 'notfound' | 'join' | 'live'
 
 const STATUS_CHIP: Record<AuctionStatus, string> = {
-  READY: 'bg-slate-200 text-slate-700',
-  LIVE: 'bg-amber-100 text-amber-900',
-  PAUSED: 'bg-slate-200 text-slate-700',
-  ENDED: 'bg-teal-100 text-teal-900',
+  READY: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+  LIVE: 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200',
+  PAUSED: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+  ENDED: 'bg-teal-100 text-teal-900 dark:bg-teal-950/60 dark:text-teal-200',
 }
 
 /** The live auction room — resolves identity, joins the socket, renders the role layout. */
 export default function AuctionRoom({ roomCode }: { roomCode: string }) {
   const t = useStrings(STRINGS)
-  const [info, setInfo] = useState<RoomInfo | null>(null)
+  const [info, setInfo] = useState<RoomInfoWithBranding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [fatalError, setFatalError] = useState<string | null>(null)
   const [identity, setIdentity] = useState<StoredIdentity | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [organizerPending, setOrganizerPending] = useState(false)
+  // Owner/ADMIN (from the room info) or staff whose organizer seat was granted.
+  const [canOrganize, setCanOrganize] = useState(false)
 
   const sock = useAuctionSocket(roomCode, token)
   const { isFullscreen } = useFullscreen()
@@ -208,6 +225,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
     setFatalError(null)
     setIdentity(null)
     setToken(null)
+    setCanOrganize(false)
     setPhase('loading')
   }
 
@@ -216,9 +234,10 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
 
     async function boot() {
       try {
-        const res = await apiGet<RoomInfo>(`/api/rooms/${roomCode}`)
+        const res = await apiGet<RoomInfoWithBranding>(`/api/rooms/${roomCode}`)
         if (cancelled) return
         setInfo(res)
+        setCanOrganize(res.myRole === 'organizer')
 
         const stored = loadRoomIdentity(roomCode)
         // Only the account the seat was issued to may reuse it (shared phones at a venue).
@@ -230,7 +249,11 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
           setPhase('live')
           return
         }
-        if (res.myRole === 'organizer') {
+        // Owners/ADMINs are flagged by the room info; tournament staff
+        // (co-organizers, auctioneers) are organizer accounts the room info
+        // can't vouch for — try the seat and fall back to the join card on 403.
+        const sessionRole = useAppStore.getState().user?.role
+        if (res.myRole === 'organizer' || sessionRole === 'ORGANIZER') {
           try {
             const jr = await apiPost<JoinResult>(`/api/rooms/${roomCode}/join`, { role: 'organizer' })
             if (cancelled) return
@@ -242,12 +265,14 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
               userId: useAppStore.getState().user?.id ?? null,
             }
             saveRoomIdentity(roomCode, ident)
+            setCanOrganize(true)
             setIdentity(ident)
             setToken(ident.socketToken)
             setPhase('live')
             return
           } catch {
-            // organizer claim failed (expired session?) — fall through to the join card
+            // organizer claim failed (expired session, or not this tournament's
+            // staff) — fall through to the join card
           }
         }
         setPhase('join')
@@ -335,6 +360,9 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
       }
     }, 0)
     return () => clearTimeout(t0)
+    // leaveRoom / refreshOrganizerSeat are recreated every render; listing them would
+    // re-arm this one-shot recovery on each render. The guard above keeps it once per pass.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sock.joinError, token, recoveredToken, identity?.role])
 
   // ---------- not found ----------
@@ -381,7 +409,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         <JoinCard
           info={info}
           onJoined={handleJoined}
-          onOrganizerSeat={info.myRole === 'organizer' ? () => void refreshOrganizerSeat() : undefined}
+          onOrganizerSeat={canOrganize || identity?.role === 'ORGANIZER' ? () => void refreshOrganizerSeat() : undefined}
           organizerSeatPending={organizerPending}
         />
       </div>
@@ -394,6 +422,10 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
   const role = identity?.role ?? 'VIEWER'
   const myTeam: RoomTeam | undefined =
     state && identity?.teamId ? state.teams.find((team) => team.id === identity.teamId) : undefined
+  const branding = info.branding ?? null
+  // Viewers and managers see the sponsors in one slim line under the header —
+  // clear of the stage and the bid controls. The organizer cockpit stays bare.
+  const showSponsors = role !== 'ORGANIZER' && !!state && !!branding && branding.sponsors.length > 0
 
   return (
     <div
@@ -406,6 +438,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
     >
       <RoomHeader
         info={info}
+        branding={branding}
         liveStatus={sock.state?.status ?? null}
         role={role}
         identityName={identity?.name}
@@ -414,8 +447,10 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         onLeave={role === 'ORGANIZER' ? undefined : leaveRoom}
       />
 
+      {showSponsors ? <SponsorStrip sponsors={branding.sponsors} variant="room" brandColor={branding.brandColor} className="mt-3" /> : null}
+
       {sock.joinError ? (
-        <Card className="mt-4 border-rose-200">
+        <Card className="mt-4 border-rose-200 dark:border-rose-900/60">
           <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
             <WifiOff className="h-8 w-8 text-rose-500" aria-hidden />
             <p className="font-bold">{t.couldNotJoin}</p>
@@ -450,12 +485,20 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
             <p className="text-sm font-medium">{t.connectingFloor}</p>
           )}
         </div>
-      ) : role === 'ORGANIZER' ? (
-        <OrganizerLayout state={state} sock={sock} />
-      ) : role === 'MANAGER' ? (
-        <ManagerLayout state={state} sock={sock} myTeam={myTeam} />
       ) : (
-        <ViewerLayout state={state} sock={sock} />
+        <>
+          {!sock.connected || !sock.joined ? <OfflineBanner connected={sock.connected} /> : null}
+          {/* A crash inside the live layouts keeps the header and offers "Reload room". */}
+          <ErrorBoundary variant="room" key={`${roomCode}:${role}`}>
+            {role === 'ORGANIZER' ? (
+              <OrganizerLayout state={state} sock={sock} />
+            ) : role === 'MANAGER' ? (
+              <ManagerLayout state={state} sock={sock} myTeam={myTeam} />
+            ) : (
+              <ViewerLayout state={state} sock={sock} />
+            )}
+          </ErrorBoundary>
+        </>
       )}
     </div>
   )
@@ -468,6 +511,8 @@ type LiveState = RoomState
 
 function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
   const canSelect = state.status === 'LIVE' && !state.currentPlayer
+  // Pool actions (put on block, re-auction) explain a refused or unconfirmed send too.
+  const poolAction = useOrganizerAction(sock.organizerAction)
   return (
     <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="lg:col-start-1 lg:row-start-1">
@@ -480,13 +525,18 @@ function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
 
       {/* the cockpit: controls first, everything else one tab away */}
       <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-        <OrganizerControls state={state} onAction={sock.organizerAction} clockOffset={sock.clockOffset} />
+        <OrganizerControls
+          state={state}
+          onAction={sock.organizerAction}
+          clockOffset={sock.clockOffset}
+          online={sock.connected && sock.joined}
+        />
         <RoomSideTabs state={state} notifications={sock.notifications} tabs={['teams', 'people', 'activity']} />
       </div>
 
       <div className="space-y-3 lg:col-start-1 lg:row-start-2">
         <PoolKpiStrip state={state} />
-        <PlayerPoolPanel state={state} canSelect={canSelect} onAction={sock.organizerAction} />
+        <PlayerPoolPanel state={state} canSelect={canSelect} onAction={poolAction} />
       </div>
     </div>
   )
@@ -501,6 +551,10 @@ function ManagerLayout({
   sock: Sock
   myTeam: RoomTeam | undefined
 }) {
+  // One bid in flight for both the console and the phone bid bar.
+  const bids = useBidSubmitter(sock.placeBid)
+  const online = sock.connected && sock.joined
+  const bidProps = { state, myTeam, online, pendingAmount: bids.pendingAmount, onBid: bids.submit }
   return (
     <>
       <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -513,7 +567,7 @@ function ManagerLayout({
         </div>
 
         <div className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-          <BidPanel state={state} myTeam={myTeam} onBid={sock.placeBid} />
+          <BidPanel {...bidProps} />
           <RoomSideTabs state={state} notifications={sock.notifications} tabs={['activity', 'teams', 'people']} />
         </div>
 
@@ -522,7 +576,7 @@ function ManagerLayout({
         </div>
       </div>
 
-      <MobileBidBar state={state} myTeam={myTeam} onBid={sock.placeBid} />
+      <MobileBidBar {...bidProps} />
     </>
   )
 }
@@ -607,10 +661,10 @@ function RoomSideTabs({
 function PoolKpiStrip({ state }: { state: LiveState }) {
   const t = useStrings(STRINGS)
   const items = [
-    { label: t.kpiAvailable, value: state.pool.available, tone: 'text-emerald-700' },
-    { label: t.kpiSold, value: state.pool.sold, tone: 'text-teal-700' },
-    { label: t.kpiUnsold, value: state.pool.unsold, tone: 'text-rose-700' },
-    { label: t.kpiSkipped, value: state.pool.skipped, tone: 'text-slate-600' },
+    { label: t.kpiAvailable, value: state.pool.available, tone: 'text-emerald-700 dark:text-emerald-400' },
+    { label: t.kpiSold, value: state.pool.sold, tone: 'text-teal-700 dark:text-teal-300' },
+    { label: t.kpiUnsold, value: state.pool.unsold, tone: 'text-rose-700 dark:text-rose-400' },
+    { label: t.kpiSkipped, value: state.pool.skipped, tone: 'text-slate-600 dark:text-slate-300' },
     { label: t.kpiTotal, value: state.pool.total, tone: 'text-foreground' },
   ]
   return (
@@ -627,6 +681,7 @@ function PoolKpiStrip({ state }: { state: LiveState }) {
 
 function RoomHeader({
   info,
+  branding,
   liveStatus,
   role,
   identityName,
@@ -635,6 +690,8 @@ function RoomHeader({
   onLeave,
 }: {
   info: RoomInfo
+  /** Tournament logo always; brand colour only on PRO (null otherwise). */
+  branding: PublicBranding | null
   /** live status from the socket snapshot when available (falls back to REST info) */
   liveStatus: AuctionStatus | null
   role: 'ORGANIZER' | 'MANAGER' | 'VIEWER'
@@ -647,8 +704,16 @@ function RoomHeader({
   const [confirmLeave, setConfirmLeave] = useState(false)
   const fullscreen = useFullscreen()
   const status = liveStatus ?? info.status
+  const accent = branding?.brandColor ? brandPalette(branding.brandColor).bg : null
   return (
-    <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-4">
+    <div
+      className={cn(
+        'relative flex flex-col gap-3 overflow-hidden rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-4',
+        accent && 'pt-4',
+      )}
+    >
+      {/* PRO brand accent: a thin bar across the top of the header. */}
+      {accent ? <span aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: accent }} /> : null}
       <div className="flex min-w-0 items-center gap-3">
         <Button
           variant="ghost"
@@ -662,6 +727,13 @@ function RoomHeader({
         >
           <ArrowLeft className="h-4.5 w-4.5" />
         </Button>
+        {branding?.logoUrl ? (
+          <img
+            src={branding.logoUrl}
+            alt=""
+            className="hidden h-11 w-11 shrink-0 rounded-lg border bg-white object-contain p-0.5 sm:block"
+          />
+        ) : null}
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className="font-mono text-xs font-bold tracking-[0.18em]">
@@ -739,6 +811,28 @@ function RoomHeader({
   )
 }
 
+/** Shown over a live room that lost its connection: the snapshot below is stale and actions are refused. */
+function OfflineBanner({ connected }: { connected: boolean }) {
+  const t = useStrings(STRINGS)
+  return (
+    <div
+      className="mt-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+      role="status"
+      aria-live="polite"
+    >
+      {connected ? (
+        <Loader2 className="mt-0.5 h-4.5 w-4.5 shrink-0 animate-spin" aria-hidden />
+      ) : (
+        <WifiOff className="mt-0.5 h-4.5 w-4.5 shrink-0" aria-hidden />
+      )}
+      <div className="min-w-0">
+        <p className="text-sm font-bold">{connected ? t.rejoiningTitle : t.offlineTitle}</p>
+        <p className="text-xs">{t.offlineBody}</p>
+      </div>
+    </div>
+  )
+}
+
 function ConnectionChip({ connected, joined }: { connected: boolean; joined: boolean }) {
   const t = useStrings(STRINGS)
   const ok = connected && joined
@@ -746,7 +840,7 @@ function ConnectionChip({ connected, joined }: { connected: boolean; joined: boo
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold',
-        ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'
+        ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300'
       )}
       role="status"
     >

@@ -74,15 +74,18 @@ interface Client {
   notes: string[]
   deltas: number
   fulls: number
+  /** server clock − local clock, from the last room_state (≈0 on one machine). */
+  skew: number
 }
 const clients: Client[] = []
 function connect(label: string): Promise<Client> {
   return new Promise((resolve, reject) => {
     const socket = io(AUCTION, { path: '/', transports: ['websocket'], forceNew: true, reconnection: false, timeout: 5000 })
-    const c: Client = { label, socket, state: null, errors: [], notes: [], deltas: 0, fulls: 0 }
+    const c: Client = { label, socket, state: null, errors: [], notes: [], deltas: 0, fulls: 0, skew: 0 }
     socket.on('room_state', (next: RoomStateWire) => {
       if (next.players && next.participants) c.fulls++
       else c.deltas++
+      if (typeof next.serverTime === 'number') c.skew = next.serverTime - Date.now()
       const merged = mergeRoomState(c.state, next)
       if (merged.needsResync) c.errors.push('RESYNC NEEDED')
       c.state = merged.state
@@ -105,18 +108,58 @@ function join(c: Client, roomCode: string, token: string): Promise<{ ok: boolean
     }),
   )
 }
-const bid = (c: Client, amount: number) => c.socket.emit('place_bid', { amount })
-const act = (c: Client, action: string, payload?: Record<string, unknown>) => c.socket.emit('organizer_action', { action, payload })
+type ActionAck = { ok: true } | { ok: false; error: string }
+/**
+ * Current protocol: every bid / organizer action carries an ack, and a refusal
+ * comes back through it (pushed onto c.errors, like the old 'error' events).
+ * Bids pin the player the client sees; sell / unsold / skip also send the bid
+ * the organizer sees. Returns the ack so a check can await it.
+ */
+function withAck(c: Client, event: string, payload: unknown): Promise<ActionAck> {
+  return new Promise((resolve) =>
+    c.socket.timeout(10_000).emit(event, payload, (err: Error | null, res: ActionAck) => {
+      const ack: ActionAck = err ? { ok: false, error: `ACK TIMEOUT (${event})` } : res
+      if (!ack.ok) c.errors.push(ack.error)
+      resolve(ack)
+    }),
+  )
+}
+const bid = (c: Client, amount: number, playerId: string | undefined = c.state?.currentPlayer?.id) =>
+  withAck(c, 'place_bid', { amount, ...(playerId ? { playerId } : {}) })
+const LOT_ACTIONS = new Set(['force_sell', 'force_unsold', 'skip'])
+const act = (c: Client, action: string, payload?: Record<string, unknown>) =>
+  withAck(c, 'organizer_action', {
+    action,
+    payload:
+      LOT_ACTIONS.has(action) && c.state
+        ? { playerId: c.state.currentPlayer?.id ?? null, bidAmount: c.state.currentBid?.amount ?? null, ...payload }
+        : payload,
+  })
 const lastError = (c: Client, since: number) => c.errors.slice(since).join(' | ')
 
 // ---------------- the test ----------------
-const created = { userIds: [] as string[], tournamentId: null as string | null }
+const created = {
+  userIds: [] as string[],
+  tournamentId: null as string | null,
+  /** Global settings the run changed, restored in cleanup (null value = the key did not exist). */
+  restoreSettings: [] as { key: string; value: string | null }[],
+}
 
 async function main() {
   console.log(`E2E run ${RUN}\n  web     ${WEB}\n  auction ${AUCTION}\n`)
 
+  // ---- the auction service's health check (plain HTTP next to Socket.IO on "/")
+  const health = await fetch(`${AUCTION}/healthz`)
+    .then(async (r) => ({ status: r.status, json: (await r.json().catch(() => null)) as any }))
+    .catch((err) => ({ status: 0, json: String(err) as any }))
+  check(
+    'auction service GET /healthz → 200 {ok:true, uptimeSec, rooms}',
+    health.status === 200 && health.json?.ok === true && typeof health.json?.uptimeSec === 'number' && typeof health.json?.rooms === 'number',
+    health,
+  )
+
   // ---- setup: accounts straight in the DB (registration is rate-limited per IP)
-  const mkUser = async (tag: string, role: 'ORGANIZER' | 'MANAGER') => {
+  const mkUser = async (tag: string, role: 'ORGANIZER' | 'MANAGER' | 'ADMIN') => {
     const u = await db.user.create({
       data: { name: `E2E ${tag}`, email: `${RUN}-${tag}@example.test`, passwordHash: hashPassword(PASSWORD), role },
     })
@@ -289,6 +332,23 @@ async function main() {
   const bidRows = await db.bid.count({ where: { playerId: p1.id } })
   check('accepted bids are saved (2 rows), rejected ones are not', bidRows === 2, bidRows)
 
+  // Late bid: sent just after the final call (GOING TWICE) ran out. Whether the
+  // lot has been closed yet or not (500 ms ticker), it must be refused — and the
+  // sale below must still go to the race winner at base + 1000.
+  const finalCall = await waitFor('GOING TWICE', () => V.state?.stage === 2 && V.state.timerEndsAt != null && V.state, 30000)
+  if (finalCall) {
+    const deadlineLocal = finalCall.timerEndsAt! - V.skew
+    await sleep(Math.max(0, deadlineLocal - Date.now() + 80))
+    const late = await bid(A, base + 3000, p1.id)
+    check(
+      'a bid that arrives after the final call ran out is refused',
+      !late.ok && /too late|player on the block changed|no player/i.test(late.error),
+      late,
+    )
+  } else {
+    check('a bid that arrives after the final call ran out is refused', false, 'never saw GOING TWICE')
+  }
+
   // Timer: going once, going twice, sold.
   const sold = await waitFor('auto SOLD', () => V.state?.lastResult?.type === 'SOLD' && V.state.lastResult.playerName === p1.name && V.state, 30000)
   check('the timer runs GOING ONCE → GOING TWICE → SOLD on its own', !!sold && V.notes.some((n) => /GOING ONCE/.test(n)) && V.notes.some((n) => /GOING TWICE/.test(n)), V.notes.slice(-6))
@@ -305,6 +365,12 @@ async function main() {
   act(O, 'next_player')
   const p2 = await waitFor('next player', () => A.state?.currentPlayer && A.state.currentPlayer.id !== p1.id && A.state.currentPlayer)
   check('next player goes on the block', !!p2, A.state?.currentPlayer)
+  const staleBid = await bid(A, 10000, p1.id)
+  check(
+    'a bid aimed at the previous player is refused (player on the block changed)',
+    !staleBid.ok && /player on the block changed/i.test(staleBid.error),
+    staleBid,
+  )
   const alphaState = A.state!.teams.find((x) => x.id === alpha.id)!
   // Alpha must keep 1 more slot × cheapest base (10k) in reserve → max 50k.
   check("Alpha's max bid holds back purse for its minimum squad", alphaState.maxBid === 50000, alphaState.maxBid)
@@ -328,6 +394,19 @@ async function main() {
   act(O, 'manual_bid', { teamId: beta.id, amount: 10000 })
   const manual = await waitFor('manual bid', () => V.state?.currentBid?.teamId === beta.id && V.state)
   check('organizer places a manual bid for a team', !!manual, { bid: V.state?.currentBid, organizerError: lastError(O, eO) })
+  await waitFor('organizer sees the manual bid', () => O.state?.currentBid?.teamId === beta.id)
+  const staleSell = await act(O, 'force_sell', { playerId: p1.id })
+  check(
+    'force sell for a player no longer on the block is refused',
+    !staleSell.ok && /player on the block changed/i.test(staleSell.error) && O.state?.currentPlayer?.id === p2!.id,
+    staleSell,
+  )
+  const staleBidSell = await act(O, 'force_sell', { bidAmount: 9999 })
+  check(
+    'force sell at a price the organizer no longer sees is refused (a new bid came in)',
+    !staleBidSell.ok && /new bid came in/i.test(staleBidSell.error) && O.state?.currentPlayer?.id === p2!.id,
+    staleBidSell,
+  )
   eO = O.errors.length
   act(O, 'force_sell')
   const forced = await waitFor('force sold', () => V.state?.lastResult?.type === 'SOLD' && V.state.lastResult.playerName === p2!.name)
@@ -571,6 +650,74 @@ async function main() {
     dbCount: counter?.count,
   })
 
+  // ---- Phase 2: plans & manual payments, staff, registration fees, SMS
+  console.log('\nPlans, payments & staff (REST)')
+  const fifthTeam = await http('POST', `/api/tournaments/${tid}/teams`, { teams: [{ name: 'E2E Over', budget: 60000, maxSquad: 3, minSquad: 0 }, { name: 'E2E Over2', budget: 60000, maxSquad: 3, minSquad: 0 }] }, orgC)
+  check('a Free tournament cannot go past its team limit (402, upgrade hint)', fifthTeam.status === 402 && /free plan/i.test(fifthTeam.json?.error ?? ''), fifthTeam.json)
+
+  // The platform's bKash number must be set for Pro payments; restore whatever was there afterwards.
+  const prevBkash = await db.setting.findUnique({ where: { key: 'pay_bkash_number' } })
+  created.restoreSettings.push({ key: 'pay_bkash_number', value: prevBkash?.value ?? null })
+  await db.setting.upsert({ where: { key: 'pay_bkash_number' }, create: { key: 'pay_bkash_number', value: '01700000001' }, update: { value: '01700000001' } })
+  const trx = `E2E${Date.now().toString(36).toUpperCase()}`
+  const pay = await http('POST', `/api/tournaments/${tid}/payments`, { method: 'BKASH', trxId: trx, senderNumber: '01711111111' }, orgC)
+  const payAgain = await http('POST', `/api/tournaments/${tid}/payments`, { method: 'BKASH', trxId: `${trx}X`, senderNumber: '01711111111' }, orgC)
+  check('the organizer submits a bKash Transaction ID; a second one waits for the first', pay.status === 201 && payAgain.status === 409, { pay: pay.json, again: payAgain.status })
+  const admin = await mkUser('admin', 'ADMIN')
+  const adminC = await login(admin.email)
+  const approve = await http('PATCH', `/api/admin/payments/${pay.json?.payment?.id}`, { action: 'approve' }, adminC)
+  const approveTwice = await http('PATCH', `/api/admin/payments/${pay.json?.payment?.id}`, { action: 'approve' }, adminC)
+  const planNow = (await db.tournament.findUnique({ where: { id: tid }, select: { plan: true } }))?.plan
+  check('an admin approves the payment once → the tournament is Pro', approve.status === 200 && approveTwice.status === 409 && planNow === 'PRO', { approve: approve.json, twice: approveTwice.status, planNow })
+
+  // Staff: a co-organizer manages but cannot delete; an auctioneer only views (no phone numbers).
+  const coOrg = await mkUser('co-organizer', 'ORGANIZER')
+  const auctioneer = await mkUser('auctioneer', 'ORGANIZER')
+  const addCo = await http('POST', `/api/tournaments/${tid}/staff`, { email: coOrg.email, role: 'CO_ORGANIZER' }, orgC)
+  const addAu = await http('POST', `/api/tournaments/${tid}/staff`, { email: auctioneer.email, role: 'AUCTIONEER' }, orgC)
+  const addMgr = await http('POST', `/api/tournaments/${tid}/staff`, { email: mA.email, role: 'CO_ORGANIZER' }, orgC)
+  const [coC, auC] = [await login(coOrg.email), await login(auctioneer.email)]
+  const coEdit = await http('PATCH', `/api/tournaments/${tid}`, { description: 'Edited by the co-organizer' }, coC)
+  const coDelete = await http('DELETE', `/api/tournaments/${tid}`, undefined, coC)
+  const auEdit = await http('PATCH', `/api/tournaments/${tid}`, { description: 'Edited by the auctioneer' }, auC)
+  const auView = await http('GET', `/api/tournaments/${tid}`, undefined, auC)
+  check(
+    'staff: co-organizer edits but cannot delete; auctioneer is read-only without phone numbers; managers cannot be staff',
+    addCo.status === 201 &&
+      addAu.status === 201 &&
+      addMgr.status === 400 &&
+      coEdit.status === 200 &&
+      coDelete.status === 403 &&
+      auEdit.status === 403 &&
+      auView.status === 200 &&
+      auView.json?.myAccess === 'AUCTIONEER' &&
+      (auView.json?.players ?? []).every((pl: { phone: string | null }) => pl.phone === null),
+    { addCo: addCo.status, addAu: addAu.status, addMgr: addMgr.status, coEdit: coEdit.status, coDelete: coDelete.status, auEdit: auEdit.status, access: auView.json?.myAccess },
+  )
+  const staffList = await http('GET', '/api/tournaments', undefined, coC)
+  check('the tournament appears in the co-organizer’s list', (staffList.json?.tournaments ?? []).some((x: { id: string; staffRole?: string }) => x.id === tid && x.staffRole === 'CO_ORGANIZER'), staffList.status)
+
+  // Registration fee: paid to the organizer, Transaction ID required, organizer verifies.
+  await http('PATCH', `/api/tournaments/${tid}`, { registrationFee: 200, feeBkashNumber: '01722222222' }, orgC)
+  const unpaid = await http('POST', `/api/register/${regCode}`, { name: 'E2E Fee Player', phone: '01766666666', role: 'Batsman' })
+  const regTrx = `R${Date.now().toString(36).toUpperCase()}`
+  const paid = await http('POST', `/api/register/${regCode}`, { name: 'E2E Fee Player', phone: '01766666666', role: 'Batsman', payMethod: 'BKASH', payTrxId: regTrx, paySender: '01766666666', smsConsent: true })
+  const feeReg = await db.playerRegistration.findFirst({ where: { tournamentId: tid, name: 'E2E Fee Player' } })
+  const verify = await http('PATCH', `/api/tournaments/${tid}/registrations`, { ids: [feeReg?.id], action: 'verify_payment' }, orgC)
+  const feeRegAfter = await db.playerRegistration.findUnique({ where: { id: feeReg?.id ?? '' } })
+  check(
+    'a registration fee needs a Transaction ID; the organizer verifies it',
+    unpaid.status === 400 && paid.status === 201 && feeReg?.payStatus === 'CLAIMED' && feeReg?.feeAmount === 200 && verify.status === 200 && feeRegAfter?.payStatus === 'VERIFIED',
+    { unpaid: unpaid.status, paid: paid.status, before: feeReg?.payStatus, verify: verify.status, after: feeRegAfter?.payStatus },
+  )
+  await http('PATCH', `/api/tournaments/${tid}`, { registrationFee: null }, orgC)
+
+  // SMS is Pro-only; the reminder dry run counts recipients without sending.
+  const smsOn = await http('PATCH', `/api/tournaments/${tid}`, { smsEnabled: true }, orgC)
+  const reminder = await http('POST', `/api/tournaments/${tid}/notify`, { kind: 'AUCTION_REMINDER', dryRun: true }, orgC)
+  check('SMS can be switched on for a Pro tournament; the reminder dry run counts recipients', smsOn.status === 200 && reminder.status === 200 && typeof reminder.json?.recipients === 'number', { smsOn: smsOn.status, reminder: reminder.json })
+  await http('PATCH', `/api/tournaments/${tid}`, { smsEnabled: false }, orgC)
+
   // ---- Security: one team per manager, live seats re-checked
   console.log('\nSecurity (REST + live sockets)')
   // Two unassigned teams; one manager fires both claims at the same instant.
@@ -611,6 +758,94 @@ async function main() {
     tournament: tRow?.status,
   })
 
+  // ---- Phase 3: league after the auction, sponsors & branding (Pro)
+  console.log('\nLeague, sponsors & branding (REST)')
+  const teamCount = await db.team.count({ where: { tournamentId: tid } })
+  const gen = await http('POST', `/api/tournaments/${tid}/league/generate`, { format: 'ROUND_ROBIN' }, orgC)
+  const expectedMatches = (teamCount * (teamCount - 1)) / 2
+  check('round-robin fixtures: every team meets every other team once', gen.status === 200 && gen.json?.created === expectedMatches, { status: gen.status, created: gen.json?.created, expectedMatches })
+
+  // A result on a match whose home team bought players, plus one player's stats.
+  const soldPlayer = await db.player.findFirst({ where: { tournamentId: tid, status: 'SOLD' } })
+  const matchRow = await db.match.findFirst({ where: { tournamentId: tid, OR: [{ homeTeamId: soldPlayer?.soldToTeamId }, { awayTeamId: soldPlayer?.soldToTeamId }] } })
+  const homeWins = matchRow?.homeTeamId
+  // 20-over matches: a side bowled out counts the full 20 overs for net run rate.
+  await http('PATCH', `/api/tournaments/${tid}`, { oversPerInnings: 20 }, orgC)
+  const result = await http(
+    'PATCH',
+    `/api/matches/${matchRow?.id}`,
+    { status: 'COMPLETED', resultType: 'NORMAL', homeScore: 150, homeWickets: 5, homeOvers: '20', awayScore: 140, awayWickets: 10, awayOvers: '18.3' },
+    orgC,
+  )
+  const stats = await http('PUT', `/api/matches/${matchRow?.id}/stats`, { stats: [{ playerId: soldPlayer?.id, runs: 64, ballsFaced: 40, wickets: 2 }] }, orgC)
+  const league = await http('GET', `/api/tournaments/${tid}/league`, undefined, orgC)
+  type Row = { teamId: string; played: number; points: number; nrr: number | null }
+  const rows: Row[] = (league.json?.standings ?? []).flatMap((s: { rows: Row[] }) => s.rows)
+  const winnerRow = rows.find((r) => r.teamId === homeWins)
+  const topScorer = JSON.stringify(league.json?.leaderboards ?? []).includes(soldPlayer?.name ?? '§')
+  check(
+    'a cricket result updates the points table (2 points, net run rate) and stats feed the leaderboards',
+    result.status === 200 && result.json?.match?.winnerTeamId === homeWins && stats.status === 200 && winnerRow?.points === 2 && winnerRow?.played === 1 && (winnerRow?.nrr ?? 0) > 0 && topScorer,
+    { result: result.status, winner: result.json?.match?.winnerTeamId, stats: stats.status, row: winnerRow, topScorer },
+  )
+  const regen = await http('POST', `/api/tournaments/${tid}/league/generate`, { format: 'ROUND_ROBIN' }, orgC)
+  const publicLeague = await http('GET', `/api/league/${tid}`)
+  check(
+    'fixtures with results are not replaced by accident; the public league page has no phone numbers',
+    regen.status === 409 && publicLeague.status === 200 && !/01[3-9]\d{8}/.test(JSON.stringify(publicLeague.json ?? {})),
+    { regen: regen.status, publicLeague: publicLeague.status },
+  )
+
+  const sponsor = await http('POST', `/api/tournaments/${tid}/sponsors`, { name: 'E2E Sponsor', url: 'example.com', tier: 'TITLE' }, orgC)
+  const brand = await http('PATCH', `/api/tournaments/${tid}`, { brandColor: '#1d4ed8', brandHidePlatform: true }, orgC)
+  const roomBranding = (await http('GET', `/api/rooms/${code}`)).json?.branding
+  check(
+    'a Pro tournament adds sponsors and custom branding; the public room info carries them',
+    sponsor.status === 201 &&
+      brand.status === 200 &&
+      roomBranding?.hidePlatform === true &&
+      roomBranding?.brandColor === '#1D4ED8' &&
+      roomBranding?.sponsors?.[0]?.name === 'E2E Sponsor' &&
+      /^https:\/\/example\.com\/?$/.test(roomBranding?.sponsors?.[0]?.url ?? ''),
+    { sponsor: sponsor.status, brand: brand.status, roomBranding },
+  )
+
+  // Public results once the auction has ended: no login, never phone numbers; share card renders.
+  const publicResults = await http('GET', `/api/tournaments/${tid}/results`)
+  const resultsText = JSON.stringify(publicResults.json ?? {})
+  const card = await fetch(`${WEB}/api/og/results/${tid}`)
+  await card.arrayBuffer()
+  check(
+    'ended auction: results are public without a login, with no phone numbers, and the share card renders',
+    publicResults.status === 200 && !/01[3-9]\d{8}/.test(resultsText) && card.status === 200 && (card.headers.get('content-type') ?? '').startsWith('image/'),
+    { results: publicResults.status, card: card.status, type: card.headers.get('content-type') },
+  )
+  await http('PATCH', `/api/tournaments/${tid}`, { resultsPublic: false }, orgC)
+  const privateResults = await http('GET', `/api/tournaments/${tid}/results`)
+  const privateCard = await fetch(`${WEB}/api/og/results/${tid}`)
+  await privateCard.arrayBuffer()
+  check('private results: guests are refused and the share card is gone', privateResults.status === 401 && privateCard.status === 404, {
+    results: privateResults.status,
+    card: privateCard.status,
+  })
+
+  // Deleting a tournament whose auction has bids archives it instead: the money trail stays.
+  const del = await http('DELETE', `/api/tournaments/${tid}`, undefined, orgC)
+  const archivedRow = await db.tournament.findUnique({ where: { id: tid }, select: { archivedAt: true } })
+  const bidsKept = await db.bid.count({ where: { auction: { tournamentId: tid } } })
+  const listed = await http('GET', '/api/tournaments', undefined, orgC)
+  const roomInfo = await http('GET', `/api/rooms/${code}`)
+  check(
+    'deleting a tournament with bids archives it — bids kept, gone from lists and the room link',
+    del.status === 200 &&
+      del.json?.archived === true &&
+      !!archivedRow?.archivedAt &&
+      bidsKept > 0 &&
+      !(listed.json?.tournaments ?? []).some((t: { id: string }) => t.id === tid) &&
+      roomInfo.status === 404,
+    { del: del.json, archivedAt: archivedRow?.archivedAt, bidsKept, room: roomInfo.status },
+  )
+
   // A blocked organizer's already-open connection loses control of the room.
   await sleep(5500)
   await db.user.update({ where: { id: org.id }, data: { status: 'BLOCKED' } })
@@ -630,6 +865,18 @@ async function cleanup() {
   // Retried: a slow or dropped DB connection must not leave E2E rows behind.
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      for (const s of created.restoreSettings.splice(0)) {
+        if (s.value === null) await db.setting.deleteMany({ where: { key: s.key } })
+        else await db.setting.upsert({ where: { key: s.key }, create: { key: s.key, value: s.value }, update: { value: s.value } })
+      }
+      if (created.tournamentId || created.userIds.length) {
+        // Rows without a cascading FK (financial records, outbox, analytics).
+        const byTournament = created.tournamentId ? [{ tournamentId: created.tournamentId }] : []
+        const byUser = created.userIds.length ? [{ userId: { in: created.userIds } }] : []
+        await db.payment.deleteMany({ where: { OR: [...byTournament, ...byUser] } })
+        if (created.tournamentId) await db.notification.deleteMany({ where: { tournamentId: created.tournamentId } })
+        await db.analyticsEvent.deleteMany({ where: { OR: [...byTournament, ...byUser] } })
+      }
       if (created.tournamentId) {
         const a = await db.auction.findUnique({ where: { tournamentId: created.tournamentId } })
         if (a) await db.roomParticipant.deleteMany({ where: { auctionId: a.id } })
