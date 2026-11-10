@@ -248,6 +248,12 @@ const EXACT: Record<string, string> = {
     'রি-অকশনে আপনি এই খেলোয়াড়কে হারিয়েছেন — আয়োজক আগের মালিকদের আবার বিড করা বন্ধ রেখেছেন।',
   'Your room pass has expired — refresh your seat': 'আপনার রুম-পাসের মেয়াদ শেষ — আসনটি রিফ্রেশ করুন।',
   'Invalid or expired token': 'পাসটি সঠিক নয় বা মেয়াদ শেষ।',
+  'This auction room has been closed.': 'এই নিলাম রুমটি বন্ধ করে দেওয়া হয়েছে।',
+  'Only team managers can bid': 'শুধু টিম ম্যানেজাররা বিড করতে পারেন।',
+  'Too many bids — slow down': 'খুব দ্রুত বিড হচ্ছে — একটু ধীরে করুন।',
+  'Bid failed — try again': 'বিড পাঠানো যায়নি — আবার চেষ্টা করুন।',
+  'Only the organizer can perform this action': 'শুধু আয়োজক এই কাজটি করতে পারেন।',
+  'Action failed — try again': 'কাজটি করা যায়নি — আবার চেষ্টা করুন।',
 }
 
 /** Messages with numbers or names in them: [pattern, Bangla builder]. */
@@ -284,6 +290,7 @@ const PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^(.+) is on the block — sell, mark unsold or skip them first\.$/, (m) => `${m[1]} এখন নিলামে — আগে বিক্রি, অবিক্রিত বা বাদ দিন।`],
   [/^Only a sold player can be re-auctioned — (.+) is (\S+)\./, (m) => `শুধু বিক্রি হওয়া খেলোয়াড়কে রি-অকশন করা যায় — ${m[1]} এখন ${m[2]}। নিলামে তুলতে পুল থেকে বেছে নিন।`],
   [/^Bidding duration must be (\d+)–(\d+) seconds$/, (m) => `বিডের সময় ${m[1]}–${m[2]} সেকেন্ডের মধ্যে হতে হবে।`],
+  [/^Slow down — try again in (\d+)s$/, (m) => `একটু ধীরে — ${m[1]} সেকেন্ড পরে আবার চেষ্টা করুন।`],
   [/^Too many join attempts — try again in (\d+)s$/, (m) => `অনেকবার যোগ দেওয়ার চেষ্টা হয়েছে — ${m[1]} সেকেন্ড পরে আবার চেষ্টা করুন।`],
   [/^Lots of people are joining right now — try again in (\d+)s$/, (m) => `এখন অনেকে একসাথে যোগ দিচ্ছেন — ${m[1]} সেকেন্ড পরে আবার চেষ্টা করুন।`],
   [/^(.+)'s squad is already full$/, (m) => `${m[1]}-এর স্কোয়াড পূর্ণ।`],

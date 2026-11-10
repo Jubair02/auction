@@ -140,9 +140,13 @@ function userFacingMessages(): Map<string, string> {
   const engine = read(join(ROOT, service, 'engine.ts'))
   add(literalsAfter(engine, /\bthis\.fail\(/g), 'engine.ts')
   add(literalsAfter(engine, /\breturn (?=['"`][A-Z])/g), 'engine.ts')
+  add(literalsAfter(engine, /\bexport const [A-Z_]+ =/g), 'engine.ts')
   const index = read(join(ROOT, service, 'index.ts'))
   add(literalsAfter(index, /\berror:/g), 'index.ts')
   add(literalsAfter(index, /\bconst (?:RESTARTING|SEAT_REVOKED|MANAGER_SEAT_GONE) =/g), 'index.ts')
+  // reply(socket, ack, '…') and reply(socket, ack, ack ? '…' : `…`) refusals.
+  add(literalsAfter(index, /\breply\(socket, ack, (?:ack \? )?/g), 'index.ts')
+  add(literalsAfter(index, /\back \? '[^']*' : /g), 'index.ts')
   // Bid legality (rules.ts): every message literal in validateBid.
   const rules = read(join(ROOT, service, 'rules.ts'))
   const validate = rules.slice(rules.indexOf('export function validateBid'))

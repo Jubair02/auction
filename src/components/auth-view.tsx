@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { apiPost, ApiError } from '@/lib/api'
-import { consumeReturnTo, navigate, peekReturnTo } from '@/lib/router'
+import { cameToBid, consumeReturnTo, navigate, peekReturnTo } from '@/lib/router'
 import { postLoginPath } from '@/lib/access'
 import { AppLink } from '@/components/shared/app-link'
 import { useAppStore } from '@/lib/store'
@@ -173,9 +173,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
   const [phone, setPhone] = useState('')
   const [confirm, setConfirm] = useState('')
   // Arriving from a room's "log in to bid" or a team invite → default to a manager account.
-  const [role, setRole] = useState<UserRole>(() =>
-    /^\/(room|invite)\//.test(peekReturnTo() ?? '') ? 'MANAGER' : 'ORGANIZER',
-  )
+  const [role, setRole] = useState<UserRole>(() => (cameToBid(peekReturnTo()) ? 'MANAGER' : 'ORGANIZER'))
 
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -357,7 +355,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
                 {!isRegister ? (
                   <AppLink
                     href="/forgot-password"
-                    className="text-xs font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                    className="-my-1 inline-block py-1 text-xs font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                   >
                     {t.forgotPassword}
                   </AppLink>
@@ -451,7 +449,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
             {isRegister ? t.haveAccount : t.newHere}{' '}
             <AppLink
               href={isRegister ? '/login' : '/register'}
-              className="font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              className="-my-1 py-1 font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
             >
               {isRegister ? t.logIn : t.createFree}
             </AppLink>

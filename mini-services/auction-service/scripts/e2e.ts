@@ -882,6 +882,20 @@ async function main() {
     { del: del.json, archivedAt: archivedRow?.archivedAt, bidsKept, room: roomInfo.status },
   )
 
+  // The archived room is gone from the live service too: open seats are ended
+  // at their next re-check, and passes issued before the delete can't rejoin.
+  await sleep(5500)
+  const eArchive = C.errors.length
+  const afterArchive = await bid(C, 999_000)
+  await waitFor('manager seat ended after the archive', () => C.errors.slice(eArchive).some((m) => m.startsWith('SEAT_REVOKED')))
+  const X2 = await connect('old-organizer-pass')
+  const rejoin = await join(X2, code, joinOrg.json.socketToken)
+  check(
+    'an archived tournament\'s room is closed to old seat passes: open seats end, no rejoin, no bids',
+    !afterArchive.ok && C.errors.slice(eArchive).some((m) => /has been closed/.test(m)) && !rejoin.ok && /Room not found/.test(rejoin.error ?? ''),
+    { bid: afterArchive, errors: C.errors.slice(eArchive), rejoin, connected: C.socket.connected },
+  )
+
   // A blocked organizer's already-open connection loses control of the room.
   await sleep(5500)
   await db.user.update({ where: { id: org.id }, data: { status: 'BLOCKED' } })

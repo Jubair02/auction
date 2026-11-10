@@ -108,7 +108,14 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
   const [connected, setConnected] = useState(false)
   const [joined, setJoined] = useState(false)
-  const [joinError, setJoinError] = useState<string | null>(null)
+  // A join error belongs to the seat pass it happened with. When the room hands
+  // in a new pass (re-seat, join card), the old error must not linger: the room
+  // page would act on it again and bounce the user straight back out.
+  const [joinFailure, setJoinFailure] = useState<{ token: string | null; message: string } | null>(null)
+  const joinError = joinFailure && joinFailure.token === token ? joinFailure.message : null
+  const setJoinError = useCallback((message: string | null) => {
+    setJoinFailure(message === null ? null : { token: tokenRef.current, message })
+  }, [])
   const [connectFailures, setConnectFailures] = useState(0)
   const [state, setState] = useState<RoomState | null>(null)
   const [clockOffset, setRawClockOffset] = useState(0)
@@ -159,7 +166,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
         if (delayMs != null) retryTimerRef.current = setTimeout(() => doJoinRef.current(), delayMs)
       }
     })
-  }, [roomCode, setClockOffset])
+  }, [roomCode, setClockOffset, setJoinError])
   useEffect(() => {
     doJoinRef.current = doJoin
   }, [doJoin])
@@ -249,8 +256,9 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       setJoined(false)
       setState(null)
       setNotifications([])
+      setConnectFailures(0)
     }
-  }, [roomCode, token, doJoin, setClockOffset])
+  }, [roomCode, token, doJoin, setClockOffset, setJoinError])
 
   /** Emits with an acknowledgement and a timeout; refuses (never buffers) while offline. */
   const emitWithAck = useCallback((event: string, data: unknown): Promise<ActionResult> => {

@@ -313,6 +313,19 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
     }
   }
 
+  // On phones the tab bar scrolls sideways; keep the open tab in view when it
+  // changes from elsewhere (checklist links, ?tab= in the URL). Only the bar
+  // scrolls — never the page.
+  useEffect(() => {
+    const active = document.querySelector<HTMLElement>('#tournament-tabs [role="tab"][data-state="active"]')
+    const list = active?.parentElement
+    if (!active || !list || list.scrollWidth <= list.clientWidth) return
+    const left = active.offsetLeft - list.offsetLeft
+    if (left < list.scrollLeft || left + active.offsetWidth > list.scrollLeft + list.clientWidth) {
+      list.scrollTo({ left: Math.max(0, left - 16), behavior: 'smooth' })
+    }
+  }, [tab, loading])
+
   if (loading) return <TournamentDetailSkeleton tournamentId={tournamentId} />
 
   // Deleted or not yours can't be fixed by retrying; a network or server error can.
@@ -404,7 +417,8 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
           {!can.manage ? <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{s.auctioneerNote}</p> : null}
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-2">
+        {/* Phones: the next step gets its own full-width row, Edit and ⋯ share the next. */}
+        <div className="flex shrink-0 flex-wrap gap-2 max-sm:[&>*:first-child]:w-full max-sm:[&>*:not(:first-child):not(:last-child)]:flex-1">
           {step ? (
             step.href ? (
               <Button className="min-h-10 font-semibold" asChild>
@@ -478,8 +492,8 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
       </div>
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => openTab(v as PageTab)} className="mt-6">
-        <TabsList className="h-auto w-full flex-wrap justify-start gap-0 sm:w-auto">
+      <Tabs id="tournament-tabs" value={activeTab} onValueChange={(v) => openTab(v as PageTab)} className="mt-6">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-visible gap-0">
           <TabsTrigger value="overview" className="min-h-11">{s.tabOverview}</TabsTrigger>
           <TabsTrigger value="players" className="min-h-11">
             {s.tabPlayers} <span className="ml-1 text-xs text-muted-foreground">({players.length})</span>

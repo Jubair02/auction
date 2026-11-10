@@ -442,7 +442,14 @@ function SetupChecklist({ data, setTab }: { data: TournamentDetail; setTab: (tab
           {items.map((item) => {
             const current = item.key === currentKey
             return (
-              <li key={item.key} className={cn('flex items-center gap-3 py-3', current && '-mx-3 rounded-lg bg-primary/5 px-3')}>
+              <li
+                key={item.key}
+                className={cn(
+                  // Narrow phones: the action drops under the text instead of squeezing it.
+                  'grid grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 py-3 min-[420px]:flex',
+                  current && '-mx-3 rounded-lg bg-primary/5 px-3',
+                )}
+              >
                 <span
                   className={cn(
                     'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-xs font-bold',
@@ -457,10 +464,10 @@ function SetupChecklist({ data, setTab }: { data: TournamentDetail; setTab: (tab
                   {item.done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : items.indexOf(item) + 1}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className={cn('text-sm font-semibold', item.done && !current && 'text-muted-foreground')}>
+                  <p className={cn('flex flex-wrap items-baseline gap-x-1.5 text-sm font-semibold', item.done && !current && 'text-muted-foreground')}>
                     {item.title}
                     {item.optional ? (
-                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">{s.recommended}</span>
+                      <span className="text-xs font-normal text-muted-foreground">{s.recommended}</span>
                     ) : null}
                     <span className="sr-only">{item.done ? s.doneSr : s.todoSr}</span>
                   </p>
@@ -470,7 +477,7 @@ function SetupChecklist({ data, setTab }: { data: TournamentDetail; setTab: (tab
                   <Button
                     size="sm"
                     variant={current ? 'default' : 'ghost'}
-                    className="h-8 shrink-0"
+                    className="col-start-2 h-8 shrink-0 justify-self-start"
                     onClick={() => goTo(item.action!, setTab)}
                   >
                     {item.action.label}

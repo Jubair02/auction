@@ -372,17 +372,21 @@ export default function AuctionHistory({ tournamentId }: { tournamentId: string 
                         className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                         aria-expanded={open}
                       >
-                        <div className="min-w-0">
+                        <div className="min-w-[7rem] flex-1">
                           <p className="truncate font-bold">{g.playerName}</p>
                           <p className="text-xs text-muted-foreground">
                             {s.bidsTopBid(g.ladder.length)}{' '}
                             <span className="font-semibold tabular-nums">{formatBDT(g.topBid)}</span>
                           </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        {/* Narrow phones: the winner badge truncates instead of squeezing the details into a column. */}
+                        <div className="flex min-w-0 items-center gap-2">
                           {winner ? (
-                            <Badge className="bg-teal-100 text-teal-900 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/50">
-                              <Trophy className="mr-1 h-3 w-3" aria-hidden /> {winner.teamName} · {formatBDT(winner.price)}
+                            <Badge className="min-w-0 max-w-full shrink bg-teal-100 text-teal-900 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/50">
+                              <Trophy className="mr-1 h-3 w-3" aria-hidden />
+                              <span className="truncate">
+                                {winner.teamName} · {formatBDT(winner.price)}
+                              </span>
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-muted-foreground">

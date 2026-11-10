@@ -57,14 +57,15 @@ export function StatCard({
   }[tone]
   return (
     <Card className={cn('py-4', className)}>
-      <CardContent className="flex items-center justify-between gap-3 px-4">
+      <CardContent className="@container flex items-center justify-between gap-3 px-4">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className={cn('mt-1 truncate text-2xl font-bold tabular-nums', toneClass)}>{value}</p>
+          <p className="line-clamp-2 text-xs font-medium uppercase tracking-wide break-words text-muted-foreground">{label}</p>
+          {/* Scales with the tile, not the screen: long ৳ amounts fit two-up phone grids. */}
+          <p className={cn('mt-1 truncate text-lg font-bold tabular-nums @min-[8rem]:text-xl @min-[9rem]:text-2xl', toneClass)}>{value}</p>
           {hint ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p> : null}
         </div>
         {Icon ? (
-          <div className="rounded-lg bg-muted p-2.5">
+          <div className="hidden shrink-0 rounded-lg bg-muted p-2.5 @min-[11rem]:block">
             <Icon className="h-5 w-5 text-muted-foreground" aria-hidden />
           </div>
         ) : null}

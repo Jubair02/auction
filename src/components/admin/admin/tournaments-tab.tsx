@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Archive, Crown, ExternalLink, Loader2, Search, Trash2 } from 'lucide-react'
+import { Archive, Crown, ExternalLink, Loader2, Search, Settings2, Trash2 } from 'lucide-react'
+import { AppLink } from '@/components/shared/app-link'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -50,6 +51,7 @@ const STRINGS = {
     colTeams: 'Teams',
     colRoom: 'Room',
     results: 'Results',
+    manage: 'Manage',
     archived: 'Archived',
     archivedHint: 'Deleted by its organizer — kept because its auction has bids or audit records.',
     deletePermanently: 'Delete permanently',
@@ -90,6 +92,7 @@ const STRINGS = {
     colTeams: 'দল',
     colRoom: 'রুম',
     results: 'ফলাফল',
+    manage: 'ম্যানেজ করুন',
     archived: 'আর্কাইভ করা',
     archivedHint: 'আয়োজক মুছে দিয়েছেন — নিলামে বিড বা অডিট রেকর্ড থাকায় সংরক্ষিত আছে।',
     deletePermanently: 'স্থায়ীভাবে মুছুন',
@@ -130,6 +133,7 @@ const STRINGS = {
     colTeams: string
     colRoom: string
     results: string
+    manage: string
     archived: string
     archivedHint: string
     deletePermanently: string
@@ -315,6 +319,13 @@ export function TournamentsTab({ tournaments, refetch }: { tournaments: AdminTou
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {tour.archivedAt ? null : planButton(tour)}
+                        {tour.archivedAt ? null : (
+                          <Button asChild variant="ghost" size="sm" className="h-9">
+                            <AppLink href={`/tournaments/${tour.id}`}>
+                              <Settings2 className="mr-1.5 h-3.5 w-3.5" aria-hidden /> {t.manage}
+                            </AppLink>
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" className="h-9" onClick={() => navigate(`/results/${tour.id}`)}>
                           <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden /> {t.results}
                         </Button>
@@ -354,6 +365,13 @@ export function TournamentsTab({ tournaments, refetch }: { tournaments: AdminTou
                     <PlanBadge plan={tour.plan} />
                   </div>
                   <div className="mt-2 flex gap-2">
+                    {tour.archivedAt ? null : (
+                      <Button asChild variant="outline" size="sm" className="h-9 flex-1">
+                        <AppLink href={`/tournaments/${tour.id}`}>
+                          <Settings2 className="mr-1.5 h-3.5 w-3.5" aria-hidden /> {t.manage}
+                        </AppLink>
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" className="h-9 flex-1" onClick={() => navigate(`/results/${tour.id}`)}>
                       <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden /> {t.results}
                     </Button>

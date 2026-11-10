@@ -135,7 +135,7 @@ export default function LeaguePublicView({ tournamentId }: { tournamentId: strin
     return (
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-8">
         <Skeleton className="h-28 rounded-2xl" />
-        <Skeleton className="h-10 w-80" />
+        <Skeleton className="h-10 w-full max-w-80" />
         <div className="grid gap-3 md:grid-cols-2">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-32 rounded-xl" />

@@ -16,7 +16,7 @@ import { createResilientClient } from '../../src/lib/db-resilience'
 import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
 import { reportError } from '../../src/lib/report-error'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
-import { AuctionEngine, SocketGone } from './engine'
+import { AuctionEngine, ROOM_CLOSED, SocketGone } from './engine'
 import { acquireLease, type Lease } from './lease'
 import { startOutboxWorker } from './outbox'
 
@@ -112,8 +112,10 @@ const io = new Server(httpServer, {
   ...(ALLOWED_ORIGINS.length > 0 ? { cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] } } : {}),
   allowRequest: (req, callback) => callback(null, originAllowed(req.headers.origin, req.headers.host)),
   maxHttpBufferSize: 16 * 1024, // every client message is a tiny JSON object
-  pingTimeout: 60000,
-  pingInterval: 25000,
+  // A phone that silently loses Wi-Fi is noticed within ~30 s (was up to 85 s),
+  // so the room's seatless hold and auto-pause start promptly.
+  pingTimeout: 20000,
+  pingInterval: 10000,
 })
 const engine = new AuctionEngine(io, db)
 
@@ -197,11 +199,16 @@ const roomCache = new Map<string, { id: string; tournamentId: string; at: number
 async function findRoom(roomCode: string): Promise<{ id: string; tournamentId: string } | null> {
   const hit = roomCache.get(roomCode)
   if (hit && Date.now() - hit.at < ROOM_CACHE_MS) return hit
-  const auction = await db.auction.findUnique({ where: { roomCode }, select: { id: true, tournamentId: true } })
-  if (!auction) {
+  const found = await db.auction.findUnique({
+    where: { roomCode },
+    select: { id: true, tournamentId: true, tournament: { select: { archivedAt: true } } },
+  })
+  // A deleted (archived) tournament's room is gone, as on the website.
+  if (!found || found.tournament.archivedAt) {
     roomCache.delete(roomCode)
     return null
   }
+  const auction = { id: found.id, tournamentId: found.tournamentId }
   if (roomCache.size > 1000) roomCache.clear()
   roomCache.set(roomCode, { ...auction, at: Date.now() })
   return auction
@@ -241,7 +248,7 @@ const MANAGER_SEAT_GONE = "This seat is no longer valid — log in as the team's
 async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): Promise<string | null> {
   if (identity.role !== 'MANAGER' && identity.role !== 'ORGANIZER') return null
   if (identity.role === 'MANAGER' && (!identity.userId || !identity.teamId)) return MANAGER_SEAT_GONE
-  const [user, session, team] = await Promise.all([
+  const [user, session, team, room] = await Promise.all([
     identity.userId
       ? db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true, sessionVersion: true } })
       : null,
@@ -257,6 +264,8 @@ async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): 
     identity.role === 'MANAGER' && identity.teamId
       ? db.team.findUnique({ where: { id: identity.teamId }, select: { tournamentId: true, managerUserId: true } })
       : null,
+    // Deleting a tournament with auction history archives it: its seats end too.
+    db.tournament.findUnique({ where: { id: tournamentId }, select: { archivedAt: true } }),
   ])
   if (identity.role === 'MANAGER' && (!team || team.tournamentId !== tournamentId || team.managerUserId !== identity.userId)) {
     return MANAGER_SEAT_GONE
@@ -269,6 +278,7 @@ async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): 
       return SEAT_REVOKED
     }
   }
+  if (!room || room.archivedAt) return ROOM_CLOSED
   // The organizer seat belongs to the owner, an ADMIN, or tournament staff
   // (co-organizer or auctioneer) — removing someone from the staff ends it.
   if (identity.role === 'ORGANIZER' && user.role !== 'ADMIN') {

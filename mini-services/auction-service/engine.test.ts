@@ -553,6 +553,85 @@ describe('AuctionEngine — auction-day hardening', () => {
     assert.equal(row?.online, false)
   })
 
+  it('while nobody who can bid is connected the lot clock waits, then resumes with the time it had', async (t) => {
+    const { engine, room, advance, select, sales, orgSocket } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null) // lot ends at T0+10s
+    await advance(2_000)
+    await engine.leave(orgSocket as unknown as Socket) // venue Wi-Fi drops: 8 s left on the lot
+
+    await advance(20_000) // long past the old deadline, but under the 30 s auto-pause
+    assert.equal(room().status, 'LIVE')
+    assert.equal(room().stage, 0)
+    assert.equal(sales().length, 0)
+
+    await engine.joinRoom(new FakeSocket('s-m1') as unknown as Socket, M1, 'a1') // a manager is back
+    await advance(500)
+    const left = room().timerEndsAt! - Date.now()
+    assert.ok(left > 7_000 && left <= 8_000, `the lot resumes with ~8 s left (got ${left} ms)`)
+    await advance(8_000)
+    assert.equal(room().stage, 1) // and only then goes to GOING ONCE
+  })
+
+  it('a seat coming back with a bid is not pushed back by the time the room waited', async (t) => {
+    const { engine, room, advance, select, orgSocket } = await setup(t)
+    await select()
+    await advance(2_000)
+    await engine.leave(orgSocket as unknown as Socket)
+    await advance(10_000)
+    await engine.joinRoom(new FakeSocket('s-m1') as unknown as Socket, M1, 'a1')
+    assert.equal(await engine.placeBid(M1, 10_000), null) // before the next tick ends the hold
+    assert.equal(room().timerEndsAt, Date.now() + 10_000) // a plain fresh session, nothing added
+    await advance(500)
+    assert.ok(room().timerEndsAt! - Date.now() <= 10_000)
+  })
+
+  it('pausing itself keeps the time the lot had when the last seat left', async (t) => {
+    quiet(t)
+    const { engine, room, advance, select, orgSocket } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null) // ends at T0+10s
+    await advance(2_000)
+    await engine.leave(orgSocket as unknown as Socket)
+    await advance(31_000)
+    assert.equal(room().status, 'PAUSED')
+    const kept = room().pausedRemainingMs!
+    assert.ok(kept > 7_000 && kept <= 8_000, `~8 s kept for the resume (got ${kept} ms)`)
+  })
+
+  it('a lot whose close failed does not reopen for a bid that came after the real deadline', async (t) => {
+    quiet(t)
+    const { engine, db, room, advance, select, sales } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null) // GOING TWICE closes at T0+16s
+    // The first attempt to record the sale loses its DB connection.
+    const remove = db.hook((c) => {
+      if (c.model === 'auction' && c.op === 'updateMany' && c.args.data?.currentPlayerId === null) {
+        remove()
+        throw new Error('connection lost')
+      }
+    })
+    await advance(16_000)
+    assert.equal(sales().length, 0)
+    assert.equal(room().currentPlayerId, 'p1') // still on the block, retrying at T0+18s
+    await advance(500) // T0+16.5s: after the real deadline, before the retry
+
+    assert.match((await engine.placeBid(M2, 11_000))!, /Too late/)
+    assert.equal(room().currentBid.teamId, 't1')
+    await advance(2_500)
+    assert.equal(sales().length, 1)
+    assert.equal(db.one('player', 'p1')!.soldToTeamId, 't1')
+  })
+
+  it('a deleted (archived) tournament cannot be started or reopened from an old organizer seat', async (t) => {
+    const { engine, db, room } = await setup(t)
+    assert.equal(await engine.organizerAction(ORG, 'end', {}), null)
+    db.one('tournament', 'tn1')!.archivedAt = new Date()
+    assert.match((await engine.organizerAction(ORG, 'reopen', {}))!, /has been closed/)
+    assert.equal(room().status, 'ENDED')
+    assert.equal(db.one('auction', 'a1')!.status, 'ENDED')
+  })
+
   it('a manual bid is refused when the player it was opened for has left the block', async (t) => {
     const { engine, select } = await setup(t)
     await select('p1')

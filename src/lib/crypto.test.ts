@@ -50,7 +50,8 @@ describe('tokens', () => {
     const [data, sig] = token.split('.')
     const forged = Buffer.from(JSON.stringify({ role: 'ORGANIZER', exp: Date.now() + 60_000 })).toString('base64url')
     assert.equal(verifyToken(`${forged}.${sig}`), null)
-    assert.equal(verifyToken(`${data}.${sig.slice(0, -2)}AA`), null)
+    // Change the FIRST character: it always carries a full 6 bits, and is never already the replacement.
+    assert.equal(verifyToken(`${data}.${sig[0] === 'A' ? 'B' : 'A'}${sig.slice(1)}`), null)
     assert.equal(verifyToken('garbage'), null)
   })
 

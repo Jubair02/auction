@@ -91,6 +91,14 @@ export function peekReturnTo(): string | null {
 /** An in-app path only: "/x", never "//host" or "https://…". */
 const isAppPath = (route: string) => route.startsWith('/') && !route.startsWith('//')
 
+/**
+ * The visitor is signing up to bid: they came from a room ("/room/CODE") or a
+ * team invite ("/invite#<token>", or "/invite/<token>" on older links).
+ */
+export function cameToBid(returnTo: string | null): boolean {
+  return /^\/(room\/|invite(?:[/#]|$))/.test(returnTo ?? '')
+}
+
 export function consumeReturnTo(): string | null {
   const route = peekReturnTo()
   try {

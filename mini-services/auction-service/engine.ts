@@ -58,6 +58,9 @@ class BidOutOfDate extends Error {}
 /** Thrown by joinRoom when the socket disconnected while the join was in flight. */
 export class SocketGone extends Error {}
 
+/** Refusal for a room whose tournament was deleted (archived). Also used by index.ts. */
+export const ROOM_CLOSED = 'This auction room has been closed.'
+
 const CATEGORY_CODES = ['A', 'B', 'C', 'D', 'E']
 /** Pause between a SOLD/UNSOLD call and the auto-picked next player, so everyone sees the result. */
 const AUTO_ADVANCE_DELAY_MS = 4000
@@ -148,6 +151,12 @@ interface Room {
   emptySince: number | null
   /** Since when no organizer or manager socket has been connected while LIVE (epoch ms). */
   seatlessSince: number | null
+  /**
+   * The lot whose final deadline passed and is being closed (the close may be
+   * retried after a DB error). Bids received after `deadline` are refused even
+   * though a retry moves timerEndsAt forward.
+   */
+  closing: { playerId: string; deadline: number } | null
 }
 
 /** Short content fingerprint used to skip re-sending unchanged lists. */
@@ -554,6 +563,8 @@ export class AuctionEngine {
       // Resolved inside the lock — a join may have rebuilt the room meanwhile.
       const room = this.rooms.get(identity.auctionId)
       if (!room) return this.fail('Join the room first')
+      // A seat is evidently back: end any seatless hold before this bid moves the clock.
+      this.releaseSeatlessHold(room)
       if (room.status !== 'LIVE') return this.fail('Auction is not live')
       if (typeof opts.playerId === 'string' && opts.playerId !== room.currentPlayerId) {
         return this.fail('The player on the block changed — check and bid again')
@@ -561,6 +572,10 @@ export class AuctionEngine {
       // Only the last stage's deadline closes the lot; an earlier deadline just
       // moves on to GOING ONCE/TWICE, where bids are still welcome.
       if (room.stage === 2 && room.timerEndsAt != null && receivedAt > room.timerEndsAt) {
+        return this.fail('Too late — bidding on this player had closed')
+      }
+      // A close that failed and is being retried keeps its original deadline.
+      if (room.closing && room.closing.playerId === room.currentPlayerId && receivedAt > room.closing.deadline) {
         return this.fail('Too late — bidding on this player had closed')
       }
       const player = room.players.find((p) => p.id === room.currentPlayerId)
@@ -664,6 +679,8 @@ export class AuctionEngine {
       // Resolved inside the lock — a join may have rebuilt the room meanwhile.
       const room = this.rooms.get(identity.auctionId)
       if (!room) return this.fail('Join the room first')
+      // The organizer is evidently back: end any seatless hold before the action moves the clock.
+      this.releaseSeatlessHold(room)
       switch (action) {
         case 'start': return this.actionStart(room)
         case 'pause': return this.actionPause(room)
@@ -709,6 +726,7 @@ export class AuctionEngine {
   private async actionStart(room: Room): Promise<Outcome> {
     if (room.status === 'ENDED') return this.fail('Auction has already ended')
     if (room.status !== 'READY') return this.fail('Auction already started')
+    if (await this.tournamentArchived(room)) return this.fail(ROOM_CLOSED)
     // Pick up anything the organizer added since the room was first built.
     await this.resyncPool(room)
     if (room.players.length === 0) return this.fail('Add at least one player before starting')
@@ -739,11 +757,12 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
-  private async actionPause(room: Room, message: RoomMsg = { code: 'paused' }): Promise<Outcome> {
+  /** `clockAt`: the moment the lot clock stopped (the click, or when the room lost its last seat). */
+  private async actionPause(room: Room, message: RoomMsg = { code: 'paused' }, clockAt = Date.now()): Promise<Outcome> {
     if (room.status !== 'LIVE') return this.fail('Auction is not live')
     // Freeze the clock at the click, not after the write's round trip.
     const remaining =
-      room.currentPlayerId && room.timerEndsAt != null ? Math.max(0, room.timerEndsAt - Date.now()) : null
+      room.currentPlayerId && room.timerEndsAt != null ? Math.max(0, room.timerEndsAt - clockAt) : null
     // DB first: a failed write leaves memory (and the running lot) untouched.
     await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'PAUSED' } })
     room.status = 'PAUSED'
@@ -753,26 +772,58 @@ export class AuctionEngine {
     this.broadcast(room)
   }
 
+  /**
+   * Deleting a tournament that has auction history archives it instead. Seat
+   * passes issued before that stay valid for hours, so the actions that could
+   * bring the auction back to life check the database first.
+   */
+  private async tournamentArchived(room: Room): Promise<boolean> {
+    const t = await this.db.tournament.findUnique({ where: { id: room.tournament.id }, select: { archivedAt: true } })
+    return !t || t.archivedAt != null
+  }
+
   private hasSeatOnline(room: Room): boolean {
     for (const s of room.sockets.values()) if (s.role === 'ORGANIZER' || s.role === 'MANAGER') return true
     return false
   }
 
-  /** Tracks how long a LIVE room has had no seat connected; true once it should pause itself. */
+  /**
+   * Tracks how long a LIVE room has had no seat connected; true once it should
+   * pause itself. While seatless the lot clock and Auto Auction are held (see
+   * tick), so a Wi-Fi drop at the venue never sells or skips anyone.
+   */
   private seatlessPauseDue(room: Room, now: number): boolean {
-    if (room.status !== 'LIVE' || this.hasSeatOnline(room)) {
-      room.seatlessSince = null
-      return false
-    }
+    if (room.status !== 'LIVE' || this.hasSeatOnline(room)) return false
     room.seatlessSince ??= now
     return now - room.seatlessSince >= NO_SEATS_PAUSE_MS
+  }
+
+  /** True while a LIVE room is waiting for a seat to come back (its clock is held). */
+  private seatlessHold(room: Room): boolean {
+    return room.seatlessSince != null && room.status === 'LIVE' && !this.hasSeatOnline(room)
+  }
+
+  /**
+   * A seat is back (or the room is no longer LIVE): end the hold and push the
+   * lot deadline and the next Auto Auction pick back by the time spent
+   * waiting, so the lot resumes with the time it had. Call under the lock.
+   */
+  private releaseSeatlessHold(room: Room): void {
+    if (room.seatlessSince == null) return
+    const held = Math.max(0, Date.now() - room.seatlessSince)
+    room.seatlessSince = null
+    if (room.status !== 'LIVE' || held === 0) return
+    if (room.timerEndsAt != null) room.timerEndsAt += held
+    if (room.nextPlayerAt != null) room.nextPlayerAt += held
+    this.broadcast(room)
   }
 
   /** Runs under the room lock; re-checks, since a seat may have rejoined meanwhile. */
   private async autoPause(room: Room): Promise<void> {
     if (room.status !== 'LIVE' || this.hasSeatOnline(room)) return
     console.log(`[engine] pausing room ${room.roomCode}: no organizer or manager connected for ${NO_SEATS_PAUSE_MS / 1000}s`)
-    await this.actionPause(room, { code: 'auto_paused', params: { seconds: NO_SEATS_PAUSE_MS / 1000 } })
+    // The lot clock has been held since the last seat left: pause with the time it had then.
+    await this.actionPause(room, { code: 'auto_paused', params: { seconds: NO_SEATS_PAUSE_MS / 1000 } }, room.seatlessSince ?? Date.now())
   }
 
   private async actionResume(room: Room): Promise<Outcome> {
@@ -1024,6 +1075,7 @@ export class AuctionEngine {
     await this.resyncPool(room)
 
     room.currentPlayerId = player.id
+    room.closing = null
     room.currentBid = null
     room.currentBidHistory = [] // fresh ladder; the old cycle lives on in history
     room.previousOwnerTeamId = soldToTeamId
@@ -1098,6 +1150,7 @@ export class AuctionEngine {
    */
   private async actionReopen(room: Room): Promise<Outcome> {
     if (room.status !== 'ENDED') return this.fail('The auction is not ended')
+    if (await this.tournamentArchived(room)) return this.fail(ROOM_CLOSED)
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } }),
@@ -1206,6 +1259,7 @@ export class AuctionEngine {
   }
 
   private async putOnBlock(room: Room, player: Player): Promise<void> {
+    room.closing = null
     await this.db.$transaction([
       this.db.$queryRawUnsafe(BOUNDED_TX_SQL),
       this.db.player.update({ where: { id: player.id }, data: { status: 'LIVE' } }),
@@ -1567,6 +1621,23 @@ export class AuctionEngine {
         }
         continue
       }
+      if (room.seatlessSince != null) {
+        // Nobody who can bid or run the room is connected: the lot clock and
+        // Auto Auction wait (the room pauses itself after NO_SEATS_PAUSE_MS).
+        if (this.seatlessHold(room) || room.ticking) continue
+        room.ticking = true
+        try {
+          await this.withLock(room.auctionId, async () => {
+            const live = this.rooms.get(room.auctionId)
+            if (live) this.releaseSeatlessHold(live)
+          })
+        } catch (err) {
+          alert('seat-return', err, { room: room.roomCode })
+        } finally {
+          room.ticking = false
+        }
+        continue
+      }
       if (this.autoAdvanceDue(room, now) && !room.ticking) {
         room.ticking = true
         try {
@@ -1615,6 +1686,8 @@ export class AuctionEngine {
     } else {
       // An in-time bid is still on its way (seat check / DB): let it land first.
       if (this.bidInFlightBefore(room.auctionId, room.timerEndsAt) && now < room.timerEndsAt + CLOSE_GRACE_MS) return
+      // Remember the real deadline: a retried close must not reopen bidding.
+      if (room.closing?.playerId !== room.currentPlayerId) room.closing = { playerId: room.currentPlayerId, deadline: room.timerEndsAt }
       room.timerEndsAt = null
       try {
         if (room.currentBid) await this.finalizeSold(room)
@@ -1633,6 +1706,7 @@ export class AuctionEngine {
     const now = Date.now()
     for (const room of this.rooms.values()) {
       if (room.status !== 'LIVE' || !room.currentPlayerId || room.timerEndsAt == null) continue
+      if (room.seatlessSince != null) continue // clock held — see tick
       this.io.to(`auction:${room.auctionId}`).emit('timer', {
         remainingMs: Math.max(0, room.timerEndsAt - now),
         stage: room.stage,
@@ -1746,6 +1820,7 @@ export class AuctionEngine {
     fresh.sockets = room.sockets // keep live presence
     fresh.emptySince = room.emptySince
     fresh.seatlessSince = room.seatlessSince
+    fresh.closing = room.closing
     this.rooms.set(room.auctionId, fresh)
     return fresh
   }
@@ -1791,6 +1866,7 @@ export class AuctionEngine {
       lastSyncAt: Date.now(),
       emptySince: null,
       seatlessSince: null,
+      closing: null,
     }
     await this.refreshCache(room)
 

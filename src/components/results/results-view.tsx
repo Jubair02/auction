@@ -331,7 +331,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
   if (loading) {
     return (
       <div className="container mx-auto max-w-7xl space-y-4 px-4 py-8">
-        <Skeleton className="h-10 w-80" />
+        <Skeleton className="h-10 w-full max-w-80" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-24 rounded-xl" />
@@ -623,13 +623,13 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
         <Card>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px] text-sm">
+              <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2.5 font-semibold">{t.colTime}</th>
-                    <th className="px-4 py-2.5 font-semibold">{t.colPlayer}</th>
-                    <th className="px-4 py-2.5 font-semibold">{t.colTeam}</th>
-                    <th className="px-4 py-2.5 text-right font-semibold">{t.colAmount}</th>
+                    <th className="px-3 py-2.5 font-semibold sm:px-4">{t.colTime}</th>
+                    <th className="px-3 py-2.5 font-semibold sm:px-4">{t.colPlayer}</th>
+                    <th className="px-3 py-2.5 font-semibold sm:px-4">{t.colTeam}</th>
+                    <th className="px-3 py-2.5 text-right font-semibold sm:px-4">{t.colAmount}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -642,10 +642,10 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
                   ) : null}
                   {recentBids.map((b, i) => (
                     <tr key={`${b.createdAt}-${i}`} className="hover:bg-muted/40">
-                      <td className="whitespace-nowrap px-4 py-2 tabular-nums text-muted-foreground">{formatTime(b.createdAt, lang)}</td>
-                      <td className="px-4 py-2 font-semibold">{b.playerName}</td>
-                      <td className="px-4 py-2">{b.teamName}</td>
-                      <td className="px-4 py-2 text-right font-bold tabular-nums text-teal-700 dark:text-teal-300">{formatBDT(b.amount)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground sm:px-4">{formatTime(b.createdAt, lang)}</td>
+                      <td className="px-3 py-2 font-semibold break-words sm:px-4">{b.playerName}</td>
+                      <td className="px-3 py-2 break-words sm:px-4">{b.teamName}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums text-teal-700 sm:px-4 dark:text-teal-300">{formatBDT(b.amount)}</td>
                     </tr>
                   ))}
                 </tbody>

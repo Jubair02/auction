@@ -91,7 +91,7 @@ function Shell({ title, description, children }: { title: string; description: s
           <p className="mt-5 text-center text-sm">
             <button
               type="button"
-              className="inline-flex items-center gap-1 font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              className="-my-1 inline-flex items-center gap-1 py-1 font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
               onClick={() => navigate('/login')}
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> {t.backToLogin}

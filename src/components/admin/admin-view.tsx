@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { ShieldCheck } from 'lucide-react'
+import { ShieldCheck, Trophy } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { AppLink } from '@/components/shared/app-link'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { LoadError } from '@/components/shared/load-error'
@@ -38,6 +40,7 @@ const STRINGS = {
     tabPayments: 'Payments',
     tabAnalytics: 'Analytics',
     tabSms: 'SMS log',
+    manageTournaments: 'Manage tournaments',
   },
   bn: {
     ...SHARED_STRINGS.bn,
@@ -52,6 +55,7 @@ const STRINGS = {
     tabPayments: 'পেমেন্ট',
     tabAnalytics: 'অ্যানালিটিক্স',
     tabSms: 'SMS লগ',
+    manageTournaments: 'টুর্নামেন্ট ম্যানেজ করুন',
   },
 } satisfies Strings<
   SharedStrings & {
@@ -66,6 +70,7 @@ const STRINGS = {
     tabPayments: string
     tabAnalytics: string
     tabSms: string
+    manageTournaments: string
   }
 >
 
@@ -80,15 +85,23 @@ export default function AdminView() {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight">
-          <ShieldCheck className="h-6 w-6 text-primary" aria-hidden /> {t.title}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t.subtitle}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight">
+            <ShieldCheck className="h-6 w-6 text-primary" aria-hidden /> {t.title}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t.subtitle}</p>
+        </div>
+        {/* The full tournament management page (the same one organizers use; admins see every tournament). */}
+        <Button asChild variant="outline" size="lg" className="min-h-11">
+          <AppLink href="/tournaments">
+            <Trophy className="mr-1.5 h-4 w-4" aria-hidden /> {t.manageTournaments}
+          </AppLink>
+        </Button>
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="mt-6">
-        <TabsList className="h-auto w-full flex-wrap justify-start sm:w-auto">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-visible">
           <TabsTrigger value="overview" className="min-h-11">{t.tabOverview}</TabsTrigger>
           <TabsTrigger value="users" className="min-h-11">
             {t.tabUsers} {users.data ? <span className="ml-1 text-xs tabular-nums text-muted-foreground">{users.data.users.length}</span> : null}

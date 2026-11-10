@@ -22,6 +22,7 @@ import { ErrorBoundary } from '@/components/shared/error-boundary'
 import { AppLink } from '@/components/shared/app-link'
 import { DataSaverMenuItem } from '@/components/shared/data-saver'
 import { ThemeToggle } from '@/components/shared/theme-toggle'
+import { PreferencesMenu } from '@/components/shared/preferences-menu'
 import { SiteFooter } from '@/components/shared/site-footer'
 import { useTheme } from '@/lib/theme'
 import { InstallAppMenuItem, InstallHelpHost, InstallHint } from '@/components/shared/install-app'
@@ -70,6 +71,17 @@ function Redirect({ to, returnTo, notice }: { to: string; returnTo?: string; not
     navigate(to, { replace: true })
   }, [to, returnTo, notice])
   return <CenterLoader />
+}
+
+/** An account-menu link that marks the page currently open. */
+function NavMenuItem({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <DropdownMenuItem asChild className={active ? 'bg-accent font-semibold text-accent-foreground' : undefined}>
+      <AppLink href={href} aria-current={active ? 'page' : undefined}>
+        {children}
+      </AppLink>
+    </DropdownMenuItem>
+  )
 }
 
 function CenterLoader() {
@@ -221,19 +233,24 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
       <header hidden={roomFocus} className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 print:hidden">
         <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4">
           {/* Brand mark only — deliberately not a link, so clicking it never leaves the current page. */}
-          <div className="flex select-none items-center gap-2 px-1 py-1" aria-label="NeelamGhor">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex min-w-0 select-none items-center gap-2 px-1 py-1" aria-label="NeelamGhor">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Gavel className="h-4.5 w-4.5" aria-hidden />
             </span>
-            <span className="text-lg font-extrabold tracking-tight">
+            {/* Under 360px (small phones) only the mark shows, so the nav still fits. */}
+            <span className="text-base font-extrabold tracking-tight max-[359px]:sr-only sm:text-lg">
               Neelam<span className="text-primary">Ghor</span>
             </span>
             <Badge variant="secondary" className="ml-1 hidden sm:inline-flex">BD</Badge>
           </div>
 
           <nav className="flex items-center gap-1.5" aria-label={t.mainNav}>
-            <ThemeToggle />
-            <LangToggle />
+            {/* Phones: one "language & theme" button keeps the header within the screen. */}
+            <div className="hidden items-center gap-1.5 sm:flex">
+              <ThemeToggle />
+              <LangToggle />
+            </div>
+            <PreferencesMenu className="sm:hidden" />
             {user ? (
               <>
                 <DropdownMenu>
@@ -290,11 +307,12 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
                     )}
                     {user.role === 'ADMIN' && (
                       <>
-                        <DropdownMenuItem asChild>
-                          <AppLink href={DASHBOARD_PATH}>
-                            <ShieldCheck className="mr-2 h-4 w-4" /> {t.adminConsole}
-                          </AppLink>
-                        </DropdownMenuItem>
+                        <NavMenuItem href={DASHBOARD_PATH} active={head === 'dashboard' || head === 'admin'}>
+                          <ShieldCheck className="mr-2 h-4 w-4" /> {t.adminConsole}
+                        </NavMenuItem>
+                        <NavMenuItem href="/tournaments" active={head === 'tournaments'}>
+                          <Trophy className="mr-2 h-4 w-4" /> {t.tournaments}
+                        </NavMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     )}
@@ -355,6 +373,7 @@ const SHELL_STRINGS = {
     myTournaments: 'My tournaments',
     newTournament: 'New tournament',
     adminConsole: 'Admin console',
+    tournaments: 'Tournaments',
     logout: 'Log out',
     login: 'Login',
     register: 'Register',
@@ -374,6 +393,7 @@ const SHELL_STRINGS = {
     myTournaments: 'আমার টুর্নামেন্ট',
     newTournament: 'নতুন টুর্নামেন্ট',
     adminConsole: 'অ্যাডমিন কনসোল',
+    tournaments: 'টুর্নামেন্ট',
     logout: 'লগ আউট',
     login: 'লগইন',
     register: 'রেজিস্টার',
@@ -387,7 +407,7 @@ const SHELL_STRINGS = {
     myAccount: 'আমার অ্যাকাউন্ট',
     role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'tournaments' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {
@@ -401,7 +421,7 @@ function LangToggle() {
           type="button"
           aria-pressed={lang === l}
           onClick={() => setLang(l)}
-          className={`min-h-7 rounded-full px-2.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+          className={`min-h-8 rounded-full px-2.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
             lang === l ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
           }`}
         >

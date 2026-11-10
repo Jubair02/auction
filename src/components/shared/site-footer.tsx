@@ -245,8 +245,8 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
               target="_blank"
               rel="noopener noreferrer"
               className={cn(
-                'group relative inline-flex items-center gap-0.5 rounded-sm font-semibold text-foreground transition-colors duration-200 hover:text-primary',
-                'after:absolute after:-bottom-0.5 after:left-0 after:h-px after:w-full after:origin-left after:scale-x-0 after:bg-primary after:transition-transform after:duration-300 hover:after:scale-x-100',
+                'group relative -my-1 inline-flex items-center gap-0.5 rounded-sm py-1 font-semibold text-foreground transition-colors duration-200 hover:text-primary',
+                'after:absolute after:bottom-0.5 after:left-0 after:h-px after:w-full after:origin-left after:scale-x-0 after:bg-primary after:transition-transform after:duration-300 hover:after:scale-x-100',
                 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
               )}
             >

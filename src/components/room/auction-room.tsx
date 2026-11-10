@@ -516,7 +516,7 @@ function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
   // Pool actions (put on block, re-auction) explain a refused or unconfirmed send too.
   const poolAction = useOrganizerAction(sock.organizerAction)
   return (
-    <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="mt-4 grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="lg:col-start-1 lg:row-start-1">
         <AuctionStage
           state={state}
@@ -560,7 +560,7 @@ function ManagerLayout({
   const bidProps = { state, myTeam, online, pendingAmount: bids.pendingAmount, onBid: bids.submit, outbid }
   return (
     <>
-      <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="lg:col-start-1 lg:row-start-1">
           <AuctionStage
             state={state}
@@ -594,7 +594,7 @@ function ViewerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
         <Eye className="h-4 w-4" aria-hidden />
         {t.watchingNote}
       </p>
-      <div className="grid items-start gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-2">
         <TeamsPanel state={state} compact />
         <div className="space-y-5">
           <SoldFeed feed={state.soldFeed} />

@@ -9,23 +9,68 @@ import { readJson, requireSession } from '../_lib/helpers'
 
 export const runtime = 'nodejs'
 
-// GET /api/account — what the account page needs before a deletion:
-// the tournaments still blocking it and how many teams the user manages.
+// GET /api/account — everything the account page shows: the role-specific
+// workspace summary (tournaments owned, teams managed, staff seats, platform
+// counts for admins) plus what blocks a deletion.
 export async function GET() {
   const auth = await requireSession()
   if ('response' in auth) return auth.response
   const { user } = auth
+  const isAdmin = user.role === 'ADMIN'
 
-  const [blocking, managedTeams, payments] = await Promise.all([
+  const [blocking, teams, managedTeams, staffRoles, payments, pendingPayments, platform] = await Promise.all([
     db.tournament.findMany({
       where: { organizerId: user.id, archivedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, status: true, sport: true, plan: true, logoUrl: true, _count: { select: { teams: true, players: true } } },
       orderBy: { createdAt: 'desc' },
     }),
+    db.team.findMany({
+      where: { managerUserId: user.id, tournament: { archivedAt: null } },
+      select: {
+        id: true,
+        name: true,
+        color: true,
+        logoUrl: true,
+        budget: true,
+        spent: true,
+        maxSquad: true,
+        _count: { select: { players: true } },
+        tournament: { select: { id: true, name: true, status: true } },
+      },
+      orderBy: { tournament: { createdAt: 'desc' } },
+      take: 6,
+    }),
     db.team.count({ where: { managerUserId: user.id } }),
+    db.tournamentStaff.findMany({
+      where: { userId: user.id, tournament: { archivedAt: null } },
+      select: { role: true, tournament: { select: { id: true, name: true, status: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    }),
     db.payment.count({ where: { userId: user.id } }),
+    db.payment.count({ where: { userId: user.id, status: 'PENDING' } }),
+    isAdmin
+      ? Promise.all([
+          db.user.count({ where: { deletedAt: null } }),
+          db.tournament.count({ where: { archivedAt: null } }),
+          db.tournament.count({ where: { archivedAt: null, status: 'LIVE' } }),
+          db.payment.count({ where: { status: 'PENDING' } }),
+        ]).then(([users, tournaments, live, pending]) => ({ users, tournaments, live, pendingPayments: pending }))
+      : Promise.resolve(null),
   ])
-  return Response.json({ user, activeTournaments: blocking, managedTeams, payments, canDelete: user.role !== 'ADMIN' })
+
+  return Response.json({
+    user,
+    // Kept as {id, name} first for the deletion blocker; the extra fields feed the workspace list.
+    activeTournaments: blocking.map(({ _count, ...tn }) => ({ ...tn, teams: _count.teams, players: _count.players })),
+    teams: teams.map(({ _count, ...team }) => ({ ...team, squad: _count.players })),
+    managedTeams,
+    staffRoles: staffRoles.map((s) => ({ role: s.role, ...s.tournament })),
+    payments,
+    pendingPayments,
+    platform,
+    canDelete: !isAdmin,
+  })
 }
 
 // DELETE /api/account {password} — anonymizes the caller's account.
