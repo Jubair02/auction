@@ -40,8 +40,74 @@ export const isKnockoutStage = (stage: string): boolean => (KNOCKOUT_STAGES as r
 
 export const MATCH_STATUSES = ['SCHEDULED', 'LIVE', 'COMPLETED', 'ABANDONED', 'POSTPONED'] as const
 export type MatchStatus = (typeof MATCH_STATUSES)[number]
-export const RESULT_TYPES = ['NORMAL', 'TIE', 'NO_RESULT', 'WALKOVER'] as const
+export const RESULT_TYPES = ['NORMAL', 'TIE', 'NO_RESULT', 'WALKOVER', 'FORFEIT'] as const
 export type ResultType = (typeof RESULT_TYPES)[number]
+
+/**
+ * Results decided off the field: the named winner takes the points whatever
+ * the score. WALKOVER = the opponent never played; FORFEIT = the opponent gave
+ * up or was thrown out (any score is the one at the time, or an awarded one).
+ * Neither counts towards net run rate.
+ */
+export const AWARDED_RESULTS: readonly ResultType[] = ['WALKOVER', 'FORFEIT']
+export const isAwardedResult = (rt: string | null | undefined): boolean => !!rt && (AWARDED_RESULTS as readonly string[]).includes(rt)
+
+export interface ResolveResultInput {
+  sport: string
+  knockout: boolean
+  /** As chosen (null = NORMAL). */
+  resultType: ResultType | null
+  homeTeamId: string
+  awayTeamId: string
+  homeScore: number | null
+  awayScore: number | null
+  winnerTeamId: string | null
+  /** The winner was sent explicitly (a NORMAL result's winner must then match the score). */
+  winnerSent: boolean
+}
+
+/**
+ * The stored result of a COMPLETED match: the final result type and winner,
+ * or the reason it can't be saved. One rule set for the API and the result
+ * dialog (which uses it to preview and validate before sending).
+ * - NORMAL: the winner comes from the score; level scores are a draw in a
+ *   league / group (cricket stores it as TIE) and need a named winner in a knockout.
+ * - TIE: a draw / tie; a knockout still needs who went through.
+ * - NO_RESULT: no winner.
+ * - WALKOVER / FORFEIT: the named winner, whatever the score.
+ */
+export function resolveResult(i: ResolveResultInput): { resultType: ResultType; winnerTeamId: string | null } | { error: string } {
+  let resultType: ResultType = i.resultType ?? 'NORMAL'
+  let winnerTeamId = i.winnerTeamId
+  const hs = i.homeScore
+  const as = i.awayScore
+  if (resultType === 'NORMAL') {
+    if (hs === null || as === null) return { error: 'Enter both scores, or pick another result type' }
+    if (hs !== as) {
+      const derived = hs > as ? i.homeTeamId : i.awayTeamId
+      if (i.winnerSent && winnerTeamId && winnerTeamId !== derived) return { error: 'The winner must be the team with the higher score' }
+      winnerTeamId = derived
+    } else if (!i.knockout) {
+      // Level in a league / group match: a draw (football, others) or a tie (cricket).
+      winnerTeamId = null
+      if (i.sport === 'CRICKET') resultType = 'TIE'
+    }
+  } else if (resultType === 'TIE') {
+    if (!i.knockout) winnerTeamId = null
+  } else if (resultType === 'NO_RESULT') {
+    winnerTeamId = null
+  } else if (isAwardedResult(resultType)) {
+    if (!winnerTeamId) return { error: `Pick the team that won by ${resultType === 'FORFEIT' ? 'forfeit' : 'walkover'}` }
+  }
+  if (i.knockout && !winnerTeamId && resultType !== 'NO_RESULT') {
+    return { error: 'A knockout match needs a winner — pick who went through (e.g. on penalties or a super over)' }
+  }
+  return { resultType, winnerTeamId }
+}
+
+/** Highest score the API accepts per sport (goals / runs / points). */
+export const SCORE_LIMITS: Record<string, number> = { CRICKET: 1500, FOOTBALL: 99, OTHER: 10000 }
+export const scoreLimit = (sport: string): number => SCORE_LIMITS[sport] ?? SCORE_LIMITS.OTHER
 
 /** A wicket count this high means the side was bowled out (full quota counts for NRR). */
 export const DEFAULT_ALL_OUT_WICKETS = 10
@@ -526,7 +592,7 @@ export function matchOutcome(m: MatchLike): Outcome | null {
   if (rt === 'TIE') return { kind: 'DRAW' }
   if (m.winnerTeamId === home) return { kind: 'WIN', winner: home, loser: away }
   if (m.winnerTeamId === away) return { kind: 'WIN', winner: away, loser: home }
-  if (rt === 'WALKOVER') return null
+  if (isAwardedResult(rt)) return null
   if (m.homeScore === null || m.homeScore === undefined || m.awayScore === null || m.awayScore === undefined) return null
   if (m.homeScore > m.awayScore) return { kind: 'WIN', winner: home, loser: away }
   if (m.awayScore > m.homeScore) return { kind: 'WIN', winner: away, loser: home }
@@ -662,8 +728,8 @@ export function computeStandings(
       home.scoreAgainst += m.awayScore
       away.scoreFor += m.awayScore
       away.scoreAgainst += m.homeScore
-      // Net run rate: only played-out matches with overs recorded (never walkovers).
-      if (cricket && m.resultType !== 'WALKOVER' && isNum(m.homeBalls) && isNum(m.awayBalls) && m.homeBalls > 0 && m.awayBalls > 0) {
+      // Net run rate: only played-out matches with overs recorded (never walkovers or forfeits).
+      if (cricket && !isAwardedResult(m.resultType) && isNum(m.homeBalls) && isNum(m.awayBalls) && m.homeBalls > 0 && m.awayBalls > 0) {
         const hb = effBalls(m.homeBalls, m.homeWickets)
         const ab = effBalls(m.awayBalls, m.awayWickets)
         home.runsFor += m.homeScore
@@ -911,6 +977,7 @@ export function describeResult(r: ResultNoteInput): string {
 
   if (rt === 'NO_RESULT') return 'No result'
   if (rt === 'WALKOVER') return winnerName ? `${winnerName} won by walkover` : 'Walkover'
+  if (rt === 'FORFEIT') return winnerName ? `${winnerName} won by forfeit` : 'Forfeit'
   if (rt === 'TIE') {
     if (!winnerName) return r.sport === 'CRICKET' ? 'Match tied' : scored ? `Match drawn ${hs}–${as}` : 'Match drawn'
     return r.sport === 'CRICKET' ? `Match tied — ${winnerName} won the super over` : `${winnerName} won on penalties`

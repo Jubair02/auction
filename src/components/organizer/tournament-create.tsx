@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { BackButton } from '@/components/shared/back-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiPost, ApiError } from '@/lib/api'
 import { invalidateCached, seedCached } from '@/lib/api-cache'
@@ -322,6 +323,8 @@ export default function TournamentCreate() {
 
   return (
     <div className="container mx-auto max-w-3xl px-4 py-8">
+      {/* Leaves the page (the wizard's own Back only moves between steps). */}
+      <BackButton className="mb-1" />
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">{s.title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{s.intro}</p>

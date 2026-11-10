@@ -655,6 +655,8 @@ export interface LeagueSettingsDTO {
   resultsPublic: boolean
   /** What the table actually uses. */
   effectivePoints: { win: number; draw: number; loss: number }
+  /** Cricket: wickets that make a side all out (10, fewer for short-handed formats). */
+  allOutWickets: number
 }
 
 /** GET /api/tournaments/:id/league (staff) and GET /api/league/:id (public). */

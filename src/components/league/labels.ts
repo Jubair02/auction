@@ -36,7 +36,7 @@ const STRINGS = {
       FINAL: 'Final',
     },
     status: { SCHEDULED: 'Scheduled', LIVE: 'Live', COMPLETED: 'Completed', ABANDONED: 'Abandoned', POSTPONED: 'Postponed' },
-    resultType: { NORMAL: 'Normal result', TIE: 'Tie / draw', NO_RESULT: 'No result', WALKOVER: 'Walkover' },
+    resultType: { NORMAL: 'Normal result', TIE: 'Tie / draw', NO_RESULT: 'No result', WALKOVER: 'Walkover', FORFEIT: 'Forfeit' },
     format: {
       ROUND_ROBIN: 'Round-robin league',
       DOUBLE_ROUND_ROBIN: 'Double round-robin',
@@ -74,7 +74,7 @@ const STRINGS = {
       FINAL: 'ফাইনাল',
     },
     status: { SCHEDULED: 'নির্ধারিত', LIVE: 'লাইভ', COMPLETED: 'শেষ', ABANDONED: 'পরিত্যক্ত', POSTPONED: 'স্থগিত' },
-    resultType: { NORMAL: 'সাধারণ ফলাফল', TIE: 'টাই / ড্র', NO_RESULT: 'ফলাফল নেই', WALKOVER: 'ওয়াকওভার' },
+    resultType: { NORMAL: 'সাধারণ ফলাফল', TIE: 'টাই / ড্র', NO_RESULT: 'ফলাফল নেই', WALKOVER: 'ওয়াকওভার', FORFEIT: 'ফোরফিট' },
     format: {
       ROUND_ROBIN: 'রাউন্ড-রবিন লিগ',
       DOUBLE_ROUND_ROBIN: 'ডাবল রাউন্ড-রবিন',

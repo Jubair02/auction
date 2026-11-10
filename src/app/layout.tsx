@@ -82,8 +82,12 @@ export default async function RootLayout({
       <head>
         {theme === "system" ? <script dangerouslySetInnerHTML={{ __html: SYSTEM_THEME_SCRIPT }} /> : null}
       </head>
+      {/* Browser extensions (e.g. Grammarly's data-gr-* attributes) edit <body> before
+          React loads. This ignores attribute differences on <body> only — one level
+          deep, so real mismatches in the app below are still reported. */}
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${notoBengali.variable} antialiased bg-background text-foreground`}
+        suppressHydrationWarning
       >
         {children}
       </body>

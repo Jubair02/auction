@@ -206,6 +206,7 @@ export async function buildLeagueData(
       oversPerInnings: tournament.oversPerInnings,
       resultsPublic: tournament.resultsPublic,
       effectivePoints: pointsRules(tournament.sport, tournament),
+      allOutWickets: allOutWickets(tournament),
     },
     teams,
     matches: matches.map((m) =>

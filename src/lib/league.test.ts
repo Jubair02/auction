@@ -19,6 +19,7 @@ import {
   pointsRules,
   positionLabel,
   qualifyCounts,
+  resolveResult,
   resolveSlots,
   roundRobinRounds,
   scheduleFixtures,
@@ -293,9 +294,44 @@ describe('points and outcomes', () => {
     assert.deepEqual(matchOutcome(done('A', 'B', { resultType: 'TIE' })), { kind: 'DRAW' })
     assert.deepEqual(matchOutcome(done('A', 'B', { resultType: 'NO_RESULT' })), { kind: 'NR' })
     assert.deepEqual(matchOutcome(done('A', 'B', { resultType: 'WALKOVER', winnerTeamId: 'B' })), { kind: 'WIN', winner: 'B', loser: 'A' })
+    // A forfeit goes to the named winner even when the forfeiting side was ahead at the time.
+    assert.deepEqual(matchOutcome(done('A', 'B', { resultType: 'FORFEIT', winnerTeamId: 'B', homeScore: 2, awayScore: 1 })), { kind: 'WIN', winner: 'B', loser: 'A' })
+    // Without a winner an awarded result does not count yet.
+    assert.equal(matchOutcome(done('A', 'B', { resultType: 'FORFEIT' })), null)
     assert.deepEqual(matchOutcome({ ...done('A', 'B', {}), status: 'ABANDONED' }), { kind: 'NR' })
     assert.equal(matchOutcome({ ...done('A', 'B', { homeScore: 1, awayScore: 0 }), status: 'SCHEDULED' }), null)
     assert.equal(matchOutcome(done('A', 'B', {})), null)
+  })
+})
+
+describe('resolveResult', () => {
+  const base = { sport: 'FOOTBALL', knockout: false, resultType: null, homeTeamId: 'A', awayTeamId: 'B', homeScore: null, awayScore: null, winnerTeamId: null, winnerSent: false }
+
+  it('takes a normal winner from the score', () => {
+    assert.deepEqual(resolveResult({ ...base, homeScore: 2, awayScore: 1 }), { resultType: 'NORMAL', winnerTeamId: 'A' })
+    assert.deepEqual(resolveResult({ ...base, homeScore: 0, awayScore: 3, resultType: 'NORMAL' }), { resultType: 'NORMAL', winnerTeamId: 'B' })
+    assert.deepEqual(resolveResult({ ...base, homeScore: 2, awayScore: 1, winnerTeamId: 'B', winnerSent: true }), { error: 'The winner must be the team with the higher score' })
+    assert.deepEqual(resolveResult({ ...base, homeScore: 2 }), { error: 'Enter both scores, or pick another result type' })
+  })
+
+  it('makes level league scores a draw (a tie in cricket)', () => {
+    assert.deepEqual(resolveResult({ ...base, homeScore: 1, awayScore: 1, winnerTeamId: 'A' }), { resultType: 'NORMAL', winnerTeamId: null })
+    assert.deepEqual(resolveResult({ ...base, sport: 'CRICKET', homeScore: 150, awayScore: 150 }), { resultType: 'TIE', winnerTeamId: null })
+    assert.deepEqual(resolveResult({ ...base, resultType: 'TIE', winnerTeamId: 'A' }), { resultType: 'TIE', winnerTeamId: null })
+  })
+
+  it('needs who went through in a level knockout', () => {
+    const ko = { ...base, knockout: true }
+    assert.ok('error' in resolveResult({ ...ko, homeScore: 1, awayScore: 1 }))
+    assert.deepEqual(resolveResult({ ...ko, homeScore: 1, awayScore: 1, winnerTeamId: 'B', winnerSent: true }), { resultType: 'NORMAL', winnerTeamId: 'B' })
+    assert.deepEqual(resolveResult({ ...ko, resultType: 'TIE', winnerTeamId: 'A' }), { resultType: 'TIE', winnerTeamId: 'A' })
+    assert.deepEqual(resolveResult({ ...ko, resultType: 'NO_RESULT' }), { resultType: 'NO_RESULT', winnerTeamId: null })
+  })
+
+  it('needs a named winner for walkovers and forfeits', () => {
+    assert.deepEqual(resolveResult({ ...base, resultType: 'WALKOVER' }), { error: 'Pick the team that won by walkover' })
+    assert.deepEqual(resolveResult({ ...base, resultType: 'FORFEIT' }), { error: 'Pick the team that won by forfeit' })
+    assert.deepEqual(resolveResult({ ...base, resultType: 'FORFEIT', winnerTeamId: 'B', homeScore: 5, awayScore: 2 }), { resultType: 'FORFEIT', winnerTeamId: 'B' })
   })
 })
 
@@ -395,6 +431,19 @@ describe('computeStandings — cricket', () => {
     assert.equal(c.nrr, 0)
     const a = rows.find((r) => r.teamId === 'A')!
     assert.equal(a.nrr, 0.033) // (100+120)/30 - (99+120)/30
+  })
+
+  it('keeps forfeits out of NRR but gives the winner the points', () => {
+    const rows = computeStandings(
+      ['A', 'B'].map(team),
+      [done('A', 'B', { resultType: 'FORFEIT', winnerTeamId: 'B', homeScore: 80, homeWickets: 2, homeBalls: 60, awayScore: 40, awayWickets: 1, awayBalls: 30 })],
+      { sport: 'CRICKET' },
+    )
+    const b = rows.find((r) => r.teamId === 'B')!
+    assert.equal(b.points, 2)
+    assert.equal(b.won, 1)
+    assert.equal(b.nrr, null)
+    assert.equal(rows[0].teamId, 'B')
   })
 
   it('gives NRR null with no overs recorded', () => {
@@ -530,6 +579,8 @@ describe('describeResult', () => {
   it('writes special results', () => {
     assert.equal(describeResult({ ...base, sport: 'FOOTBALL', resultType: 'NO_RESULT' }), 'No result')
     assert.equal(describeResult({ ...base, sport: 'CRICKET', resultType: 'WALKOVER', winnerTeamId: 'a' }), 'Alpha won by walkover')
+    assert.equal(describeResult({ ...base, sport: 'OTHER', resultType: 'FORFEIT', winnerTeamId: 'b', homeScore: 7, awayScore: 3 }), 'Beta won by forfeit')
+    assert.equal(describeResult({ ...base, sport: 'FOOTBALL', resultType: 'FORFEIT' }), 'Forfeit')
   })
 })
 

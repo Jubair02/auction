@@ -2,11 +2,13 @@ import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import {
   describeResult,
+  resolveResult,
   isKnockoutStage,
   MATCH_STAGES,
   MATCH_STATUSES,
   oversToBalls,
   RESULT_TYPES,
+  scoreLimit,
   type MatchStage,
   type MatchStatus,
   type ResultType,
@@ -26,8 +28,6 @@ import {
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
-
-const SCORE_MAX: Record<string, number> = { CRICKET: 1500, FOOTBALL: 99, OTHER: 10000 }
 
 // PATCH /api/matches/:id — owner / ADMIN / co-organizer.
 // Schedule: { scheduledAt?, venue?, round?, stage?, groupName? }
@@ -120,7 +120,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     status = body.status as MatchStatus
   }
 
-  const scoreMax = SCORE_MAX[sport] ?? SCORE_MAX.OTHER
+  const scoreMax = scoreLimit(sport)
   const wicketsMax = allOutWickets(tournament)
   const ballsMax = tournament.oversPerInnings ? tournament.oversPerInnings * 6 : 600
   const next = {
@@ -223,33 +223,21 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   } else {
     // COMPLETED
     if (!homeTeamId || !awayTeamId) return jsonError('Both teams must be set before entering a result', 400)
-    const rt: ResultType = resultType ?? 'NORMAL'
-    resultType = rt
-    const hs = next.homeScore
-    const as = next.awayScore
-    if (rt === 'NORMAL') {
-      if (hs === null || as === null) return jsonError('Enter both scores, or pick another result type', 400)
-      if (hs !== as) {
-        const derived = hs > as ? homeTeamId : awayTeamId
-        if (body.winnerTeamId !== undefined && winnerTeamId && winnerTeamId !== derived) {
-          return jsonError('The winner must be the team with the higher score', 400)
-        }
-        winnerTeamId = derived
-      } else if (!knockout) {
-        // Level in a league / group match: a draw (football, others) or a tie (cricket).
-        winnerTeamId = null
-        if (sport === 'CRICKET') resultType = 'TIE'
-      }
-    } else if (rt === 'TIE') {
-      if (!knockout) winnerTeamId = null
-    } else if (rt === 'NO_RESULT') {
-      winnerTeamId = null
-    } else if (rt === 'WALKOVER') {
-      if (!winnerTeamId) return jsonError('Pick the team that won by walkover', 400)
-    }
-    if (knockout && !winnerTeamId && resultType !== 'NO_RESULT') {
-      return jsonError('A knockout match needs a winner — pick who went through (e.g. on penalties or a super over)', 400)
-    }
+    // Shared with the result dialog (lib/league.ts), so the preview matches what is stored.
+    const resolved = resolveResult({
+      sport,
+      knockout,
+      resultType,
+      homeTeamId,
+      awayTeamId,
+      homeScore: next.homeScore,
+      awayScore: next.awayScore,
+      winnerTeamId,
+      winnerSent: body.winnerTeamId !== undefined,
+    })
+    if ('error' in resolved) return jsonError(resolved.error, 400)
+    resultType = resolved.resultType
+    winnerTeamId = resolved.winnerTeamId
   }
 
   if (playerOfMatchId) {
