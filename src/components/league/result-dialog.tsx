@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { apiPatch } from '@/lib/api'
 import { ballsToOvers, isKnockoutStage, MATCH_STATUSES, oversToBalls, RESULT_TYPES, type MatchStatus, type ResultType } from '@/lib/league'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import type { LeagueData, MatchDTO } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -324,7 +325,7 @@ function ResultForm({
                       <SelectLabel>{i === 0 ? home.name : away.name}</SelectLabel>
                       {squad(teamId).map((p) => (
                         <SelectItem key={p.id} value={p.id}>
-                          {p.name} · {p.role}
+                          {p.name} · <PlayerRole role={p.role} />
                         </SelectItem>
                       ))}
                     </SelectGroup>

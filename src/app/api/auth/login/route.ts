@@ -21,10 +21,15 @@ const MINUTE = 60 * 1000
 //    at someone else's.
 //  - per IP + email: the tight one; a correct login clears only this key.
 //  - per account (failures only, from any IP): bounds a distributed guess at
-//    one account. Shared-Wi-Fi users are unaffected unless they keep failing.
+//    one account. Once it is exhausted the account is NOT locked for everyone
+//    — that would let anyone lock an organizer out on auction day by failing
+//    20 times. Instead each address only gets LOCKED_ACCOUNT_FAILURES_PER_IP
+//    more failures on it: the real owner on their own phone still gets in,
+//    while a guesser needs a fresh IP for every few tries.
 const PER_IP = { limit: 30, windowMs: 5 * MINUTE }
 const PER_IP_EMAIL = { limit: 10, windowMs: 5 * MINUTE }
 const PER_ACCOUNT_FAILURES = { limit: 20, windowMs: 60 * MINUTE }
+const LOCKED_ACCOUNT_FAILURES_PER_IP = { limit: 3, windowMs: 60 * MINUTE }
 
 // Unknown emails still pay for one scrypt, so response time does not reveal
 // which addresses have accounts. Computed once, on the first such request.
@@ -49,11 +54,16 @@ export async function POST(req: Request) {
   const { email, password } = parsed.data
 
   const pairKey = `${clientKey(req, 'login-pair')}:${email}`
+  const pairFailKey = `${clientKey(req, 'login-fail')}:${email}`
   const accountKey = `login-acct:${email}`
   const pairRetry = await rateLimit(pairKey, PER_IP_EMAIL.limit, PER_IP_EMAIL.windowMs)
   if (pairRetry !== null) return tooMany(pairRetry)
-  const accountRetry = await rateLimitBlocked(accountKey, PER_ACCOUNT_FAILURES.limit)
-  if (accountRetry !== null) return tooMany(accountRetry)
+  const [accountLocked, pairFailRetry] = await Promise.all([
+    rateLimitBlocked(accountKey, PER_ACCOUNT_FAILURES.limit),
+    rateLimitBlocked(pairFailKey, LOCKED_ACCOUNT_FAILURES_PER_IP.limit),
+  ])
+  // Under attack: only addresses that already failed on this account are held back.
+  if (accountLocked !== null && pairFailRetry !== null) return tooMany(pairFailRetry)
 
   const user = await db.user.findUnique({ where: { email } })
   let ok = false
@@ -61,14 +71,17 @@ export async function POST(req: Request) {
   else verifyPassword(password, timingDummy())
   // A deleted (anonymized) account answers exactly like a wrong password.
   if (!user || !ok || user.deletedAt) {
-    await rateLimit(accountKey, PER_ACCOUNT_FAILURES.limit, PER_ACCOUNT_FAILURES.windowMs)
+    await Promise.all([
+      rateLimit(accountKey, PER_ACCOUNT_FAILURES.limit, PER_ACCOUNT_FAILURES.windowMs),
+      rateLimit(pairFailKey, LOCKED_ACCOUNT_FAILURES_PER_IP.limit, LOCKED_ACCOUNT_FAILURES_PER_IP.windowMs),
+    ])
     return jsonError('Invalid email or password', 401)
   }
   if (user.status === 'BLOCKED') {
     return jsonError('Your account has been blocked. Please contact support.', 403)
   }
 
-  await rateLimitReset(pairKey)
+  await Promise.all([rateLimitReset(pairKey), rateLimitReset(pairFailKey)])
   await setSessionCookie(await createSession(user.id, user.role as 'ADMIN' | 'ORGANIZER' | 'MANAGER', user.sessionVersion))
   after(() => track('login', { userId: user.id }))
   return Response.json({ user: toSafeUser(user) })

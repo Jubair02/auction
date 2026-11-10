@@ -6,7 +6,8 @@ import type { RoomNotification, RoomRole, RoomState } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { roomNoticeText } from '@/lib/room-messages'
 
 const STRINGS = {
   en: {
@@ -124,6 +125,7 @@ const LEVEL_DOT: Record<RoomNotification['level'], string> = {
 /** Live gavel feed — newest first. */
 export function ActivityFeed({ notifications, embedded = false }: { notifications: RoomNotification[]; embedded?: boolean }) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
   const list = (
     <ul className={cn('space-y-1.5', !embedded && 'max-h-64 overflow-y-auto pr-1')} aria-live="polite">
       {notifications.length === 0 ? (
@@ -132,7 +134,7 @@ export function ActivityFeed({ notifications, embedded = false }: { notification
       {notifications.map((n) => (
         <li key={n.id} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-muted/60">
           <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', LEVEL_DOT[n.level])} aria-hidden />
-          <span className="min-w-0 flex-1 break-words">{n.message}</span>
+          <span className="min-w-0 flex-1 break-words">{roomNoticeText(n, lang)}</span>
         </li>
       ))}
     </ul>

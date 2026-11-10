@@ -55,6 +55,11 @@ type AuthStrings = {
   haveAccount: string
   newHere: string
   createFree: string
+  agreeBefore: string
+  terms: string
+  agreeAnd: string
+  privacy: string
+  agreeAfter: string
 }
 
 const STRINGS = {
@@ -96,6 +101,11 @@ const STRINGS = {
     haveAccount: 'Already have an account?',
     newHere: 'New to NeelamGhor?',
     createFree: 'Create one free',
+    agreeBefore: 'By creating an account you agree to the ',
+    terms: 'Terms of Service',
+    agreeAnd: ' and the ',
+    privacy: 'privacy notice',
+    agreeAfter: '.',
   },
   bn: {
     welcomeNew: (name) => `NeelamGhor-এ স্বাগতম, ${name}!`,
@@ -135,6 +145,11 @@ const STRINGS = {
     haveAccount: 'আগে থেকেই অ্যাকাউন্ট আছে?',
     newHere: 'NeelamGhor-এ নতুন?',
     createFree: 'ফ্রিতে অ্যাকাউন্ট খুলুন',
+    agreeBefore: 'অ্যাকাউন্ট খুলে আপনি ',
+    terms: 'ব্যবহারের শর্তাবলি',
+    agreeAnd: ' ও ',
+    privacy: 'গোপনীয়তা নীতি',
+    agreeAfter: ' মেনে নিচ্ছেন।',
   },
 } satisfies Strings<AuthStrings>
 
@@ -386,6 +401,19 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
               )}
               {isRegister ? t.createAccount : t.logIn}
             </Button>
+            {isRegister ? (
+              <p className="text-center text-xs text-muted-foreground">
+                {t.agreeBefore}
+                <AppLink href="/terms" className="font-medium text-foreground underline underline-offset-2">
+                  {t.terms}
+                </AppLink>
+                {t.agreeAnd}
+                <AppLink href="/privacy" className="font-medium text-foreground underline underline-offset-2">
+                  {t.privacy}
+                </AppLink>
+                {t.agreeAfter}
+              </p>
+            ) : null}
           </form>
 
           <Separator className="my-5" />

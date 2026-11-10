@@ -4,7 +4,9 @@
 //
 // Run EXACTLY ONE instance. Room state, bid timers and the per-room lock
 // live in this process's memory; a second instance would run its own
-// clocks against the same rooms. Health check: GET /healthz.
+// clocks against the same rooms. A lease row in the database enforces it
+// (lease.ts): an instance only starts listening once it holds the lease.
+// Health check: GET /healthz.
 // ============================================================
 import './env' // MUST be first: loads DATABASE_URL / AUCTION_SECRET from the parent .env
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -12,8 +14,10 @@ import { Server, type Socket } from 'socket.io'
 import { explainTokenFailure, getAuctionSecret, secretFingerprint, verifyToken } from '../../src/lib/crypto'
 import { createResilientClient } from '../../src/lib/db-resilience'
 import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
+import { reportError } from '../../src/lib/report-error'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
-import { AuctionEngine } from './engine'
+import { AuctionEngine, SocketGone } from './engine'
+import { acquireLease, type Lease } from './lease'
 import { startOutboxWorker } from './outbox'
 
 // Fail fast: without the shared secret no token can be verified.
@@ -65,13 +69,42 @@ const LIMITS = {
 // thousands, or everyone reconnecting after a restart) is admitted at a
 // steady pace instead of all at once. Seats (organizer/managers) are exempt.
 const VIEWER_JOINS_PER_ROOM = { limit: 30, windowMs: 10_000 }
+// Per viewer pass, checked BEFORE the room budget is charged: one pass
+// hammering join_room from many sockets can no longer use up the room's budget
+// and lock every other viewer out.
+const VIEWER_JOINS_PER_PASS = { limit: 6, windowMs: 60_000 }
 // One viewer pass (one REST join) may be open in a few tabs, not hundreds.
 const MAX_SOCKETS_PER_VIEWER_PASS = 5
 
+/**
+ * Prisma's default pool is (CPUs × 2 + 1) connections — 3 on a small instance —
+ * shared by every room's bids, joins and timers. Use an explicit size unless
+ * the URL already sets one (Neon's pooler multiplexes these, so 10 is cheap).
+ */
+function withPoolSize(size: number): { datasourceUrl?: string } {
+  const raw = process.env.DATABASE_URL
+  if (!raw) return {}
+  try {
+    const url = new URL(raw)
+    if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', String(size))
+    return { datasourceUrl: url.toString() }
+  } catch {
+    return {}
+  }
+}
+const POOL_SIZE = Number(process.env.AUCTION_DB_POOL_SIZE) || 10
+
 // Retries transient connection failures on reads; 20 s transaction budget.
-const db = createResilientClient()
+const db = createResilientClient(withPoolSize(POOL_SIZE))
+// The SMS outbox, the retention sweep and the engine lease get their own small
+// pool, so background work never makes a bid wait for a connection.
+const backgroundDb = createResilientClient(withPoolSize(2))
 // Delivers queued SMS (Notification outbox) and runs the hourly data-retention sweep.
-const stopOutbox = startOutboxWorker(db)
+const stopOutbox = startOutboxWorker(backgroundDb)
+
+/** Set once shutdown starts: no new connections, joins, bids or actions. */
+let shuttingDown = false
+const RESTARTING = 'The auction service is restarting — try again in a moment'
 const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/', // DO NOT change — Caddy gateway requires this exact path
@@ -201,9 +234,14 @@ const SEAT_REVOKED = 'Your seat pass is no longer valid — log in again to rejo
 /** Seat passes issued after login sessions carry the session id (`sid`). */
 type SeatIdentity = SocketIdentity & { sid?: string }
 
+// A manager seat that no longer belongs to this account (the organizer reassigned
+// or removed the team's manager): back to the join card, not an automatic re-seat.
+const MANAGER_SEAT_GONE = "This seat is no longer valid — log in as the team's manager and join again."
+
 async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): Promise<string | null> {
   if (identity.role !== 'MANAGER' && identity.role !== 'ORGANIZER') return null
-  const [user, session] = await Promise.all([
+  if (identity.role === 'MANAGER' && (!identity.userId || !identity.teamId)) return MANAGER_SEAT_GONE
+  const [user, session, team] = await Promise.all([
     identity.userId
       ? db.user.findUnique({ where: { id: identity.userId }, select: { role: true, status: true, sessionVersion: true } })
       : null,
@@ -213,7 +251,16 @@ async function seatRevokedReason(identity: SeatIdentity, tournamentId: string): 
     identity.sid
       ? db.session.findUnique({ where: { id: identity.sid }, select: { userId: true, revokedAt: true, expiresAt: true } })
       : null,
+    // A bidding seat belongs to the team's CURRENT manager. Re-checked here (not
+    // only on join) so a manager the organizer replaces mid-lot stops bidding
+    // within SEAT_RECHECK_MS instead of at the next player.
+    identity.role === 'MANAGER' && identity.teamId
+      ? db.team.findUnique({ where: { id: identity.teamId }, select: { tournamentId: true, managerUserId: true } })
+      : null,
   ])
+  if (identity.role === 'MANAGER' && (!team || team.tournamentId !== tournamentId || team.managerUserId !== identity.userId)) {
+    return MANAGER_SEAT_GONE
+  }
   if (!user || user.status !== 'ACTIVE') return SEAT_REVOKED
   // Passes issued before session versions carry none and count as 0.
   if ((identity.sv ?? 0) !== user.sessionVersion) return SEAT_REVOKED
@@ -262,6 +309,7 @@ async function seatRevoked(socket: Socket, identity: SeatIdentity): Promise<stri
 }
 
 io.use((socket, next) => {
+  if (shuttingDown) return next(new Error(RESTARTING))
   const { limit, windowMs } = LIMITS.connect
   const key = headerClientKey((name) => socket.handshake.headers[name], 'socket-connect', socket.handshake.address)
   if (rateLimit(key, limit, windowMs) !== null) return next(new Error('Too many connections — try again shortly'))
@@ -277,6 +325,7 @@ interface JoinAck {
 io.on('connection', (socket) => {
   socket.on('join_room', async (data: { roomCode?: string; token?: string }, ack?: (res: JoinAck) => void) => {
     try {
+      if (shuttingDown) return ack?.({ ok: false, error: RESTARTING })
       if (throttled(socket, 'join') !== null) return ack?.({ ok: false, error: 'Too many join attempts — wait a moment and retry' })
       const roomCode = String(data?.roomCode ?? '').trim().toUpperCase()
       const token = String(data?.token ?? '')
@@ -291,16 +340,20 @@ io.on('connection', (socket) => {
 
       let passKey: string | undefined
       if (identity.role === 'VIEWER') {
+        // Per-pass checks first: they cost the room nothing, so one pass can't
+        // spend the shared budget below on joins that were going to be refused.
+        passKey = passKeyOf(token)
+        const open = viewerPassSockets.get(passKey)
+        if (open && !open.has(socket.id) && open.size >= MAX_SOCKETS_PER_VIEWER_PASS) {
+          return ack?.({ ok: false, error: 'This viewer pass is open in too many tabs — close one and try again' })
+        }
+        const passWait = rateLimit(`viewer-pass-join:${passKey}`, VIEWER_JOINS_PER_PASS.limit, VIEWER_JOINS_PER_PASS.windowMs)
+        if (passWait !== null) return ack?.({ ok: false, error: `Too many join attempts — try again in ${passWait}s` })
         // Keyed by the signed auction id, so a made-up room code can't drain another room's budget.
         const { limit, windowMs } = VIEWER_JOINS_PER_ROOM
         const wait = rateLimit(`viewer-join:${identity.auctionId}`, limit, windowMs)
         if (wait !== null) {
           return ack?.({ ok: false, error: `Lots of people are joining right now — try again in ${wait}s` })
-        }
-        passKey = passKeyOf(token)
-        const open = viewerPassSockets.get(passKey)
-        if (open && !open.has(socket.id) && open.size >= MAX_SOCKETS_PER_VIEWER_PASS) {
-          return ack?.({ ok: false, error: 'This viewer pass is open in too many tabs — close one and try again' })
         }
       }
 
@@ -308,23 +361,10 @@ io.on('connection', (socket) => {
       if (!auction) return ack?.({ ok: false, error: 'Room not found' })
       if (identity.auctionId !== auction.id) return ack?.({ ok: false, error: 'Token is not valid for this room' })
 
-      // A bidding seat belongs to the team's manager account — re-check against
-      // the DB so a seat the organizer reassigned (or a token issued before the
-      // login requirement) cannot keep bidding.
-      if (identity.role === 'MANAGER') {
-        const team = identity.teamId
-          ? await db.team.findUnique({ where: { id: identity.teamId }, select: { tournamentId: true, managerUserId: true } })
-          : null
-        if (
-          !identity.userId ||
-          !team ||
-          team.tournamentId !== auction.tournamentId ||
-          team.managerUserId !== identity.userId
-        ) {
-          return ack?.({ ok: false, error: "This seat is no longer valid — log in as the team's manager and join again." })
-        }
-      }
-
+      // Seats are re-checked against the DB: the account (blocked? signed out?),
+      // and for managers that they still manage this team — a seat the
+      // organizer reassigned (or a token issued before the login requirement)
+      // cannot keep bidding.
       const revoked = await seatRevokedReason(identity, auction.tournamentId)
       if (revoked) return ack?.({ ok: false, error: revoked })
 
@@ -343,7 +383,9 @@ io.on('connection', (socket) => {
       }
       return ack?.({ ok: true, state })
     } catch (err) {
-      console.error('[auction-service] join_room failed:', err)
+      // The client dropped mid-join: nobody is listening for the answer.
+      if (err instanceof SocketGone) return
+      void reportError(err, { source: 'auction-service', where: 'join_room', roomCode: data?.roomCode })
       return ack?.({ ok: false, error: 'Join failed' })
     }
   })
@@ -355,19 +397,26 @@ io.on('connection', (socket) => {
     // Before anything that can wait: a bid's lateness is judged by arrival.
     const receivedAt = Date.now()
     const { data, ack } = splitArgs<{ amount?: unknown; playerId?: unknown }>(rawData, rawAck)
+    let done: (() => void) | undefined
     try {
+      if (shuttingDown) return reply(socket, ack, RESTARTING)
       const identity = socket.data.identity as SeatIdentity | undefined
       if (!identity) return reply(socket, ack, 'Join the room first')
       if (identity.role !== 'MANAGER') return reply(socket, ack, 'Only team managers can bid')
       const wait = throttled(socket, 'bid')
       if (wait !== null) return reply(socket, ack, ack ? 'Too many bids — slow down' : `Slow down — try again in ${wait}s`)
+      // From here the bid may wait (seat re-check, room lock): the lot must not
+      // close under a bid that arrived before its deadline.
+      done = engine.bidArrived(identity.auctionId, receivedAt)
       const revoked = await seatRevoked(socket, identity)
       if (revoked) return ack?.({ ok: false, error: revoked }) // old clients: the seat_revoked event says it
       const error = await engine.placeBid(identity, data?.amount, { playerId: data?.playerId, receivedAt })
       reply(socket, ack, error)
     } catch (err) {
-      console.error('[auction-service] place_bid failed:', err)
+      void reportError(err, { source: 'auction-service', where: 'place_bid' })
       reply(socket, ack, 'Bid failed — try again')
+    } finally {
+      done?.()
     }
   })
 
@@ -375,6 +424,7 @@ io.on('connection', (socket) => {
   socket.on('organizer_action', async (rawData: unknown, rawAck?: unknown) => {
     const { data, ack } = splitArgs<{ action?: string; payload?: Record<string, unknown> }>(rawData, rawAck)
     try {
+      if (shuttingDown) return reply(socket, ack, RESTARTING)
       const identity = socket.data.identity as SeatIdentity | undefined
       if (!identity) return reply(socket, ack, 'Join the room first')
       if (identity.role !== 'ORGANIZER') return reply(socket, ack, 'Only the organizer can perform this action')
@@ -386,7 +436,7 @@ io.on('connection', (socket) => {
       const error = await engine.organizerAction(identity, data?.action, payload)
       reply(socket, ack, error)
     } catch (err) {
-      console.error('[auction-service] organizer_action failed:', err)
+      void reportError(err, { source: 'auction-service', where: 'organizer_action', action: data?.action })
       reply(socket, ack, 'Action failed — try again')
     }
   })
@@ -399,6 +449,20 @@ io.on('connection', (socket) => {
 
 // Hosts like Render assign the port via PORT; locally it stays 3003.
 const PORT = Number(process.env.PORT) || 3003
+
+// Single-instance guard: hold the engine lease BEFORE listening. While another
+// instance holds it this one serves nothing — clients keep retrying against
+// the live instance, and a zero-downtime deploy (which this service must not
+// use) fails its health check instead of running two auctioneers at once.
+let lease: Lease | null = null
+lease = await acquireLease(backgroundDb, (holder) => {
+  void reportError(new Error(`Engine lease taken over by ${holder ?? 'another instance'} — stopping this instance`), {
+    source: 'auction-service',
+    where: 'lease',
+  })
+  void shutdown('LEASE_LOST', 1)
+})
+
 httpServer.listen(PORT, () => {
   console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/", health check GET /healthz)`)
   console.log(
@@ -419,18 +483,42 @@ httpServer.listen(PORT, () => {
   console.log(`[auction-service] AUCTION_SECRET fingerprint: ${secretFingerprint()}`)
 })
 
-// Graceful shutdown
-let shuttingDown = false
-async function shutdown(signal: string): Promise<void> {
+// ---------- graceful shutdown ----------
+// Refuse new work, let every bid / action / timer step already running finish
+// (so a committed sale also reaches the clients), then close sockets, release
+// the lease (the next instance can start at once) and exit.
+const DRAIN_TIMEOUT_MS = 8_000
+const HARD_EXIT_MS = 15_000
+
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
-  console.log(`[auction-service] ${signal} received — shutting down…`)
-  engine.dispose()
+  console.log(`[auction-service] ${signal} — shutting down: draining room work…`)
+  setTimeout(() => process.exit(exitCode || 1), HARD_EXIT_MS).unref()
+  httpServer.close() // stop accepting new connections
+  try {
+    await engine.shutdown(DRAIN_TIMEOUT_MS)
+  } catch (err) {
+    console.error('[auction-service] drain failed:', (err as Error).message)
+  }
   stopOutbox()
   io.close()
-  httpServer.close()
-  await db.$disconnect().catch(() => undefined)
-  process.exit(0)
+  await lease?.release()
+  await Promise.all([db.$disconnect().catch(() => undefined), backgroundDb.$disconnect().catch(() => undefined)])
+  console.log('[auction-service] stopped')
+  process.exit(exitCode)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
+
+// ---------- crash guards ----------
+// A stray rejected promise is logged and alerted, not fatal: room state is
+// written to the database before memory, so carrying on is safe. A thrown
+// exception may have left memory half-updated, so stop cleanly instead — the
+// host restarts the service and rooms rebuild from the database.
+process.on('unhandledRejection', (reason) => {
+  void reportError(reason, { source: 'auction-service', where: 'unhandledRejection' })
+})
+process.on('uncaughtException', (err) => {
+  void reportError(err, { source: 'auction-service', where: 'uncaughtException' }).finally(() => void shutdown('uncaughtException', 1))
+})

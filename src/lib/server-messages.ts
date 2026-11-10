@@ -1,9 +1,11 @@
-// Bangla for the API's most common user-facing error messages. The server
-// answers in English (its messages are also logged and used by scripts); the
-// browser swaps in Bangla when the UI is in Bangla (lib/api.ts). Anything not
-// listed here is shown as the server sent it.
+// Bangla for the user-facing messages of the API and the live auction service.
+// The servers answer in English (their messages are also logged and used by
+// scripts); the browser swaps in Bangla when the UI is in Bangla (lib/api.ts,
+// lib/use-auction-socket.ts). Anything not listed is shown as the server sent it.
 //
-// Keep keys identical to the server strings (jsonError('…') in src/app/api).
+// Keep keys identical to the server strings. server-messages.test.ts finds every
+// message in src/app/api and the auction service and fails CI when one has no
+// Bangla here — so a reworded message can't silently fall back to English.
 
 const EXACT: Record<string, string> = {
   // Generic / auth
@@ -27,6 +29,8 @@ const EXACT: Record<string, string> = {
   'You do not have permission to manage this tournament': 'এই টুর্নামেন্ট পরিচালনার অনুমতি আপনার নেই।',
   'You do not have permission to manage this team': 'এই দল পরিচালনার অনুমতি আপনার নেই।',
   'You do not have permission to manage this player': 'এই খেলোয়াড় পরিচালনার অনুমতি আপনার নেই।',
+  'Only the tournament owner can change where registration fees are paid':
+    'রেজিস্ট্রেশন ফি কোন নম্বরে যাবে তা শুধু টুর্নামেন্টের মালিক বদলাতে পারেন।',
   'Tournament name must be 2–80 characters': 'টুর্নামেন্টের নাম ২ থেকে ৮০ অক্ষরের মধ্যে হতে হবে।',
   'No valid fields to update': 'হালনাগাদ করার মতো কিছু পাওয়া যায়নি।',
   'Could not update tournament': 'টুর্নামেন্ট হালনাগাদ করা যায়নি।',
@@ -163,6 +167,87 @@ const EXACT: Record<string, string> = {
   'Admin accounts cannot be deleted here. Ask another admin to remove your admin role first.': 'অ্যাডমিন অ্যাকাউন্ট এখান থেকে মোছা যায় না। আগে আরেকজন অ্যাডমিনকে আপনার অ্যাডমিন ভূমিকা সরাতে বলুন।',
   'Enter your password to confirm': 'নিশ্চিত করতে আপনার পাসওয়ার্ড দিন।',
   'Incorrect password': 'পাসওয়ার্ড সঠিক নয়।',
+
+  // More API messages (organizer, admin, league)
+  'Auction date must be a valid date (ISO string)': 'নিলামের সঠিক তারিখ দিন।',
+  'Attach an image file': 'একটি ছবির ফাইল যুক্ত করুন।',
+  'Payment instructions must be at most 300 characters': 'পেমেন্টের নির্দেশনা সর্বোচ্চ ৩০০ অক্ষরের হতে পারে।',
+  'You cannot change your own status': 'নিজের অ্যাকাউন্টের অবস্থা আপনি বদলাতে পারবেন না।',
+  'Cannot change the status of an admin account': 'অ্যাডমিন অ্যাকাউন্টের অবস্থা বদলানো যায় না।',
+  'Balls must be from 0 to 600': 'বল ০ থেকে ৬০০-এর মধ্যে হতে হবে।',
+  'While the auction is live or paused, budgets and squad caps can only be raised, and the minimum squad cannot change':
+    'নিলাম চলাকালীন বা বিরতিতে বাজেট ও স্কোয়াডের সীমা শুধু বাড়ানো যায়, আর ন্যূনতম স্কোয়াড বদলানো যায় না।',
+  'maxSquad must be a positive whole number': 'সর্বোচ্চ স্কোয়াড একটি ধনাত্মক পূর্ণ সংখ্যা হতে হবে।',
+  'minSquad must be a non-negative integer': 'ন্যূনতম স্কোয়াড ০ বা তার বেশি পূর্ণ সংখ্যা হতে হবে।',
+  'Manager user not found': 'ম্যানেজারের অ্যাকাউন্ট পাওয়া যায়নি।',
+  "Enter the manager's full login email": 'ম্যানেজারের পুরো লগইন ইমেইল দিন।',
+  'Note must be at most 300 characters': 'নোট সর্বোচ্চ ৩০০ অক্ষরের হতে পারে।',
+  'Too many stat lines': 'পরিসংখ্যানের সারি অনেক বেশি।',
+  "This team hasn't been assigned to a manager yet. Ask the organizer for your team's invite link.":
+    'এই দলে এখনো কোনো ম্যানেজার যুক্ত করা হয়নি। আয়োজকের কাছে আপনার দলের ইনভাইট লিংক চেয়ে নিন।',
+  'Another manager has just claimed this team. Pick a different team.': 'আরেকজন ম্যানেজার এইমাত্র দলটি নিয়ে নিয়েছেন। অন্য দল বেছে নিন।',
+  'Add at least one team before setting up the auction': 'নিলাম সাজানোর আগে অন্তত একটি দল যোগ করুন।',
+  'Add at least one player before setting up the auction': 'নিলাম সাজানোর আগে অন্তত একজন খেলোয়াড় যোগ করুন।',
+  'Auction timings can only be changed while the auction is READY': 'নিলাম শুরুর আগেই শুধু নিলামের সময় বদলানো যায়।',
+  'Those registrations have no fee payment to review': 'এই রেজিস্ট্রেশনগুলোতে যাচাই করার মতো কোনো ফি পেমেন্ট নেই।',
+  'Start date must be a valid date': 'সঠিক শুরুর তারিখ দিন।',
+  'Provide a "csv" string or "rows" with your player data': 'খেলোয়াড়দের তথ্য দিন — CSV পেস্ট করুন বা ফাইল তুলুন।',
+  'Another player upload for this tournament finished at the same moment. Please try again.':
+    'একই সময়ে এই টুর্নামেন্টে আরেকটি খেলোয়াড় আপলোড শেষ হয়েছে। আবার চেষ্টা করুন।',
+  'Upload the image here instead of pasting a link to another site': 'অন্য সাইটের লিংক না দিয়ে ছবিটি এখানে আপলোড করুন।',
+
+  // Live auction room (refusals from the auction service; see use-auction-socket.ts)
+  'Join the room first': 'আগে রুমে যোগ দিন।',
+  'Auction is not live': 'নিলাম এখন চালু নেই।',
+  'The player on the block changed — check and bid again': 'নিলামের খেলোয়াড় বদলে গেছে — দেখে আবার বিড করুন।',
+  'Too late — bidding on this player had closed': 'দেরি হয়ে গেছে — এই খেলোয়াড়ের বিড বন্ধ হয়ে গিয়েছিল।',
+  'No player on the block': 'এখন নিলামে কোনো খেলোয়াড় নেই।',
+  'You are not assigned to a team in this room': 'এই রুমে আপনি কোনো দলের সাথে যুক্ত নন।',
+  "You are no longer this team's manager — log in with the team's account and rejoin":
+    'আপনি আর এই দলের ম্যানেজার নন — দলের অ্যাকাউন্টে লগইন করে আবার যোগ দিন।',
+  'The auction moved on — check the current bid and try again': 'নিলাম এগিয়ে গেছে — বর্তমান বিড দেখে আবার চেষ্টা করুন।',
+  'Auction has already ended': 'নিলাম আগেই শেষ হয়ে গেছে।',
+  'Auction already started': 'নিলাম আগেই শুরু হয়েছে।',
+  'Add at least one player before starting': 'শুরুর আগে অন্তত একজন খেলোয়াড় যোগ করুন।',
+  'Add at least one team before starting': 'শুরুর আগে অন্তত একটি দল যোগ করুন।',
+  'Auction is not paused': 'নিলাম বিরতিতে নেই।',
+  'A player is already on the block': 'একজন খেলোয়াড় আগে থেকেই নিলামে আছেন।',
+  'Player is not selectable (SOLD players need Re-auction)': 'এই খেলোয়াড়কে বেছে নেওয়া যাবে না (বিক্রি হওয়া খেলোয়াড়ের জন্য রি-অকশন লাগবে)।',
+  'Auction has ended': 'নিলাম শেষ হয়ে গেছে।',
+  'This auction is not in category mode': 'এই নিলাম ক্যাটাগরি মোডে নয়।',
+  'Invalid category (A–E)': 'ক্যাটাগরি সঠিক নয় (A–E)।',
+  'No bid to sell — use Force Unsold instead': 'বিক্রির মতো কোনো বিড নেই — বরং অবিক্রিত ঘোষণা করুন।',
+  'The auction has ended — reopen it before re-auctioning a player.': 'নিলাম শেষ — খেলোয়াড়কে আবার নিলামে তুলতে আগে নিলাম আবার খুলুন।',
+  'Resume the auction before re-auctioning a player.': 'খেলোয়াড়কে আবার নিলামে তোলার আগে নিলাম চালু করুন।',
+  'Start the auction before re-auctioning a player.': 'খেলোয়াড়কে আবার নিলামে তোলার আগে নিলাম শুরু করুন।',
+  'No player selected': 'কোনো খেলোয়াড় বেছে নেওয়া হয়নি।',
+  'Player not found in this tournament': 'এই টুর্নামেন্টে খেলোয়াড়টি পাওয়া যায়নি।',
+  'This player is already on the auction block.': 'এই খেলোয়াড় আগে থেকেই নিলামে আছেন।',
+  'That sale has no recorded team or price, so it cannot be refunded.': 'এই বিক্রিতে দল বা দামের রেকর্ড নেই, তাই টাকা ফেরত দেওয়া যাবে না।',
+  'That sale has already been changed — refresh the pool and try again.': 'এই বিক্রি আগেই বদলানো হয়েছে — পুল রিফ্রেশ করে আবার চেষ্টা করুন।',
+  'Auction already ended': 'নিলাম আগেই শেষ হয়েছে।',
+  'The auction is not ended': 'নিলাম এখনো শেষ হয়নি।',
+  'The auction is finalized — reopen it first.': 'নিলাম চূড়ান্ত হয়ে গেছে — আগে আবার খুলুন।',
+  'Resume the auction before starting a new round.': 'নতুন রাউন্ড শুরুর আগে নিলাম চালু করুন।',
+  'A player is on the block — finish this round first.': 'একজন খেলোয়াড় এখন নিলামে — আগে এই রাউন্ড শেষ করুন।',
+  'This round still has players to auction — finish the round first.': 'এই রাউন্ডে এখনো নিলামের খেলোয়াড় বাকি — আগে রাউন্ডটি শেষ করুন।',
+  'There are no unsold or skipped players to re-auction.': 'আবার নিলামে তোলার মতো কোনো অবিক্রিত বা বাদ পড়া খেলোয়াড় নেই।',
+  'The player on the block changed — check and try again': 'নিলামের খেলোয়াড় বদলে গেছে — দেখে আবার চেষ্টা করুন।',
+  'A new bid came in — check and try again': 'নতুন একটি বিড এসেছে — দেখে আবার চেষ্টা করুন।',
+  'Too many join attempts — wait a moment and retry': 'অনেকবার যোগ দেওয়ার চেষ্টা হয়েছে — একটু পরে আবার চেষ্টা করুন।',
+  'This viewer pass is open in too many tabs — close one and try again': 'এই দর্শক-পাস অনেকগুলো ট্যাবে খোলা — একটি বন্ধ করে আবার চেষ্টা করুন।',
+  'Token is not valid for this room': 'এই পাস এই রুমের জন্য নয়।',
+  'Join failed': 'রুমে যোগ দেওয়া যায়নি।',
+  'The auction service is restarting — try again in a moment': 'নিলাম সার্ভিস আবার চালু হচ্ছে — একটু পরে আবার চেষ্টা করুন।',
+  'Your seat pass is no longer valid — log in again to rejoin.': 'আপনার আসনের পাস আর বৈধ নয় — আবার যোগ দিতে লগইন করুন।',
+  "This seat is no longer valid — log in as the team's manager and join again.": 'এই আসন আর বৈধ নয় — দলের ম্যানেজার হিসেবে লগইন করে আবার যোগ দিন।',
+  'Invalid bid amount': 'বিডের অঙ্ক সঠিক নয়।',
+  'Your squad is full': 'আপনার স্কোয়াড পূর্ণ।',
+  'You already hold the highest bid': 'সর্বোচ্চ বিড আগেই আপনার।',
+  'You lost this player in the re-auction — the organizer has blocked previous owners from bidding again':
+    'রি-অকশনে আপনি এই খেলোয়াড়কে হারিয়েছেন — আয়োজক আগের মালিকদের আবার বিড করা বন্ধ রেখেছেন।',
+  'Your room pass has expired — refresh your seat': 'আপনার রুম-পাসের মেয়াদ শেষ — আসনটি রিফ্রেশ করুন।',
+  'Invalid or expired token': 'পাসটি সঠিক নয় বা মেয়াদ শেষ।',
 }
 
 /** Messages with numbers or names in them: [pattern, Bangla builder]. */
@@ -185,6 +270,35 @@ const PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^Scores must be whole numbers from 0 to (\d+)$/, (m) => `স্কোর ০ থেকে ${m[1]}-এর মধ্যে পূর্ণ সংখ্যা হতে হবে।`],
   [/^Wickets must be from 0 to (\d+)$/, (m) => `উইকেট ০ থেকে ${m[1]}-এর মধ্যে হতে হবে।`],
   [/^Sponsors are a Pro feature/, () => `স্পনসর প্রো ফিচার — যোগ করতে এই টুর্নামেন্ট আপগ্রেড করুন।`],
+  [/^You still own (\d+) tournament\S*\. Delete or archive/, (m) => `আপনার এখনো ${m[1]}টি টুর্নামেন্ট আছে। আগে সেগুলো মুছুন বা আর্কাইভ করুন, তারপর অ্যাকাউন্ট মুছুন।`],
+  [/^Setting "(.+)" exceeds (\d+) characters$/, (m) => `"${m[1]}" সেটিং ${m[2]} অক্ষরের বেশি হতে পারে না।`],
+  [/^(.+) must be a positive whole number$/, (m) => `${m[1]} একটি ধনাত্মক পূর্ণ সংখ্যা হতে হবে।`],
+  [/^(.+) must be a Bangladeshi mobile number/, (m) => `${m[1]} একটি সঠিক বাংলাদেশি মোবাইল নম্বর হতে হবে, যেমন 01712345678।`],
+  [/^Overs can't be more than the (\d+) overs per innings$/, (m) => `ওভার ইনিংসের ${m[1]} ওভারের বেশি হতে পারে না।`],
+  [/^Role must be one of: (.+)$/, (m) => `রোল এগুলোর একটি হতে হবে: ${m[1]}`],
+  [/^(.+) must be a valid date \(ISO string\)$/, () => 'সঠিক তারিখ দিন।'],
+  [/^(.+) must be a whole number from 0 to (\d+)$/, (m) => `${m[1]} ০ থেকে ${m[2]}-এর মধ্যে পূর্ণ সংখ্যা হতে হবে।`],
+  [/^(.+) payments are not accepted right now$/, (m) => `এখন ${m[1]} পেমেন্ট নেওয়া হচ্ছে না।`],
+
+  // Live auction room
+  [/^(.+) is on the block — sell, mark unsold or skip them first\.$/, (m) => `${m[1]} এখন নিলামে — আগে বিক্রি, অবিক্রিত বা বাদ দিন।`],
+  [/^Only a sold player can be re-auctioned — (.+) is (\S+)\./, (m) => `শুধু বিক্রি হওয়া খেলোয়াড়কে রি-অকশন করা যায় — ${m[1]} এখন ${m[2]}। নিলামে তুলতে পুল থেকে বেছে নিন।`],
+  [/^Bidding duration must be (\d+)–(\d+) seconds$/, (m) => `বিডের সময় ${m[1]}–${m[2]} সেকেন্ডের মধ্যে হতে হবে।`],
+  [/^Too many join attempts — try again in (\d+)s$/, (m) => `অনেকবার যোগ দেওয়ার চেষ্টা হয়েছে — ${m[1]} সেকেন্ড পরে আবার চেষ্টা করুন।`],
+  [/^Lots of people are joining right now — try again in (\d+)s$/, (m) => `এখন অনেকে একসাথে যোগ দিচ্ছেন — ${m[1]} সেকেন্ড পরে আবার চেষ্টা করুন।`],
+  [/^(.+)'s squad is already full$/, (m) => `${m[1]}-এর স্কোয়াড পূর্ণ।`],
+  [/^(.+) already holds the highest bid$/, (m) => `সর্বোচ্চ বিড আগেই ${m[1]}-এর।`],
+  [/^(.+) lost this player in the re-auction and is blocked/, (m) => `${m[1]} রি-অকশনে এই খেলোয়াড়কে হারিয়েছে, তাই আবার বিড করতে পারবে না।`],
+  [/^Minimum bid is (৳[\d,]+)$/, (m) => `সর্বনিম্ন বিড ${m[1]}।`],
+  [/^(.+) only has (৳[\d,]+) left$/, (m) => `${m[1]}-এর হাতে আছে মাত্র ${m[2]}।`],
+  [/^Bid exceeds .+ available budget \((৳[\d,]+) left\)$/, (m) => `বিড আপনার বাকি বাজেটের বেশি (বাকি ${m[1]})।`],
+  [
+    /^Maximum bid is (৳[\d,]+) — (৳[\d,]+) must stay back for (\d+) more player\S* to reach the minimum squad of (\d+)$/,
+    (m) => `সর্বোচ্চ বিড ${m[1]} — ন্যূনতম ${m[4]} জনের স্কোয়াড পূরণে আরও ${m[3]} জন খেলোয়াড়ের জন্য ${m[2]} রেখে দিতে হবে।`,
+  ],
+
+  // "Team 3: <message>" from bulk team creation: translate the message after the prefix (keep last).
+  [/^Team (\d+): (.+)$/, (m) => `দল ${m[1]}: ${serverMessageBn(m[2])}`],
 ]
 
 /** The Bangla version of a server message, or the message unchanged when none is known. */

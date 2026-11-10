@@ -526,3 +526,12 @@ model Sponsor {
 
   @@index([tournamentId, sortOrder])
 }
+
+// Single-instance guard for the live auction service: only the holder of an
+// unexpired lease serves rooms (mini-services/auction-service/lease.ts).
+model ServiceLease {
+  name       String   @id
+  holder     String
+  expiresAt  DateTime
+  acquiredAt DateTime @default(now())
+}

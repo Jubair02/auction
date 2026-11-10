@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { AlertTriangle, ShieldCheck } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { AppLink } from '@/components/shared/app-link'
+import { BackButton } from '@/components/shared/back-button'
 import { useCachedGet } from '@/lib/api-cache'
 import { type Lang, useLang } from '@/lib/i18n'
 
@@ -17,8 +18,8 @@ interface Section {
   body: ReactNode
 }
 
-const UPDATED = '6 November 2026'
-const UPDATED_BN = '৬ নভেম্বর ২০২৬'
+const UPDATED = '9 November 2026'
+const UPDATED_BN = '৯ নভেম্বর ২০২৬'
 
 const accountLink = (label: string) => (
   <AppLink href="/account" className="font-medium text-primary underline underline-offset-4">
@@ -53,7 +54,8 @@ function sections(lang: Lang, supportPhone: string | null): { title: string; int
                 এবং আয়োজকের নেওয়া নিবন্ধন ফি যাচাইয়ের জন্য।
               </li>
               <li>
-                <strong>লাইভ নিলাম রুম:</strong> দর্শক যে নাম দিয়ে রুমে ঢোকেন, এবং সব বিড (নিলামের হিসাবের জন্য)।
+                <strong>লাইভ নিলাম রুম:</strong> লগইন করা দর্শকের অ্যাকাউন্টের নাম (লগইন ছাড়া দর্শকের কোনো নাম রাখা হয় না), এবং সব বিড
+                (নিলামের হিসাবের জন্য)।
               </li>
               <li>
                 <strong>কারিগরি:</strong> লগইন সেশনের রেকর্ড, অপব্যবহার ঠেকাতে স্বল্পমেয়াদি অনুরোধ-গণনা (IP ঠিকানার ভিত্তিতে),
@@ -172,8 +174,8 @@ function sections(lang: Lang, supportPhone: string | null): { title: string; int
               and the registration fees organizers collect.
             </li>
             <li>
-              <strong>Live auction rooms:</strong> the display name viewers type to join, and every bid (the auction’s audit
-              trail).
+              <strong>Live auction rooms:</strong> a signed-in viewer’s account name (viewers who aren’t signed in watch
+              anonymously), and every bid (the auction’s audit trail).
             </li>
             <li>
               <strong>Technical:</strong> login session records, short-lived request counters keyed on IP address to stop abuse,
@@ -278,6 +280,7 @@ export default function PrivacyView() {
   return (
     <article className="mx-auto max-w-3xl space-y-6 px-4 py-8">
       <header className="space-y-2">
+        <BackButton className="mb-1" />
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <ShieldCheck className="h-6 w-6 text-primary" aria-hidden /> {doc.title}
         </h1>

@@ -1,7 +1,20 @@
 // Run: npm test (node --test). Pure outbox helpers only — no DB, no network.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { backoffMs, buildHttpRequest, httpConfigFromEnv, maskNumber, renderTemplate, soldSmsBody, type HttpDriverConfig } from './outbox.ts'
+import {
+  backoffMs,
+  buildHttpRequest,
+  httpConfigFromEnv,
+  maskNumber,
+  recordSmsSent,
+  renderTemplate,
+  SMS_LIMIT_DEFAULTS,
+  smsLimitsFromEnv,
+  smsQuotaBlock,
+  soldSmsBody,
+  type HttpDriverConfig,
+  type SmsUsage,
+} from './outbox.ts'
 
 describe('maskNumber', () => {
   it('keeps only the last 3 digits', () => {
@@ -77,9 +90,37 @@ describe('buildHttpRequest', () => {
 })
 
 describe('soldSmsBody', () => {
-  it('writes Bangla by default and English on request', () => {
-    const v = { player: 'Rakib', tournament: 'Dhaka Cup', team: 'Tigers', price: 150000 }
-    assert.match(soldSmsBody('bn', v), /অভিনন্দন Rakib!.*Tigers.*৳1,50,000/)
-    assert.match(soldSmsBody('en', v), /^Congratulations Rakib! Tigers bought you for ৳1,50,000/)
+  it('writes Bangla by default and English on request, never the player name', () => {
+    const v = { tournament: 'Dhaka Cup', team: 'Tigers', price: 150000 }
+    assert.match(soldSmsBody('bn', v), /^অভিনন্দন!.*Tigers.*৳1,50,000/)
+    assert.match(soldSmsBody('en', v), /^Congratulations! Tigers bought you for ৳1,50,000/)
+  })
+})
+
+describe('SMS daily quotas', () => {
+  const limits = { perNumber: 2, perTournament: 3, total: 10 }
+  const fresh = (): SmsUsage => ({ byNumber: new Map(), byTournament: new Map(), total: 0 })
+
+  it('blocks a number, a tournament or the platform once its quota is used', () => {
+    const usage = fresh()
+    const row = { to: '8801711111111', tournamentId: 't1' }
+    assert.equal(smsQuotaBlock(row, usage, limits), null)
+    recordSmsSent(row, usage)
+    recordSmsSent(row, usage)
+    assert.match(smsQuotaBlock(row, usage, limits)!, /this number/)
+    // Another number in the same tournament still goes, until the tournament cap.
+    const other = { to: '8801722222222', tournamentId: 't1' }
+    assert.equal(smsQuotaBlock(other, usage, limits), null)
+    recordSmsSent(other, usage)
+    assert.match(smsQuotaBlock(other, usage, limits)!, /Tournament/)
+    assert.match(smsQuotaBlock({ to: '8801733333333', tournamentId: null }, { ...fresh(), total: 10 }, limits)!, /Platform/)
+  })
+
+  it('reads limits from the environment and ignores invalid values', () => {
+    assert.deepEqual(smsLimitsFromEnv({}), SMS_LIMIT_DEFAULTS)
+    assert.deepEqual(smsLimitsFromEnv({ SMS_DAILY_LIMIT_PER_NUMBER: '3', SMS_DAILY_LIMIT_TOTAL: 'x' }), {
+      ...SMS_LIMIT_DEFAULTS,
+      perNumber: 3,
+    })
   })
 })

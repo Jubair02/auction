@@ -14,6 +14,12 @@
 //                    SMS_HTTP_URL / SMS_HTTP_METHOD / SMS_HTTP_BODY / SMS_HTTP_HEADERS.
 // SMS_ENABLED=0 marks due rows SKIPPED instead of sending them.
 //
+// Daily quotas (rolling 24 h of SENT messages; over-quota rows are SKIPPED):
+//   SMS_DAILY_LIMIT_PER_NUMBER     (default 5)    — nobody can be text-bombed
+//                                                   through public registrations
+//   SMS_DAILY_LIMIT_PER_TOURNAMENT (default 500)  — one tournament can't run up the bill
+//   SMS_DAILY_LIMIT_TOTAL          (default 5000) — platform-wide spend ceiling
+//
 // Only type imports and .ts-suffixed pure modules here, so `node --test` can
 // load this file for outbox.test.ts.
 // ============================================================
@@ -128,12 +134,61 @@ export function buildHttpRequest(
 
 const EN_IN = new Intl.NumberFormat('en-IN')
 
-/** "You were sold" text, in the tournament's SMS language. */
-export function soldSmsBody(lang: string, v: { player: string; tournament: string; team: string; price: number }): string {
+/**
+ * "You were sold" text, in the tournament's SMS language. Never includes the
+ * player's name: for self-registered players that is text anyone could type
+ * on the public form, and it must not be able to put words in our SMS.
+ */
+export function soldSmsBody(lang: string, v: { tournament: string; team: string; price: number }): string {
   const price = `৳${EN_IN.format(v.price)}`
   return lang === 'en'
-    ? `Congratulations ${v.player}! ${v.team} bought you for ${price} in the ${v.tournament} auction. — NeelamGhor`
-    : `অভিনন্দন ${v.player}! ${v.tournament} নিলামে ${v.team} দল আপনাকে ${price}-এ কিনেছে। — NeelamGhor`
+    ? `Congratulations! ${v.team} bought you for ${price} in the ${v.tournament} auction. — NeelamGhor`
+    : `অভিনন্দন! ${v.tournament} নিলামে ${v.team} দল আপনাকে ${price}-এ কিনেছে। — NeelamGhor`
+}
+
+export interface SmsLimits {
+  perNumber: number
+  perTournament: number
+  total: number
+}
+
+export const SMS_LIMIT_DEFAULTS: SmsLimits = { perNumber: 5, perTournament: 500, total: 5000 }
+
+/** Reads the daily SMS quotas from the environment (invalid values keep the default). */
+export function smsLimitsFromEnv(env: Record<string, string | undefined>): SmsLimits {
+  const read = (name: string, fallback: number) => {
+    const n = Number(env[name])
+    return Number.isInteger(n) && n > 0 ? n : fallback
+  }
+  return {
+    perNumber: read('SMS_DAILY_LIMIT_PER_NUMBER', SMS_LIMIT_DEFAULTS.perNumber),
+    perTournament: read('SMS_DAILY_LIMIT_PER_TOURNAMENT', SMS_LIMIT_DEFAULTS.perTournament),
+    total: read('SMS_DAILY_LIMIT_TOTAL', SMS_LIMIT_DEFAULTS.total),
+  }
+}
+
+/** Messages sent in the last 24 h, by number, by tournament and in total. */
+export interface SmsUsage {
+  byNumber: Map<string, number>
+  byTournament: Map<string, number>
+  total: number
+}
+
+/** Why this message must not be sent now (a quota is used up), or null. */
+export function smsQuotaBlock(row: { to: string; tournamentId: string | null }, usage: SmsUsage, limits: SmsLimits): string | null {
+  if (usage.total >= limits.total) return `Platform daily SMS limit reached (${limits.total})`
+  if (row.tournamentId && (usage.byTournament.get(row.tournamentId) ?? 0) >= limits.perTournament) {
+    return `Tournament daily SMS limit reached (${limits.perTournament})`
+  }
+  if ((usage.byNumber.get(row.to) ?? 0) >= limits.perNumber) return `Daily SMS limit for this number reached (${limits.perNumber})`
+  return null
+}
+
+/** Counts a sent message against the in-memory usage for the rest of the batch. */
+export function recordSmsSent(row: { to: string; tournamentId: string | null }, usage: SmsUsage): void {
+  usage.total++
+  usage.byNumber.set(row.to, (usage.byNumber.get(row.to) ?? 0) + 1)
+  if (row.tournamentId) usage.byTournament.set(row.tournamentId, (usage.byTournament.get(row.tournamentId) ?? 0) + 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +274,7 @@ export async function queuePlayerSoldSms(
         {
           channel: 'SMS',
           to,
-          body: soldSmsBody(t.smsLang, { player: sale.player.name, tournament: t.name, team: sale.teamName, price: sale.price }).slice(0, 480),
+          body: soldSmsBody(t.smsLang, { tournament: t.name, team: sale.teamName, price: sale.price }).slice(0, 480),
           kind: 'PLAYER_SOLD',
           tournamentId: sale.tournamentId,
           dedupeKey: `sold:${sale.player.id}:${sale.player.auctionCycle}`,
@@ -257,6 +312,7 @@ interface ClaimedRow {
   body: string
   kind: string
   attempts: number
+  tournamentId: string | null
 }
 
 export interface OutboxWorkerOptions {
@@ -281,7 +337,7 @@ async function claimDue(db: ResilientClient): Promise<ClaimedRow[]> {
       LIMIT ${BATCH_SIZE}
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING "id", "to", "body", "kind", "attempts"`
+    RETURNING "id", "to", "body", "kind", "attempts", "tournamentId"`
 }
 
 async function deliverBatch(db: ResilientClient, driver: SmsDriver, env: Record<string, string | undefined>): Promise<void> {
@@ -296,9 +352,12 @@ async function deliverBatch(db: ResilientClient, driver: SmsDriver, env: Record<
 
   const rows = await claimDue(db)
   if (rows.length === 0) return
+  const limits = smsLimitsFromEnv(env)
+  const usage = await usageForBatch(db, rows)
   let sent = 0
   let retrying = 0
   let failed = 0
+  let overQuota = 0
   for (const row of rows) {
     if (row.attempts > MAX_ATTEMPTS) {
       // Leases kept expiring (crashes mid-send): stop trying.
@@ -306,8 +365,16 @@ async function deliverBatch(db: ResilientClient, driver: SmsDriver, env: Record<
       failed++
       continue
     }
+    const blocked = smsQuotaBlock(row, usage, limits)
+    if (blocked) {
+      await db.notification.update({ where: { id: row.id }, data: { status: 'SKIPPED', lastError: blocked } })
+      overQuota++
+      console.warn(`[outbox] ${row.kind} to ${maskNumber(row.to)} skipped: ${blocked}`)
+      continue
+    }
     try {
       await driver.send(row.to, row.body)
+      recordSmsSent(row, usage)
       await db.notification.update({ where: { id: row.id }, data: { status: 'SENT', sentAt: new Date(), lastError: null } })
       sent++
     } catch (err) {
@@ -325,7 +392,30 @@ async function deliverBatch(db: ResilientClient, driver: SmsDriver, env: Record<
       console.error(`[outbox] ${row.kind} to ${maskNumber(row.to)} failed (attempt ${row.attempts}/${MAX_ATTEMPTS}): ${lastError}`)
     }
   }
-  console.log(`[outbox] driver=${driver.name}: sent ${sent}, retrying ${retrying}, failed ${failed}`)
+  console.log(`[outbox] driver=${driver.name}: sent ${sent}, retrying ${retrying}, failed ${failed}, over quota ${overQuota}`)
+}
+
+/** Last-24-hour SENT counts for the numbers and tournaments in this batch, plus the platform total. */
+async function usageForBatch(db: ResilientClient, rows: ClaimedRow[]): Promise<SmsUsage> {
+  const since = new Date(Date.now() - 24 * 60 * 60_000)
+  const tos = [...new Set(rows.map((r) => r.to))]
+  const tournamentIds = [...new Set(rows.map((r) => r.tournamentId).filter((id): id is string => !!id))]
+  const [byNumber, byTournament, total] = await Promise.all([
+    db.notification.groupBy({ by: ['to'], where: { status: 'SENT', sentAt: { gte: since }, to: { in: tos } }, _count: { _all: true } }),
+    tournamentIds.length
+      ? db.notification.groupBy({
+          by: ['tournamentId'],
+          where: { status: 'SENT', sentAt: { gte: since }, tournamentId: { in: tournamentIds } },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as { tournamentId: string | null; _count: { _all: number } }[]),
+    db.notification.count({ where: { status: 'SENT', sentAt: { gte: since } } }),
+  ])
+  return {
+    byNumber: new Map(byNumber.map((g) => [g.to, g._count._all])),
+    byTournament: new Map(byTournament.map((g) => [g.tournamentId as string, g._count._all])),
+    total,
+  }
 }
 
 /**

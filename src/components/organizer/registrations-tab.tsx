@@ -33,6 +33,7 @@ import { formatBDT, formatDate } from '@/lib/format'
 import { tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { CATEGORIES, DEFAULT_CATEGORY_BASE_PRICES, type AuctionMode, type RegistrationDTO } from '@/lib/types'
 import { type Strings, useStrings, useLang } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import { cn } from '@/lib/utils'
 
 const STRINGS = {
@@ -93,6 +94,7 @@ const STRINGS = {
     feeInstructions: 'Payment instructions (optional)',
     feeInstructionsPlaceholder: 'e.g. Use Send Money and write your name in the reference.',
     feeSave: 'Save fee settings',
+    feeOwnerOnly: 'Only the tournament owner can change the payment numbers and instructions.',
     feeSaved: 'Registration fee saved',
     feeSaveFailed: 'Could not save the fee settings',
     feeNeedsNumber: 'Add a bKash or Nagad number so players know where to pay.',
@@ -183,6 +185,7 @@ const STRINGS = {
     feeInstructions: 'পেমেন্টের নির্দেশনা (ঐচ্ছিক)',
     feeInstructionsPlaceholder: 'যেমন: Send Money করুন এবং রেফারেন্সে আপনার নাম লিখুন।',
     feeSave: 'ফি সেটিংস সংরক্ষণ',
+    feeOwnerOnly: 'পেমেন্ট নম্বর ও নির্দেশনা শুধু টুর্নামেন্টের মালিক বদলাতে পারেন।',
     feeSaved: 'নিবন্ধন ফি সংরক্ষণ হয়েছে',
     feeSaveFailed: 'ফি সেটিংস সংরক্ষণ করা যায়নি',
     feeNeedsNumber: 'খেলোয়াড়রা কোথায় টাকা পাঠাবে তা জানাতে একটি bKash বা Nagad নম্বর দিন।',
@@ -267,6 +270,7 @@ const STRINGS = {
   feeInstructions: string
   feeInstructionsPlaceholder: string
   feeSave: string
+  feeOwnerOnly: string
   feeSaved: string
   feeSaveFailed: string
   feeNeedsNumber: string
@@ -326,12 +330,15 @@ export function RegistrationsTab({
   tournamentName,
   auctionMode,
   basePrice,
+  canEditPayout,
   onPlayersChanged,
 }: {
   tournamentId: string
   tournamentName: string
   auctionMode: AuctionMode
   basePrice: number
+  /** Owner / ADMIN: may change where registration fees are paid. */
+  canEditPayout: boolean
   onPlayersChanged: () => Promise<void>
 }) {
   const t = useStrings(STRINGS)
@@ -518,6 +525,7 @@ export function RegistrationsTab({
         key={`${data.registrationFee}|${data.feeBkashNumber}|${data.feeNagadNumber}|${data.feeInstructions}`}
         tournamentId={tournamentId}
         data={data}
+        canEditPayout={canEditPayout}
         onSaved={load}
       />
 
@@ -765,7 +773,7 @@ function RegistrationRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{r.name}</span>
         <span className="block truncate text-xs text-muted-foreground">
-          {r.role} · {r.phone}
+          <PlayerRole role={r.role} /> · {r.phone}
           {r.previousTeam ? t.exTeam(r.previousTeam) : ''}
           {r.smsConsent ? ` · ${t.smsConsent}` : ''}
         </span>
@@ -827,10 +835,12 @@ function RegistrationRow({
 function FeeSettings({
   tournamentId,
   data,
+  canEditPayout,
   onSaved,
 }: {
   tournamentId: string
   data: RegistrationsData
+  canEditPayout: boolean
   onSaved: () => Promise<void>
 }) {
   const t = useStrings(STRINGS)
@@ -907,6 +917,7 @@ function FeeSettings({
             <Label htmlFor="reg-fee-bkash">{t.feeBkash}</Label>
             <Input
               id="reg-fee-bkash"
+              disabled={!canEditPayout}
               type="tel"
               inputMode="tel"
               value={bkash}
@@ -919,6 +930,7 @@ function FeeSettings({
             <Label htmlFor="reg-fee-nagad">{t.feeNagad}</Label>
             <Input
               id="reg-fee-nagad"
+              disabled={!canEditPayout}
               type="tel"
               inputMode="tel"
               value={nagad}
@@ -932,6 +944,7 @@ function FeeSettings({
           <Label htmlFor="reg-fee-instructions">{t.feeInstructions}</Label>
           <Textarea
             id="reg-fee-instructions"
+            disabled={!canEditPayout}
             value={instructions}
             maxLength={300}
             onChange={(e) => setInstructions(e.target.value)}
@@ -939,7 +952,8 @@ function FeeSettings({
             rows={2}
           />
         </div>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {!canEditPayout ? <p className="mr-auto text-xs text-muted-foreground">{t.feeOwnerOnly}</p> : null}
           <Button className="h-10" disabled={saving || !dirty} onClick={() => void save()}>
             {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Save className="mr-1.5 h-4 w-4" aria-hidden />}
             {t.feeSave}

@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { api, apiGet } from '@/lib/api'
 import { ballsToOvers, oversToBalls } from '@/lib/league'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import type { LeagueData, MatchDTO, MatchStatDTO } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -227,7 +228,7 @@ function StatsForm({
                         <tr key={p.id}>
                           <th scope="row" className="sticky left-0 z-10 bg-background px-2 py-1 text-left font-medium">
                             <span className="block max-w-40 truncate">{p.name}</span>
-                            <span className="block text-[11px] font-normal text-muted-foreground">{p.role}</span>
+                            <span className="block text-[11px] font-normal text-muted-foreground"><PlayerRole role={p.role} /></span>
                           </th>
                           {columns.map((c) => (
                             <td key={c.key} className="px-1 py-1">

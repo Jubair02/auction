@@ -3,6 +3,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { reportClientError } from '@/lib/client-error-report'
 import { type Strings, useStrings } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +62,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ui] render error caught by boundary', error, info.componentStack)
+    reportClientError(error, this.props.variant === 'room' ? 'room-boundary' : 'page-boundary')
   }
 
   reset = () => this.setState({ error: null })

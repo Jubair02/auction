@@ -7,6 +7,7 @@ import { ErrorBoundary } from '@/components/shared/error-boundary'
 import { LangProvider } from '@/lib/i18n'
 import type { Lang } from '@/lib/lang-cookie'
 import { LowDataProvider, useLowData } from '@/lib/low-data'
+import { type PlanNumbers, PlanSeedProvider } from '@/lib/plan-numbers'
 import { AuthSeedContext } from '@/lib/store'
 import { ThemeProvider } from '@/lib/theme'
 import type { ThemePref } from '@/lib/theme-cookie'
@@ -32,6 +33,7 @@ export default function ClientApp({
   lowData = false,
   initialUser,
   theme = 'system',
+  plans,
 }: {
   initialSegs: string[]
   lang: Lang
@@ -40,6 +42,8 @@ export default function ClientApp({
   initialUser?: SafeUser | null
   /** Saved colour theme (cookie); "system" follows the device. */
   theme?: ThemePref
+  /** Free limits and Pro price for the landing page's pricing section. */
+  plans?: PlanNumbers
 }) {
   // Last line of defence for a crash in the shell itself (header, router);
   // each page has its own boundary inside AppRoot.
@@ -50,7 +54,9 @@ export default function ClientApp({
         <LowDataProvider lowData={lowData}>
           <Motion>
             <ErrorBoundary>
-              <AppRoot initialSegs={initialSegs} />
+              <PlanSeedProvider plans={plans}>
+                <AppRoot initialSegs={initialSegs} />
+              </PlanSeedProvider>
             </ErrorBoundary>
           </Motion>
         </LowDataProvider>

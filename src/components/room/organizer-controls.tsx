@@ -53,6 +53,9 @@ export function OrganizerControls({ state, onAction, clockOffset = 0, online = t
   const tx = useStrings(STRINGS)
   const [confirm, setConfirm] = useState<ConfirmKind>(null)
   const [manualOpen, setManualOpen] = useState(false)
+  // The lot the manual-bid dialog was opened for: if it closes and the next
+  // player comes up meanwhile, the engine refuses the bid instead of moving it.
+  const [manualFor, setManualFor] = useState<string | null>(null)
   const [lot, setLot] = useState<LotSnapshot | null>(null)
   // A confirmed action awaiting the server's ack: its dialog stays open until then.
   const [busy, setBusy] = useState(false)
@@ -229,7 +232,10 @@ export function OrganizerControls({ state, onAction, clockOffset = 0, online = t
               that was opened but never started can still be closed. */}
           {!ended ? (
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" className="h-11" disabled={offline || !live} onClick={() => setManualOpen(true)}>
+              <Button variant="secondary" className="h-11" disabled={offline || !live} onClick={() => {
+                  setManualFor(state.currentPlayer?.id ?? null)
+                  setManualOpen(true)
+                }}>
                 <Hand className="mr-1.5 h-4 w-4" /> {tx.manualBid}
               </Button>
               <Button variant="destructive" className="h-11" disabled={offline} onClick={() => setConfirm('end')}>
@@ -320,7 +326,7 @@ export function OrganizerControls({ state, onAction, clockOffset = 0, online = t
         open={manualOpen}
         onOpenChange={setManualOpen}
         onSubmit={async (teamId, amount) => {
-          const res = await run('manual_bid', { teamId, amount })
+          const res = await run('manual_bid', { teamId, amount, ...(manualFor ? { playerId: manualFor } : {}) })
           if (res.ok) setManualOpen(false)
           return res.ok
         }}

@@ -6,6 +6,7 @@ import { Gavel, UserX } from 'lucide-react'
 import type { RoomState } from '@/lib/types'
 import { formatBDT } from '@/lib/format'
 import { TeamAvatar } from '@/components/shared/avatars'
+import { ShareSaleButton } from '@/components/shared/share-sale'
 import { type Strings, useStrings } from '@/lib/i18n'
 
 const STRINGS = {
@@ -36,10 +37,12 @@ interface ResultOverlayProps {
   currentPlayerOnBlock: boolean
   /** When true the parent controls visibility (no internal auto-dismiss). */
   forceVisible?: boolean
+  /** Shows a "Share" button for a sale (the link opens this room with the SOLD card as its preview). */
+  roomCode?: string
 }
 
 /** SOLD / UNSOLD moment — shows for ~5s or until the next player steps onto the block. */
-export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible = false }: ResultOverlayProps) {
+export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible = false, roomCode }: ResultOverlayProps) {
   const t = useStrings(STRINGS)
   const [dismissedKey, setDismissedKey] = useState<string | null>(null)
   const resultKey = lastResult?.at ?? null
@@ -102,6 +105,18 @@ export function ResultOverlay({ lastResult, currentPlayerOnBlock, forceVisible =
                 <p className="text-4xl font-black tabular-nums text-teal-700 dark:text-teal-300 sm:text-6xl">
                   {formatBDT(lastResult.price ?? 0)}
                 </p>
+                {roomCode && lastResult.playerId && lastResult.teamName ? (
+                  <ShareSaleButton
+                    path={`/room/${roomCode}`}
+                    sale={{
+                      playerId: lastResult.playerId,
+                      playerName: lastResult.playerName,
+                      teamName: lastResult.teamName,
+                      price: lastResult.price ?? 0,
+                    }}
+                    className="relative bg-background/80"
+                  />
+                ) : null}
               </>
             ) : (
               <>

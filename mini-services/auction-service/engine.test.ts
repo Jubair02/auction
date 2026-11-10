@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import type { Server, Socket } from 'socket.io'
 import type { ResilientClient } from '../../src/lib/db-resilience.ts'
 import type { SocketIdentity } from '../../src/lib/types.ts'
-import { AuctionEngine } from './engine.ts'
+import { AuctionEngine, SocketGone } from './engine.ts'
 import { FakeDb, FakeIo, FakeSocket, deferred, flush, type DbState } from './test-utils.ts'
 
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0)
@@ -441,9 +441,125 @@ describe('AuctionEngine — restart and eviction', () => {
     const sock = new FakeSocket('s-again')
     const state = await s.engine.joinRoom(sock as unknown as Socket, ORG, 'a1')
     assert.equal(s.engine.roomCount, 1)
-    assert.equal(state.status, 'LIVE')
+    // With nobody connected the LIVE auction paused itself after 30 s (and stays paused).
+    assert.equal(state.status, 'PAUSED')
 
     await s.advance(40 * MIN, MIN) // someone is connected: never evicted
     assert.equal(s.engine.roomCount, 1)
+  })
+})
+
+describe('AuctionEngine — auction-day hardening', () => {
+  it('a bid that arrived in time but is still on its way to the lock keeps the lot open', async (t) => {
+    const { engine, db, room, advance, select, sales } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    await advance(15_900) // GOING TWICE, closes at T0+16s; now T0+15.9s
+    assert.equal(room().stage, 2)
+
+    // Arrives in time, then waits on the seat re-check (a DB round trip).
+    const done = engine.bidArrived('a1', Date.now())
+    await advance(1_000) // T0+16.9s — past the deadline
+    assert.equal(room().stage, 2)
+    assert.equal(db.one('player', 'p1')!.status, 'LIVE')
+    assert.equal(sales().length, 0)
+
+    assert.equal(await engine.placeBid(M2, 11_000, { receivedAt: T0 + 15_900 }), null)
+    done()
+    assert.equal(room().stage, 0)
+    assert.equal(room().currentBid.teamId, 't2')
+    assert.equal(sales().length, 0)
+  })
+
+  it('the grace is bounded, and a bid that arrived after the deadline does not hold the lot', async (t) => {
+    quiet(t)
+    const late = await setup(t)
+    await late.select()
+    assert.equal(await late.engine.placeBid(M1, 10_000), null)
+    await late.advance(16_000)
+    late.engine.bidArrived('a1', T0 + 16_100) // arrived too late: ignored by the close
+    await late.advance(1_000)
+    assert.equal(late.sales().length, 1)
+  })
+
+  it('a bid that never finishes holds the lot for at most 3 s past the deadline', async (t) => {
+    const { engine, advance, select, sales } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    await advance(15_900)
+    engine.bidArrived('a1', Date.now()) // never answered
+    await advance(2_500) // T0+18.4s: still inside the grace
+    assert.equal(sales().length, 0)
+    await advance(1_500) // T0+19.9s: past it
+    assert.equal(sales().length, 1)
+  })
+
+  it('the database refuses a bid when the auction row no longer matches memory (no Bid row, room rebuilt)', async (t) => {
+    quiet(t)
+    const { engine, db, room, select } = await setup(t)
+    await select('p1')
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    const before = room()
+    // Another writer (a second engine instance) already took a higher bid.
+    Object.assign(db.one('auction', 'a1')!, { currentBidAmount: 15_000, currentBidTeamId: 't2' })
+
+    assert.match((await engine.placeBid(M2, 11_000))!, /moved on/)
+    assert.equal(db.state.bid.length, 1)
+    assert.equal(db.one('auction', 'a1')!.currentBidAmount, 15_000)
+    assert.notEqual(room(), before)
+    assert.equal(room().currentBid.amount, 15_000)
+  })
+
+  it('a LIVE auction with no organizer or manager connected pauses itself after 30 s', async (t) => {
+    quiet(t)
+    const { engine, db, room, advance, orgSocket, io } = await setup(t)
+    const viewer = new FakeSocket('s-viewer')
+    await engine.joinRoom(viewer as unknown as Socket, { ...base, role: 'VIEWER', name: 'Fan' }, 'a1')
+    await engine.leave(orgSocket as unknown as Socket)
+
+    await advance(29_000)
+    assert.equal(room().status, 'LIVE')
+    await advance(2_000)
+    assert.equal(room().status, 'PAUSED')
+    assert.equal(db.one('auction', 'a1')!.status, 'PAUSED')
+    assert.ok(io.notes().some((m) => m.includes('paused automatically')))
+  })
+
+  it('does not pause while a team manager is connected', async (t) => {
+    const { engine, room, advance, orgSocket } = await setup(t)
+    await engine.joinRoom(new FakeSocket('s-m1') as unknown as Socket, M1, 'a1')
+    await engine.leave(orgSocket as unknown as Socket)
+    await advance(2 * MIN, 1_000)
+    assert.equal(room().status, 'LIVE')
+  })
+
+  it('a socket that dropped while its join waited is never registered', async (t) => {
+    const { engine, room } = await setup(t)
+    const gone = new FakeSocket('s-gone')
+    gone.disconnected = true
+    await assert.rejects(engine.joinRoom(gone as unknown as Socket, M1, 'a1'), SocketGone)
+    assert.equal(room().sockets.has('s-gone'), false)
+  })
+
+  it('a socket that dropped during the presence write is removed again, and its row marked offline', async (t) => {
+    const { engine, db, room } = await setup(t)
+    const sock = new FakeSocket('s-flaky')
+    db.hook((c) => {
+      if (c.model === 'roomParticipant' && c.op === 'upsert' && c.args.create?.name === M1.name) sock.disconnected = true
+    })
+    await assert.rejects(engine.joinRoom(sock as unknown as Socket, M1, 'a1'), SocketGone)
+    assert.equal(room().sockets.has('s-flaky'), false)
+    const row = db.state.roomParticipant.find((r) => r.name === M1.name)
+    assert.equal(row?.online, false)
+  })
+
+  it('a manual bid is refused when the player it was opened for has left the block', async (t) => {
+    const { engine, select } = await setup(t)
+    await select('p1')
+    assert.match(
+      (await engine.organizerAction(ORG, 'manual_bid', { teamId: 't1', amount: 10_000, playerId: 'p2' }))!,
+      /player on the block changed/,
+    )
+    assert.equal(await engine.organizerAction(ORG, 'manual_bid', { teamId: 't1', amount: 10_000, playerId: 'p1' }), null)
   })
 })

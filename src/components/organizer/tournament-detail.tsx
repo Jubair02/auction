@@ -544,6 +544,7 @@ export default function TournamentDetail({ tournamentId }: { tournamentId: strin
                 tournamentName={t.name}
                 auctionMode={t.auctionMode}
                 basePrice={t.basePrice}
+                canEditPayout={myAccess === 'OWNER' || myAccess === 'ADMIN'}
                 onPlayersChanged={load}
               />
             </TabsContent>

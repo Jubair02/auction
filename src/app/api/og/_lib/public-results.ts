@@ -15,6 +15,19 @@ export function resultsArePublic(
   return auction?.status === 'ENDED' || tournament.status === 'COMPLETED'
 }
 
+/**
+ * One sale may be shared as soon as the hammer falls: the room already
+ * announced it to everyone holding the room code. Still only when the
+ * organizer left results public, and never for an archived tournament.
+ */
+export function saleIsPublic(
+  tournament: { resultsPublic: boolean; status: string; archivedAt: Date | null },
+  auction: { status: string } | null,
+): boolean {
+  if (!tournament.resultsPublic || tournament.archivedAt) return false
+  return (!!auction && auction.status !== 'READY') || tournament.status === 'COMPLETED'
+}
+
 export interface PublicResultsSummary {
   id: string
   name: string

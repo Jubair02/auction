@@ -15,6 +15,10 @@ export async function GET() {
   } catch {
     secret = 'missing'
   }
+  // Without the secret no session or seat pass can be checked: the site is down for everyone.
+  if (secret === 'missing') {
+    return Response.json({ status: 'error', secret }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  }
   try {
     await db.$queryRaw`SELECT 1`
     return Response.json({ status: 'ok', secret }, { headers: { 'Cache-Control': 'no-store' } })

@@ -1,10 +1,11 @@
 'use client'
 
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { Ban, Gavel, Loader2, ShieldAlert, Wallet, WifiOff } from 'lucide-react'
+import { Ban, BellRing, Gavel, Loader2, ShieldAlert, Volume2, VolumeX, Wallet, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatBDT, formatNumber } from '@/lib/format'
 import type { ActionResult } from '@/lib/use-auction-socket'
+import { type OutbidAlert, useOutbidAlert, useOutbidSound } from '@/lib/use-outbid-alert'
 import type { RoomState, RoomTeam } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,12 @@ const STRINGS = {
     bidOffline: 'You are offline — your bid was not sent.',
     bidUnconfirmed: 'Bid not confirmed — check the bid ladder before bidding again.',
     bidRejected: 'Your bid was not accepted.',
+    outbidTitle: 'Outbid!',
+    outbidBy: (team: string, amount: string) => `${team} bid ${amount}`,
+    outbidAction: (min: string) => `Bid ${min} to take the lead back`,
+    outbidTab: (team: string) => `Outbid by ${team}`,
+    soundOff: 'Mute the outbid beep',
+    soundOn: 'Beep when I’m outbid',
   },
   bn: {
     notStarted: 'নিলাম এখনো শুরু হয়নি',
@@ -108,6 +115,12 @@ const STRINGS = {
     bidOffline: 'আপনি অফলাইনে আছেন — বিডটি পাঠানো হয়নি।',
     bidUnconfirmed: 'বিড নিশ্চিত হয়নি — আবার বিড করার আগে বিডের তালিকা দেখে নিন।',
     bidRejected: 'আপনার বিডটি গ্রহণ করা হয়নি।',
+    outbidTitle: 'আপনার বিড ছাড়িয়ে গেছে!',
+    outbidBy: (team: string, amount: string) => `${team} বিড করেছে ${amount}`,
+    outbidAction: (min: string) => `আবার এগিয়ে যেতে ${min} বিড করুন`,
+    outbidTab: (team: string) => `${team} আপনার বিড ছাড়িয়ে গেছে`,
+    soundOff: 'আউটবিডের শব্দ বন্ধ করুন',
+    soundOn: 'আউটবিড হলে শব্দ করুক',
   },
 } satisfies Strings<{
   notStarted: string
@@ -152,6 +165,12 @@ const STRINGS = {
   bidOffline: string
   bidUnconfirmed: string
   bidRejected: string
+  outbidTitle: string
+  outbidBy: (team: string, amount: string) => string
+  outbidAction: (min: string) => string
+  outbidTab: (team: string) => string
+  soundOff: string
+  soundOn: string
 }>
 
 interface BidPanelProps {
@@ -163,6 +182,18 @@ interface BidPanelProps {
   pendingAmount: number | null
   /** Sends a bid for `playerId`; resolves true once the server accepted it. */
   onBid: (amount: number, playerId: string) => Promise<boolean>
+  /** Another team just bid over this manager's lead (see useManagerOutbid). */
+  outbid?: OutbidAlert | null
+}
+
+/**
+ * The manager's outbid alert for the whole room page. Call it once (not in
+ * both the console and the phone bar) so the alarm sounds once.
+ */
+export function useManagerOutbid(state: RoomState, myTeamId: string | undefined): OutbidAlert | null {
+  const t = useStrings(STRINGS)
+  const leader = state.currentBid?.teamName ?? ''
+  return useOutbidAlert(state, myTeamId, t.outbidTab(leader))
 }
 
 /**
@@ -297,7 +328,7 @@ function useBidConsole({ state, myTeam, online, pendingAmount, onBid }: BidPanel
 
 /** THE conversion element — manager's bidding console. */
 export function BidPanel(props: BidPanelProps) {
-  const { myTeam } = props
+  const { myTeam, outbid } = props
   const {
     t,
     player,
@@ -340,6 +371,7 @@ export function BidPanel(props: BidPanelProps) {
         <CardTitle className="flex items-center gap-2 text-base">
           <Gavel className="h-4.5 w-4.5 text-primary" aria-hidden />
           {t.title}
+          <OutbidSoundToggle on={t.soundOn} off={t.soundOff} />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -363,6 +395,21 @@ export function BidPanel(props: BidPanelProps) {
             <ShieldAlert className="h-4 w-4" aria-hidden /> {t.noTeam}
           </div>
         )}
+
+        {outbid ? (
+          <div
+            key={outbid.amount}
+            role="alert"
+            className="flex items-start gap-3 rounded-xl border-2 border-rose-400 bg-rose-50 p-3 text-rose-950 motion-safe:animate-[pulse_0.6s_ease-in-out_3] dark:border-rose-500/60 dark:bg-rose-950/40 dark:text-rose-100"
+          >
+            <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden />
+            <div className="min-w-0">
+              <p className="font-black">{t.outbidTitle}</p>
+              <p className="text-sm">{t.outbidBy(outbid.byTeam, formatBDT(outbid.amount))}</p>
+              {!disabled ? <p className="mt-0.5 text-xs font-semibold">{t.outbidAction(formatBDT(minBid))}</p> : null}
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-center">
@@ -494,14 +541,16 @@ export function BidPanel(props: BidPanelProps) {
  * (custom amounts, budget detail) stays in the page below.
  */
 export function MobileBidBar(props: BidPanelProps) {
-  const { state, myTeam } = props
+  const { state, myTeam, outbid } = props
   const { t, player, maxBid, disabled, pending, pendingAmount, disableReason, quickAmounts, quickLabels, error, submit } =
     useBidConsole(props)
   if (!myTeam || state.status === 'ENDED') return null
 
   const [first, second] = quickAmounts
+  const outbidLine = outbid && pendingAmount === null && !error ? `${t.outbidTitle} ${t.outbidBy(outbid.byTeam, formatBDT(outbid.amount))}` : null
   const message =
     error ??
+    outbidLine ??
     (pendingAmount !== null
       ? t.placingBid(formatBDT(pendingAmount))
       : disableReason
@@ -510,7 +559,10 @@ export function MobileBidBar(props: BidPanelProps) {
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-2 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur supports-[backdrop-filter]:bg-background/85 pb-[calc(0.5rem+env(safe-area-inset-bottom))] lg:hidden"
+      className={cn(
+        'fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-2 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur supports-[backdrop-filter]:bg-background/85 pb-[calc(0.5rem+env(safe-area-inset-bottom))] lg:hidden',
+        outbid && 'border-t-2 border-t-rose-500 bg-rose-50/95 supports-[backdrop-filter]:bg-rose-50/90 dark:bg-rose-950/90 dark:supports-[backdrop-filter]:bg-rose-950/85',
+      )}
       role="region"
       aria-label={t.title}
     >
@@ -557,13 +609,34 @@ export function MobileBidBar(props: BidPanelProps) {
         <p
           className={cn(
             'mx-auto mt-1 max-w-xl truncate text-center text-[11px] font-medium',
-            error ? 'text-rose-600 dark:text-rose-400' : pendingAmount !== null ? 'text-primary' : 'text-muted-foreground',
+            error || outbidLine ? 'text-rose-600 dark:text-rose-400' : pendingAmount !== null ? 'text-primary' : 'text-muted-foreground',
+            outbidLine && 'font-black',
           )}
-          role={error ? 'alert' : pendingAmount !== null ? 'status' : undefined}
+          role={error || outbidLine ? 'alert' : pendingAmount !== null ? 'status' : undefined}
         >
           {message}
         </p>
       ) : null}
     </div>
+  )
+}
+
+/** Mute / unmute the outbid beep (remembered on this device). */
+function OutbidSoundToggle({ on, off }: { on: string; off: string }) {
+  const [soundOn, setSoundOn] = useOutbidSound()
+  const label = soundOn ? off : on
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="ml-auto h-8 w-8 text-muted-foreground"
+      onClick={() => setSoundOn(!soundOn)}
+      aria-label={label}
+      aria-pressed={soundOn}
+      title={label}
+    >
+      {soundOn ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4" aria-hidden />}
+    </Button>
   )
 }

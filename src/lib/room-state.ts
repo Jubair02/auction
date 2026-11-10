@@ -39,3 +39,32 @@ export function seatBelongsTo(seat: { role: string; userId?: string | null }, cu
   if (seat.role === 'VIEWER' && !seat.userId) return true
   return !!seat.userId && seat.userId === currentUserId
 }
+
+/** The part of the room an outbid check looks at. */
+export interface BidSnapshot {
+  status: string
+  playerId: string | null
+  bid: { teamId: string; teamName: string; amount: number } | null
+}
+
+export type OutbidChange =
+  /** My team was leading this player and another team just bid over it. */
+  | { type: 'outbid'; byTeam: string; amount: number }
+  /** Still beaten, by a newer bid (update the banner; no new alarm). */
+  | { type: 'raised'; byTeam: string; amount: number }
+  /** The alert no longer applies: we lead again, the player changed, or bidding stopped. */
+  | { type: 'clear' }
+  | null
+
+/**
+ * What changed for `myTeamId` between two room broadcasts. Pure, so the alarm
+ * fires exactly once per lost lead and never for someone else's bidding war.
+ */
+export function outbidChange(prev: BidSnapshot | null, next: BidSnapshot, myTeamId: string | undefined, alerted: boolean): OutbidChange {
+  if (!myTeamId) return null
+  const samePlayer = !!prev && !!next.playerId && prev.playerId === next.playerId
+  if (next.status !== 'LIVE' || !samePlayer || next.bid?.teamId === myTeamId) return alerted ? { type: 'clear' } : null
+  if (!next.bid || prev.bid?.amount === next.bid.amount) return null
+  if (prev.bid?.teamId === myTeamId) return { type: 'outbid', byTeam: next.bid.teamName, amount: next.bid.amount }
+  return alerted ? { type: 'raised', byTeam: next.bid.teamName, amount: next.bid.amount } : null
+}

@@ -24,7 +24,13 @@ const STRINGS = {
     title: 'Upgrade to Pro',
     desc: (price: string) => `A one-time payment of ${price} for this tournament. No subscription.`,
     unlocks: 'Pro unlocks',
-    perks: ['Unlimited teams and players', 'SMS updates to players and managers', 'No “Powered by NeelamGhor” watermark on the stream overlay'],
+    perks: [
+      'Unlimited teams and players',
+      'SMS updates to players and managers',
+      'Sponsor logos on the room, stream overlay and share cards',
+      'No “Powered by NeelamGhor” watermark on the stream overlay',
+    ],
+    refundPolicy: 'Refund policy',
     step1: 'Step 1 — Send the money',
     step2: 'Step 2 — Tell us the Transaction ID',
     defaultInstructions: 'Use “Send Money” to one of the numbers below, then keep the Transaction ID (TrxID) from the confirmation SMS.',
@@ -56,7 +62,13 @@ const STRINGS = {
     title: 'Pro-তে আপগ্রেড করুন',
     desc: (price: string) => `এই টুর্নামেন্টের জন্য এককালীন ${price}। কোনো মাসিক চার্জ নেই।`,
     unlocks: 'Pro-তে যা পাবেন',
-    perks: ['সীমাহীন দল ও খেলোয়াড়', 'খেলোয়াড় ও ম্যানেজারদের SMS আপডেট', 'স্ট্রিম ওভারলেতে “Powered by NeelamGhor” জলছাপ থাকবে না'],
+    perks: [
+      'সীমাহীন দল ও খেলোয়াড়',
+      'খেলোয়াড় ও ম্যানেজারদের SMS আপডেট',
+      'রুম, স্ট্রিম ওভারলে ও শেয়ার কার্ডে স্পনসরের লোগো',
+      'স্ট্রিম ওভারলেতে “Powered by NeelamGhor” জলছাপ থাকবে না',
+    ],
+    refundPolicy: 'রিফান্ড নীতি',
     step1: 'ধাপ ১ — টাকা পাঠান',
     step2: 'ধাপ ২ — ট্রানজেকশন আইডি দিন',
     defaultInstructions: 'নিচের যেকোনো নম্বরে “Send Money” করুন, তারপর কনফার্মেশন SMS থেকে ট্রানজেকশন আইডি (TrxID) রেখে দিন।',
@@ -89,6 +101,7 @@ const STRINGS = {
   desc: (price: string) => string
   unlocks: string
   perks: string[]
+  refundPolicy: string
   step1: string
   step2: string
   defaultInstructions: string
@@ -359,7 +372,13 @@ function UpgradeBody({
         <DialogTitle className="flex items-center gap-2">
           <Crown className="h-5 w-5 text-amber-500" aria-hidden /> {t.title}
         </DialogTitle>
-        <DialogDescription>{t.desc(price)}</DialogDescription>
+        <DialogDescription>
+          {t.desc(price)}{' '}
+          {/* New tab: the dialog (and a half-entered payment) stays as it is. */}
+          <a href="/terms#refunds" target="_blank" rel="noopener" className="font-medium text-foreground underline underline-offset-2">
+            {t.refundPolicy}
+          </a>
+        </DialogDescription>
       </DialogHeader>
 
       {plans.loading || payments.loading ? (

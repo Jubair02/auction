@@ -12,6 +12,7 @@ import { plural } from '@/lib/tournament-status'
 import { sportLabel, type AuctionStatus, type Sport, type TeamDTO, type TournamentDetail, type TournamentStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { type Strings, useLang, useLangStore, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -323,7 +324,7 @@ function SquadList({ team }: { team: MyTeamRow }) {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{p.name}</p>
               <p className="truncate text-xs text-muted-foreground">
-                #{String(p.playerNumber).padStart(3, '0')} · {p.role}
+                #{String(p.playerNumber).padStart(3, '0')} · <PlayerRole role={p.role} />
                 {p.category ? t.cat(p.category) : ''}
               </p>
             </div>

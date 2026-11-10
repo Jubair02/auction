@@ -6,6 +6,7 @@ import { normalizeBdPhone } from '@/lib/phone'
 import {
   coercePositiveInt,
   hiddenByArchive,
+  accessAllows,
   isOwnerOrAdmin,
   loadTournamentForOwner,
   tournamentAccess,
@@ -209,6 +210,16 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     data[key] = phone
   }
   nullableString('feeInstructions', 300)
+  // Where players send their fee is money routing: only the owner (or an
+  // ADMIN) may change it — a co-organizer could otherwise point every
+  // registration fee at their own bKash number. Re-sending the same value is fine.
+  if (!accessAllows(loaded.access, 'owner')) {
+    for (const key of ['feeBkashNumber', 'feeNagadNumber', 'feeInstructions'] as const) {
+      if (data[key] !== undefined && (data[key] ?? null) !== (tournament[key] ?? null)) {
+        return jsonError('Only the tournament owner can change where registration fees are paid', 403)
+      }
+    }
+  }
   const nextFee = data.registrationFee !== undefined ? (data.registrationFee as number | null) : tournament.registrationFee
   const nextBkash = data.feeBkashNumber !== undefined ? data.feeBkashNumber : tournament.feeBkashNumber
   const nextNagad = data.feeNagadNumber !== undefined ? data.feeNagadNumber : tournament.feeNagadNumber

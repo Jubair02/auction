@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PlayerAvatar } from '@/components/shared/avatars'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 
 const STRINGS = {
   en: {
@@ -77,7 +78,7 @@ export function SquadPanel({ state, myTeam }: { state: RoomState; myTeam: RoomTe
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold">{p.name}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {p.role}
+                    <PlayerRole role={p.role} />
                     {p.category ? t.cat(p.category) : ''}
                   </p>
                 </div>

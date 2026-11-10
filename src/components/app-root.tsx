@@ -20,8 +20,9 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
 import { AppLink } from '@/components/shared/app-link'
-import { DataSaverMenuItem, DataSaverToggle } from '@/components/shared/data-saver'
+import { DataSaverMenuItem } from '@/components/shared/data-saver'
 import { ThemeToggle } from '@/components/shared/theme-toggle'
+import { SiteFooter } from '@/components/shared/site-footer'
 import { useTheme } from '@/lib/theme'
 import { InstallAppMenuItem, InstallHelpHost, InstallHint } from '@/components/shared/install-app'
 import {
@@ -56,6 +57,7 @@ const ResultsView = dynamic(() => import('@/components/results/results-view'), {
 const LeaguePublicView = dynamic(() => import('@/components/league/league-public-view'), { loading: () => <CenterLoader /> })
 const AccountView = dynamic(() => import('@/components/account/account-view'), { loading: () => <CenterLoader /> })
 const PrivacyView = dynamic(() => import('@/components/legal/privacy-view'), { loading: () => <CenterLoader /> })
+const TermsView = dynamic(() => import('@/components/legal/terms-view'), { loading: () => <CenterLoader /> })
 
 /**
  * Leaves a page the current user may not open. Replaces the history entry, so
@@ -140,6 +142,7 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
     // public or not per tournament; the API decides and the page explains.)
     if (head === '') return <Landing />
     if (head === 'privacy' && segs.length === 1) return <PrivacyView />
+    if (head === 'terms' && segs.length === 1) return <TermsView />
     if (head === 'results' && segs.length === 2) return <ResultsView tournamentId={segs[1]} />
     if (head === 'league' && segs.length === 2) return <LeaguePublicView tournamentId={segs[1]} />
     if (!authChecked || !mounted) return <CenterLoader />
@@ -337,32 +340,7 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
         <ErrorBoundary key={segs.join('/')}>{renderRoute()}</ErrorBoundary>
       </main>
 
-      <footer hidden={inRoom} className="mt-auto border-t bg-muted/40 pb-[env(safe-area-inset-bottom)] print:hidden">
-        <div className="container mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-sm text-muted-foreground sm:flex-row">
-          <p className="flex items-center gap-1.5">
-            <Gavel className="h-3.5 w-3.5" aria-hidden />
-            <span className="font-semibold text-foreground">{siteSettings.siteName?.trim() || 'NeelamGhor'}</span> — {t.tagline}
-          </p>
-          <p>
-            {t.footerFacts}
-            {' · '}
-            <AppLink className="font-medium text-foreground hover:underline" href="/privacy">
-              {t.privacy}
-            </AppLink>
-            {/* Admin → Settings → support phone */}
-            {' · '}
-            <DataSaverToggle />
-            {siteSettings.supportPhone?.trim() ? (
-              <>
-                {' · '}
-                <a className="font-medium text-foreground hover:underline" href={`tel:${siteSettings.supportPhone.replace(/[^\d+]/g, '')}`}>
-                  {t.support}: {siteSettings.supportPhone}
-                </a>
-              </>
-            ) : null}
-          </p>
-        </div>
-      </footer>
+      <SiteFooter hidden={inRoom} settings={siteSettings} />
 
       <SonnerToaster richColors position="top-center" closeButton theme={resolvedTheme} />
       <InstallHelpHost />
@@ -380,9 +358,6 @@ const SHELL_STRINGS = {
     logout: 'Log out',
     login: 'Login',
     register: 'Register',
-    tagline: 'Live player auctions for Bangladesh',
-    footerFacts: '৳ BDT · Cricket & Football · Room-code joining',
-    support: 'Support',
     noAccess: "You don't have access to that page — here is your dashboard.",
     loading: 'Loading…',
     notFoundTitle: 'Page not found',
@@ -391,7 +366,6 @@ const SHELL_STRINGS = {
     mainNav: 'Main navigation',
     accountMenu: 'Account menu',
     myAccount: 'My account',
-    privacy: 'Privacy',
     role: { ADMIN: 'ADMIN', ORGANIZER: 'ORGANIZER', MANAGER: 'MANAGER' },
   },
   bn: {
@@ -403,9 +377,6 @@ const SHELL_STRINGS = {
     logout: 'লগ আউট',
     login: 'লগইন',
     register: 'রেজিস্টার',
-    tagline: 'বাংলাদেশের লাইভ প্লেয়ার নিলাম',
-    footerFacts: '৳ টাকা · ক্রিকেট ও ফুটবল · রুম কোড দিয়ে যোগদান',
-    support: 'সহায়তা',
     noAccess: 'ওই পেজে আপনার প্রবেশাধিকার নেই — এই আপনার ড্যাশবোর্ড।',
     loading: 'লোড হচ্ছে…',
     notFoundTitle: 'পেজটি পাওয়া যায়নি',
@@ -414,10 +385,9 @@ const SHELL_STRINGS = {
     mainNav: 'প্রধান মেনু',
     accountMenu: 'অ্যাকাউন্ট মেনু',
     myAccount: 'আমার অ্যাকাউন্ট',
-    privacy: 'গোপনীয়তা',
     role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'tagline' | 'footerFacts' | 'support' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount' | 'privacy', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {

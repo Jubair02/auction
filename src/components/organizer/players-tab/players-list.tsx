@@ -11,6 +11,7 @@ import { PlayerStatusBadge } from '@/components/shared/status-badges'
 import { formatBDT } from '@/lib/format'
 import type { AuctionMode, PlayerDTO } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import { SHARED_STRINGS, type SharedPlayersStrings } from './strings'
 
 const STRINGS = {
@@ -160,7 +161,7 @@ export function PlayersList({
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-sm">{p.role}</TableCell>
+                <TableCell className="text-sm"><PlayerRole role={p.role} /></TableCell>
                 {auctionMode === 'CATEGORY' ? (
                   <TableCell>
                     {p.category ? <Badge variant="secondary">{p.category}</Badge> : <span>—</span>}
@@ -228,7 +229,7 @@ export function PlayersList({
                   <PlayerStatusBadge status={p.status} />
                 </div>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                  <span>{p.role}</span>
+                  <span><PlayerRole role={p.role} /></span>
                   {p.category ? <Badge variant="secondary" className="px-1.5 py-0">{t.catShort(p.category)}</Badge> : null}
                   <span>{t.baseAmount(formatBDT(p.basePrice))}</span>
                   {p.status === 'SOLD' ? (

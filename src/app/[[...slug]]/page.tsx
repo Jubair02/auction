@@ -8,9 +8,14 @@ import { headerClientKey } from '@/lib/rate-limit'
 import { rateLimit } from '@/lib/rate-limit-shared'
 import { sportLabel } from '@/lib/types'
 import ClientApp from '@/components/client-app'
-import { loadPublicResultsSummary } from '@/app/api/og/_lib/public-results'
+import { loadPublicResultsSummary, saleIsPublic } from '@/app/api/og/_lib/public-results'
+import { ogCardPath } from '@/app/api/og/_lib/sign'
+import { getPlanSettings } from '@/lib/plans'
 
-type PageProps = { params: Promise<{ slug?: string[] }> }
+type PageProps = {
+  params: Promise<{ slug?: string[] }>
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}
 
 // Pages that hold secrets or private dashboards: never indexed.
 // (Results pages are decided per tournament below: public results may be indexed.)
@@ -29,12 +34,46 @@ async function siteOrigin(): Promise<string | null> {
 
 const formatAmount = (n: number) => `৳${new Intl.NumberFormat('en-IN').format(Math.round(n))}`
 
+/** Title, description and a 1200×630 preview image (`imagePath` on this site) for WhatsApp / Facebook / X. */
+async function withImage(title: string, description: string, imagePath: string): Promise<Metadata> {
+  const origin = await siteOrigin()
+  const images = origin ? [{ url: `${origin}${imagePath}`, width: 1200, height: 630, alt: title }] : undefined
+  return {
+    title,
+    description,
+    openGraph: { title, description, type: 'website', ...(images ? { images } : {}) },
+    twitter: { card: images ? 'summary_large_image' : 'summary', title, description, ...(images ? { images: images.map((i) => i.url) } : {}) },
+  }
+}
+
+/** The SOLD card preview for a player of `tournamentId`, when that sale may be shared. */
+async function soldPreview(playerId: string, tournamentId: string): Promise<{ title: string; description: string; imagePath: string } | null> {
+  const p = await db.player.findUnique({
+    where: { id: playerId },
+    select: {
+      name: true,
+      status: true,
+      soldPrice: true,
+      tournamentId: true,
+      soldToTeam: { select: { name: true } },
+      tournament: { select: { name: true, resultsPublic: true, status: true, archivedAt: true, auction: { select: { status: true } } } },
+    },
+  })
+  if (!p || p.tournamentId !== tournamentId || p.status !== 'SOLD' || p.soldPrice === null || !p.soldToTeam) return null
+  if (!saleIsPublic(p.tournament, p.tournament.auction)) return null
+  return {
+    title: `${p.name} SOLD to ${p.soldToTeam.name} for ${formatAmount(p.soldPrice)}`,
+    description: `${p.tournament.name} player auction.`,
+    imagePath: `/api/og/sold/${encodeURIComponent(playerId)}`,
+  }
+}
+
 /**
  * Every path renders the same app; this gives shared links a real
  * preview (WhatsApp / Facebook unfurl the tournament name instead of a
  * generic page). Lookups are best-effort — a failure falls back to defaults.
  */
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: PageProps): Promise<Metadata> {
   const [head, arg] = (await params).slug ?? []
   if (!head) return {}
   const noindex: Metadata = PRIVATE.has(head) ? { robots: { index: false, follow: false } } : {}
@@ -49,22 +88,39 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   try {
+    // "SOLD" share links (/room/CODE?sold=<playerId>, /results/<id>?sold=<playerId>)
+    // unfurl as that player's SOLD card.
+    const soldParam = (await searchParams)?.sold
+    const soldId = typeof soldParam === 'string' && /^[a-z0-9]{10,40}$/i.test(soldParam) ? soldParam : null
+
     if (head === 'room' && arg) {
       const auction = await db.auction.findUnique({
         where: { roomCode: arg.toUpperCase() },
-        select: { roomCode: true, status: true, tournament: { select: { name: true, sport: true } } },
+        select: {
+          roomCode: true,
+          status: true,
+          tournament: { select: { id: true, name: true, sport: true, archivedAt: true } },
+        },
       })
-      if (auction) {
+      if (auction && !auction.tournament.archivedAt) {
+        const robots = { index: false, follow: false }
+        const sold = soldId ? await soldPreview(soldId, auction.tournament.id) : null
+        if (sold) {
+          const description = `${sold.description} Watch the rest of the ${auction.tournament.name} auction live in room ${auction.roomCode}.`
+          return { ...(await withImage(sold.title, description, sold.imagePath)), robots }
+        }
         const sport = auction.tournament.sport === 'OTHER' ? '' : `${sportLabel(auction.tournament.sport).toLowerCase()} `
         const title = `${auction.tournament.name} — live ${sport}player auction`
         const description =
           auction.status === 'ENDED'
             ? `The ${auction.tournament.name} auction has finished. Room ${auction.roomCode} on NeelamGhor.`
-            : `Watch or bid live in room ${auction.roomCode} on NeelamGhor.`
-        return { title, description, openGraph: { title, description }, robots: { index: false, follow: false } }
+            : `Watch or bid live in room ${auction.roomCode} on NeelamGhor — no app or sign-up needed to watch.`
+        return { ...(await withImage(title, description, ogCardPath('room', auction.roomCode))), robots }
       }
     }
     if (head === 'results' && arg) {
+      const sold = soldId ? await soldPreview(soldId, arg) : null
+      if (sold) return withImage(sold.title, sold.description, sold.imagePath)
       const r = await loadPublicResultsSummary(arg)
       if (r) {
         const title = `${r.name} — auction results`
@@ -75,51 +131,45 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
         ]
           .filter(Boolean)
           .join(' ')
-        const origin = await siteOrigin()
-        const image = origin
-          ? [{ url: `${origin}/api/og/results/${encodeURIComponent(r.id)}`, width: 1200, height: 630, alt: title }]
-          : undefined
-        return {
-          title,
-          description,
-          openGraph: { title, description, type: 'website', ...(image ? { images: image } : {}) },
-          twitter: { card: 'summary_large_image', title, description, ...(image ? { images: image.map((i) => i.url) } : {}) },
-        }
+        return withImage(title, description, `/api/og/results/${encodeURIComponent(r.id)}`)
       }
     }
     if (head === 'league' && arg) {
       const t = await db.tournament.findUnique({
         where: { id: arg },
-        select: { name: true, location: true, resultsPublic: true, archivedAt: true },
+        select: { id: true, name: true, location: true, resultsPublic: true, archivedAt: true },
       })
       // Only a public, live tournament gets a rich, indexable preview.
       if (t && t.resultsPublic && !t.archivedAt) {
         const title = `${t.name} — fixtures, points table & stats`
         const description = `Fixtures, results, the points table and player stats for ${t.name}${t.location ? ` in ${t.location}` : ''} — live on NeelamGhor.`
-        return {
-          title,
-          description,
-          openGraph: { title, description, type: 'website' },
-          twitter: { card: 'summary', title, description },
-        }
+        return withImage(title, description, ogCardPath('league', t.id))
       }
       return { robots: { index: false, follow: false } }
     }
     if (head === 'register-player' && arg) {
       const t = await db.tournament.findUnique({
         where: { registrationCode: arg },
-        select: { name: true, sport: true, location: true },
+        select: { name: true, sport: true, location: true, archivedAt: true },
       })
-      if (t) {
+      if (t && !t.archivedAt) {
         const title = `Register for ${t.name}`
         const description = `Sign up as a ${t.sport === 'OTHER' ? '' : `${sportLabel(t.sport).toLowerCase()} `}player for the ${t.name} auction${t.location ? ` in ${t.location}` : ''}.`
-        return { title, description, openGraph: { title, description }, robots: { index: false, follow: false } }
+        return { ...(await withImage(title, description, ogCardPath('register', arg))), robots: { index: false, follow: false } }
       }
     }
   } catch (err) {
     console.error('[metadata] lookup failed:', (err as Error).message)
   }
 
+  if (head === 'terms') {
+    const title = 'Terms of Service & refund policy — NeelamGhor'
+    return { title, openGraph: { title } }
+  }
+  if (head === 'privacy') {
+    const title = 'Privacy notice — NeelamGhor'
+    return { title, openGraph: { title } }
+  }
   if (head === 'invite') {
     const title = "You're invited to manage a team on NeelamGhor"
     return { title, openGraph: { title }, ...noindex }
@@ -140,6 +190,14 @@ export default async function Page({ params }: PageProps) {
   // page (instead of a signed-out header that flips after /api/auth/me).
   // Undefined on any failure: the browser then checks the session itself.
   const initialUser = await getSessionUser().catch(() => undefined)
+  // The landing page's pricing section shows the admin's real Free limits and
+  // Pro price in its server HTML (not a default that flips after loading).
+  const plans =
+    slug.length === 0
+      ? await getPlanSettings()
+          .then(({ proPrice, freeMaxTeams, freeMaxPlayers }) => ({ proPrice, freeMaxTeams, freeMaxPlayers }))
+          .catch(() => undefined)
+      : undefined
   return (
     <ClientApp
       initialSegs={slug}
@@ -147,6 +205,7 @@ export default async function Page({ params }: PageProps) {
       lowData={await initialLowData(jar.get(LOW_DATA_COOKIE)?.value)}
       initialUser={initialUser}
       theme={theme}
+      plans={plans}
     />
   )
 }

@@ -224,15 +224,24 @@ export class FakeDb {
       if (!sql.includes('INSERT INTO "Bid"') || !sql.includes('UPDATE "Auction"')) {
         throw new Error('FakeDb: unexpected $queryRaw')
       }
-      const [id, auctionId, playerId, teamId, teamName, playerName, amount, cycle, createdAtIso, newAmount, newTeamId, whereAuctionId] = values
+      const [newAmount, newTeamId, whereAuctionId, wherePlayerId, belowAmount, id, playerId, teamId, teamName, playerName, amount, cycle, createdAtIso] =
+        values
       const auction = this.one('auction', whereAuctionId)
-      // The Bid row's foreign key: a missing auction fails the whole statement.
-      if (!auction || auctionId !== whereAuctionId) throw new Error('FakeDb: Bid_auctionId_fkey violated')
-      this.state.bid.push({ id, auctionId, playerId, teamId, teamName, playerName, amount, cycle, createdAt: new Date(createdAtIso) })
+      // Compare-and-swap: only a LIVE auction with this player on the block and
+      // a lower stored bid moves; the Bid row is inserted only when it did.
+      if (
+        !auction ||
+        auction.status !== 'LIVE' ||
+        auction.currentPlayerId !== wherePlayerId ||
+        (auction.currentBidAmount != null && !(auction.currentBidAmount < belowAmount))
+      ) {
+        return [{ bids: 0 }]
+      }
+      this.state.bid.push({ id, auctionId: auction.id, playerId, teamId, teamName, playerName, amount, cycle, createdAt: new Date(createdAtIso) })
       auction.currentBidAmount = newAmount
       auction.currentBidTeamId = newTeamId
       auction.bidCount = (auction.bidCount ?? 0) + 1
-      return [{ bids: 1, auctions: 1 }]
+      return [{ bids: 1 }]
     })
   }
 
@@ -280,6 +289,8 @@ export class FakeIo {
 
 export class FakeSocket {
   rooms = new Set<string>()
+  /** Flip to true to simulate the client dropping (socket.io sets it on disconnect). */
+  disconnected = false
   id: string
   constructor(id: string) {
     this.id = id

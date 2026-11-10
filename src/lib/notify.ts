@@ -97,14 +97,16 @@ export async function notifyRegistrationDecision(
 ): Promise<void> {
   if (!smsAllowed(tournament) || !reg.smsConsent) return
   const bn = tournament.smsLang !== 'en'
+  // Never the registrant's name: anyone can type anything into the public form
+  // (with someone else's number), and our SMS must not carry their words.
   const body =
     decision === 'APPROVED'
       ? bn
-        ? `${reg.name}, ${tournament.name}-এ আপনার নিবন্ধন অনুমোদিত হয়েছে। নিলামে শুভকামনা! — NeelamGhor`
-        : `${reg.name}, your registration for ${tournament.name} is approved. Good luck at the auction! — NeelamGhor`
+        ? `${tournament.name}-এ আপনার নিবন্ধন অনুমোদিত হয়েছে। নিলামে শুভকামনা! — NeelamGhor`
+        : `Your registration for ${tournament.name} is approved. Good luck at the auction! — NeelamGhor`
       : bn
-        ? `${reg.name}, ${tournament.name}-এ আপনার নিবন্ধন এবার গ্রহণ করা হয়নি। — NeelamGhor`
-        : `${reg.name}, your registration for ${tournament.name} was not accepted this time. — NeelamGhor`
+        ? `${tournament.name}-এ আপনার নিবন্ধন এবার গ্রহণ করা হয়নি। — NeelamGhor`
+        : `Your registration for ${tournament.name} was not accepted this time. — NeelamGhor`
   await enqueueSms({
     to: reg.phone,
     body,

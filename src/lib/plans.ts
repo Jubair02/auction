@@ -6,6 +6,9 @@
 // deploy. Server-only (uses the database).
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
+import { PLAN_DEFAULTS } from '@/lib/plan-defaults'
+
+export { PLAN_DEFAULTS }
 
 export const PLAN_SETTING_KEYS = {
   proPrice: 'pro_price',
@@ -15,8 +18,6 @@ export const PLAN_SETTING_KEYS = {
   nagadNumber: 'pay_nagad_number',
   instructions: 'pay_instructions',
 } as const
-
-export const PLAN_DEFAULTS = { proPrice: 999, freeMaxTeams: 4, freeMaxPlayers: 60 }
 
 export interface PlanSettings {
   proPrice: number

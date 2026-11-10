@@ -72,6 +72,8 @@ interface Client {
   state: RoomState | null
   errors: string[]
   notes: string[]
+  /** Notice codes + values as sent (rendered per language by the room). */
+  codes: { code?: string; params?: Record<string, string | number> }[]
   deltas: number
   fulls: number
   /** server clock − local clock, from the last room_state (≈0 on one machine). */
@@ -81,7 +83,7 @@ const clients: Client[] = []
 function connect(label: string): Promise<Client> {
   return new Promise((resolve, reject) => {
     const socket = io(AUCTION, { path: '/', transports: ['websocket'], forceNew: true, reconnection: false, timeout: 5000 })
-    const c: Client = { label, socket, state: null, errors: [], notes: [], deltas: 0, fulls: 0, skew: 0 }
+    const c: Client = { label, socket, state: null, errors: [], notes: [], codes: [], deltas: 0, fulls: 0, skew: 0 }
     socket.on('room_state', (next: RoomStateWire) => {
       if (next.players && next.participants) c.fulls++
       else c.deltas++
@@ -92,7 +94,10 @@ function connect(label: string): Promise<Client> {
     })
     socket.on('error', (e: { message: string }) => c.errors.push(e.message))
     socket.on('seat_revoked', (e: { message: string }) => c.errors.push(`SEAT_REVOKED: ${e.message}`))
-    socket.on('notification', (n: { message: string }) => c.notes.push(n.message))
+    socket.on('notification', (n: { message: string; code?: string; params?: Record<string, string | number> }) => {
+      c.notes.push(n.message)
+      c.codes.push({ code: n.code, params: n.params })
+    })
     socket.on('connect', () => {
       clients.push(c)
       resolve(c)
@@ -222,6 +227,30 @@ async function main() {
   check('public room lookup (case-insensitive)', room.status === 200 && room.json?.teams?.length === 3, room)
   const viewer = await http('POST', `/api/rooms/${code}/join`, { role: 'viewer', name: 'E2E Fan' })
   check('anonymous viewer gets a seat', viewer.status === 200 && !!viewer.json?.socketToken, viewer)
+  const participantsBefore = await db.roomParticipant.count({ where: { auctionId: au.json?.auction?.id } })
+  const nameless = await http('POST', `/api/rooms/${code}/join`, { role: 'viewer' })
+  const participantsAfter = await db.roomParticipant.count({ where: { auctionId: au.json?.auction?.id } })
+  check(
+    'a viewer can watch without typing a name (anonymous, no participant row)',
+    nameless.status === 200 && !!nameless.json?.socketToken && nameless.json?.identity?.anon === true && participantsAfter === participantsBefore,
+    { nameless, participantsBefore, participantsAfter },
+  )
+  const shortName = await http('POST', `/api/rooms/${code}/join`, { role: 'viewer', name: 'X' })
+  check('a typed viewer name is still validated (400)', shortName.status === 400, shortName)
+
+  // Link previews: the room page carries a signed card image; the image refuses unsigned URLs.
+  const page = await fetch(`${WEB}/room/${code}`).then((r) => r.text())
+  const ogImage = /<meta property="og:image" content="([^"]+)"/.exec(page)?.[1]?.replace(/&amp;/g, '&')
+  const cardPath = ogImage ? new URL(ogImage).pathname + new URL(ogImage).search : ''
+  const roomCard = cardPath ? await fetch(WEB + cardPath) : null
+  check(
+    'room link preview has a signed card image (200 image/png)',
+    !!roomCard && roomCard.status === 200 && (roomCard.headers.get('content-type') ?? '').startsWith('image/png'),
+    { ogImage, status: roomCard?.status },
+  )
+  const unsigned = await fetch(`${WEB}/api/og/card/room/${code}`)
+  const forgedCard = await fetch(`${WEB}/api/og/card/room/${code}?s=AAAAAAAAAAAAAAAAAAAAAA`)
+  check('card images refuse unsigned or forged URLs (404)', unsigned.status === 404 && forgedCard.status === 404, [unsigned.status, forgedCard.status])
   const anonMgr = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E Anon', teamId: alpha.id })
   check('anonymous manager is refused (401)', anonMgr.status === 401, anonMgr)
   const unassigned = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E A', teamId: alpha.id }, aC)
@@ -352,6 +381,13 @@ async function main() {
   // Timer: going once, going twice, sold.
   const sold = await waitFor('auto SOLD', () => V.state?.lastResult?.type === 'SOLD' && V.state.lastResult.playerName === p1.name && V.state, 30000)
   check('the timer runs GOING ONCE → GOING TWICE → SOLD on its own', !!sold && V.notes.some((n) => /GOING ONCE/.test(n)) && V.notes.some((n) => /GOING TWICE/.test(n)), V.notes.slice(-6))
+  const soldNote = V.codes.find((n) => n.code === 'sold' && n.params?.player === p1.name)
+  check(
+    'notices carry a code + values for the room to translate (SOLD: player, team, amount)',
+    !!soldNote && typeof soldNote.params?.team === 'string' && soldNote.params?.amount === base + 1000 && V.codes.some((n) => n.code === 'going_once'),
+    V.codes.slice(-4),
+  )
+  check('the room tells everyone which player was sold (lastResult.playerId)', V.state?.lastResult?.playerId === p1.id, V.state?.lastResult)
   const p1Row = await db.player.findUnique({ where: { id: p1.id } })
   const winTeam = await db.team.findUnique({ where: { id: raceWinner } })
   const saleEvent = await db.auctionEvent.findFirst({ where: { playerId: p1.id, type: 'SALE' } })

@@ -14,6 +14,8 @@ const SOCKET_TOKEN_TTL = 12 * 3600 // 12 hours
 // kept generous for many viewers behind one carrier-NAT address.
 const JOINS_PER_WINDOW = 60
 const JOIN_WINDOW_MS = 10 * 60 * 1000
+/** Display name of a viewer who joined without typing one (the room shows "Viewer" in their language). */
+const ANONYMOUS_VIEWER = 'Viewer'
 
 /**
  * The login session (`sid`) behind the request's cookie. Only called once
@@ -196,11 +198,15 @@ export async function POST(req: Request, { params }: RouteParams) {
     })
   }
 
-  // viewer
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
-  if (name.length < 2 || name.length > 40) {
+  // viewer — a name is optional: anyone with the code can just watch.
+  // Without one, a signed-in visitor watches under their account name and a
+  // visitor without an account watches anonymously (no participant row).
+  const typed = typeof body.name === 'string' ? body.name.trim() : ''
+  if (typed && (typed.length < 2 || typed.length > 40)) {
     return jsonError('Name must be 2–40 characters', 400)
   }
+  const name = typed || sessionUser?.name || ANONYMOUS_VIEWER
+  const anon = !typed && !sessionUser
   const token = signToken(
     {
       auctionId: auction.id,
@@ -208,9 +214,10 @@ export async function POST(req: Request, { params }: RouteParams) {
       role: 'VIEWER',
       name,
       ...(sessionUser ? { userId: sessionUser.id } : {}),
+      ...(anon ? { anon: true } : {}),
     },
     SOCKET_TOKEN_TTL,
   )
-  await upsertParticipant({ role: 'VIEWER', name, userId: sessionUser?.id ?? null })
-  return Response.json({ socketToken: token, identity: { role: 'VIEWER', name } })
+  if (!anon) await upsertParticipant({ role: 'VIEWER', name, userId: sessionUser?.id ?? null })
+  return Response.json({ socketToken: token, identity: { role: 'VIEWER', name, anon } })
 }

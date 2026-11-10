@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Check,
   ClipboardList,
+  Crown,
   Gavel,
   Goal,
   ListChecks,
@@ -41,6 +42,7 @@ import {
   type OtherSportValue,
 } from '@/components/organizer/other-sport-fields'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { usePlanNumbers } from '@/lib/plan-numbers'
 import { TOURNAMENT_TYPES, tournamentTypeLabel } from '@/lib/tournament-types'
 
 const SPORT_CHOICES: { value: Sport; icon: LucideIcon }[] = [
@@ -110,6 +112,9 @@ const STRINGS = {
     setPerCategory: 'Set per category when adding players',
     rowDescription: 'Description',
     afterCreate: 'After creating, you’ll land in the tournament workspace to add players and teams.',
+    planTitle: 'Starts on the Free plan',
+    planNote: (teams: number, players: number, price: string) =>
+      `Up to ${teams} teams and ${players} players. Need more? Upgrade this tournament to Pro for ${price} (one-time) from its Overview tab — any time before the auction.`,
     back: 'Back',
     next: 'Next',
     createTournament: 'Create tournament',
@@ -169,6 +174,9 @@ const STRINGS = {
     setPerCategory: 'খেলোয়াড় যোগ করার সময় ক্যাটাগরি অনুযায়ী ঠিক হবে',
     rowDescription: 'বিবরণ',
     afterCreate: 'তৈরির পর টুর্নামেন্ট পেজে যাবেন, সেখানে খেলোয়াড় আর দল যোগ করবেন।',
+    planTitle: 'ফ্রি প্ল্যানে শুরু হবে',
+    planNote: (teams: number, players: number, price: string) =>
+      `সর্বোচ্চ ${teams}টি দল ও ${players} জন খেলোয়াড়। আরও লাগলে টুর্নামেন্টের ওভারভিউ ট্যাব থেকে ${price}-এ (এককালীন) Pro-তে আপগ্রেড করুন — নিলামের আগে যেকোনো সময়।`,
     back: 'পেছনে',
     next: 'পরের ধাপ',
     createTournament: 'টুর্নামেন্ট তৈরি করুন',
@@ -222,6 +230,8 @@ const STRINGS = {
   setPerCategory: string
   rowDescription: string
   afterCreate: string
+  planTitle: string
+  planNote: (teams: number, players: number, price: string) => string
   back: string
   next: string
   createTournament: string
@@ -236,6 +246,7 @@ const SUGGESTED_CATEGORY_PRICES = { ...DEFAULT_CATEGORY_BASE_PRICES }
 export default function TournamentCreate() {
   const lang = useLang()
   const s = useStrings(STRINGS)
+  const plans = usePlanNumbers()
   const [step, setStep] = useState(1)
 
   // Creating always ends on the new tournament's Manage page: fetch its code
@@ -619,6 +630,15 @@ export default function TournamentCreate() {
                     </div>
                   ))}
                 </dl>
+                <div className="flex items-start gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+                  <Crown className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                  <div>
+                    <p className="font-semibold">{s.planTitle}</p>
+                    <p className="text-muted-foreground">
+                      {s.planNote(plans.freeMaxTeams, plans.freeMaxPlayers, formatBDT(plans.proPrice))}
+                    </p>
+                  </div>
+                </div>
                 <p className="text-xs text-muted-foreground">{s.afterCreate}</p>
               </CardContent>
             </Card>

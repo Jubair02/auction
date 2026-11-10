@@ -14,6 +14,7 @@ import { Arena } from '@/components/shared/arena'
 import { CountdownRing } from './countdown-ring'
 import { ResultOverlay } from './result-overlay'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 
 const STRINGS = {
   en: {
@@ -235,7 +236,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
         {/* ---- SOLD / UNSOLD moment + between-players panel ---- */}
         {betweenPlayers ? (
           resultKey && !resultDismissed ? (
-            <ResultOverlay lastResult={state.lastResult} currentPlayerOnBlock={hasPlayer} forceVisible />
+            <ResultOverlay lastResult={state.lastResult} currentPlayerOnBlock={hasPlayer} forceVisible roomCode={state.roomCode} />
           ) : (
             <div className="flex min-h-52 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-4 text-center text-muted-foreground">
               <Loader />
@@ -310,7 +311,7 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
                     {state.currentPlayer.name}
                   </h2>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:mt-3">
-                    <Badge variant="secondary" className="font-semibold">{state.currentPlayer.role}</Badge>
+                    <Badge variant="secondary" className="font-semibold"><PlayerRole role={state.currentPlayer.role} /></Badge>
                     {state.currentPlayer.category ? (
                       <Badge variant="outline" className="border-amber-300/40 bg-amber-400/10 font-bold text-amber-200">
                         {t.cat(state.currentPlayer.category)}

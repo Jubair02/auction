@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select'
 import { PlayerStatusBadge } from '@/components/shared/status-badges'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 
 interface PlayerPoolPanelProps {
   state: RoomState
@@ -378,7 +379,7 @@ function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProp
                     ) : null}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {p.role}
+                    <PlayerRole role={p.role} />
                     {p.category ? t.metaCat(p.category) : ''}{t.metaBase(formatBDT(p.basePrice))}
                     {p.status === 'SOLD' && p.teamName ? t.metaTo(p.teamName) : ''}
                     {p.auctionCycle ? t.metaRound(p.auctionCycle + 1) : ''}

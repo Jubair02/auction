@@ -7,6 +7,7 @@ import { formatBDT } from '@/lib/format'
 import { useAuctionSocket, useCountdown } from '@/lib/use-auction-socket'
 import type { JoinResult, Plan, PublicBranding, RoomInfo, RoomState } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import { brandPalette, type BrandPalette } from '@/lib/brand-color'
 import { SponsorStrip } from '@/components/shared/sponsor-strip'
 
@@ -298,7 +299,7 @@ function OverlayContent({
                   <p className="text-[1vw] font-bold tracking-[0.2em]" style={{ color: brand.onDark }}>{t.playerNo(p.playerNumber)}</p>
                   <p className="truncate text-[2.8vw] font-black leading-tight">{p.name}</p>
                   <p className="truncate text-[1.25vw] text-white/80">
-                    {p.role}
+                    <PlayerRole role={p.role} />
                     {p.category ? t.category(p.category) : ''}{t.base(formatBDT(p.basePrice))}
                     {p.previousTeam ? t.ex(p.previousTeam) : ''}
                   </p>

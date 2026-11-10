@@ -1,7 +1,7 @@
 // Run: npm test (node --test).
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeRoomState, seatBelongsTo } from './room-state.ts'
+import { mergeRoomState, outbidChange, seatBelongsTo } from './room-state.ts'
 import type { RoomState, RoomStateWire } from './types.ts'
 
 const full = (over: Partial<RoomState> = {}): RoomState =>
@@ -74,5 +74,44 @@ describe('seatBelongsTo', () => {
     assert.equal(seatBelongsTo({ role: 'VIEWER', userId: null }, null), true)
     assert.equal(seatBelongsTo({ role: 'VIEWER' }, 'u1'), true)
     assert.equal(seatBelongsTo({ role: 'VIEWER', userId: 'u1' }, 'u2'), false)
+  })
+})
+
+describe('outbidChange', () => {
+  const live = (playerId: string | null, bid: { teamId: string; amount: number } | null, status = 'LIVE') => ({
+    status,
+    playerId,
+    bid: bid ? { ...bid, teamName: bid.teamId.toUpperCase() } : null,
+  })
+
+  it('alerts when another team bids over my lead on the same player', () => {
+    assert.deepEqual(outbidChange(live('p1', { teamId: 'me', amount: 100 }), live('p1', { teamId: 'b', amount: 120 }), 'me', false), {
+      type: 'outbid',
+      byTeam: 'B',
+      amount: 120,
+    })
+  })
+  it('stays quiet for bidding wars my team is not leading', () => {
+    assert.equal(outbidChange(live('p1', { teamId: 'a', amount: 100 }), live('p1', { teamId: 'b', amount: 120 }), 'me', false), null)
+    assert.equal(outbidChange(null, live('p1', { teamId: 'b', amount: 120 }), 'me', false), null)
+  })
+  it('updates an active alert when the price keeps rising, without a new alarm', () => {
+    assert.deepEqual(outbidChange(live('p1', { teamId: 'b', amount: 120 }), live('p1', { teamId: 'c', amount: 140 }), 'me', true), {
+      type: 'raised',
+      byTeam: 'C',
+      amount: 140,
+    })
+  })
+  it('clears when we lead again, the player changes or bidding stops', () => {
+    const beaten = live('p1', { teamId: 'b', amount: 120 })
+    assert.deepEqual(outbidChange(beaten, live('p1', { teamId: 'me', amount: 140 }), 'me', true), { type: 'clear' })
+    assert.deepEqual(outbidChange(beaten, live('p2', null), 'me', true), { type: 'clear' })
+    assert.deepEqual(outbidChange(beaten, live(null, null), 'me', true), { type: 'clear' })
+    assert.deepEqual(outbidChange(beaten, live('p1', { teamId: 'b', amount: 120 }, 'PAUSED'), 'me', true), { type: 'clear' })
+  })
+  it('does nothing for viewers and unchanged broadcasts', () => {
+    const s = live('p1', { teamId: 'me', amount: 100 })
+    assert.equal(outbidChange(s, live('p1', { teamId: 'b', amount: 120 }), undefined, false), null)
+    assert.equal(outbidChange(s, s, 'me', false), null)
   })
 })

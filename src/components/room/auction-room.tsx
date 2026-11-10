@@ -10,6 +10,7 @@ import {
   clearRoomIdentity,
   seatBelongsTo,
   loadRoomIdentity,
+  localizeRoomError,
   saveRoomIdentity,
   useAuctionSocket,
   type StoredIdentity,
@@ -33,7 +34,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AuctionStage } from './stage'
-import { BidPanel, MobileBidBar, useBidSubmitter } from './bid-panel'
+import { BidPanel, MobileBidBar, useBidSubmitter, useManagerOutbid } from './bid-panel'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
 import { OrganizerControls, useOrganizerAction } from './organizer-controls'
 import { TeamsPanel } from './teams-panel'
@@ -296,7 +297,8 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
   function handleJoined(result: JoinResult, role: 'MANAGER' | 'VIEWER') {
     const ident: StoredIdentity = {
       role,
-      name: result.identity?.name ?? '',
+      // An anonymous viewer has no name to show in the header.
+      name: result.identity?.anon ? '' : (result.identity?.name ?? ''),
       teamId: result.identity?.teamId,
       teamName: result.identity?.teamName,
       socketToken: result.socketToken,
@@ -454,7 +456,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
           <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
             <WifiOff className="h-8 w-8 text-rose-500" aria-hidden />
             <p className="font-bold">{t.couldNotJoin}</p>
-            <p className="max-w-md text-sm text-muted-foreground">{sock.joinError}</p>
+            <p className="max-w-md text-sm text-muted-foreground">{localizeRoomError(sock.joinError)}</p>
             <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
               <Button onClick={sock.rejoin}>
                 <RefreshCw className="mr-2 h-4 w-4" /> {t.retry}
@@ -554,7 +556,8 @@ function ManagerLayout({
   // One bid in flight for both the console and the phone bid bar.
   const bids = useBidSubmitter(sock.placeBid)
   const online = sock.connected && sock.joined
-  const bidProps = { state, myTeam, online, pendingAmount: bids.pendingAmount, onBid: bids.submit }
+  const outbid = useManagerOutbid(state, myTeam?.id)
+  const bidProps = { state, myTeam, online, pendingAmount: bids.pendingAmount, onBid: bids.submit, outbid }
   return (
     <>
       <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">

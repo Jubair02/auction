@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 import { db } from '@/lib/db'
 import { getPublicBranding } from '@/lib/branding'
-import { resultsArePublic } from '../../_lib/public-results'
+import { resultsArePublic, saleIsPublic } from '../../_lib/public-results'
 import { cardBranding } from '../../_lib/card-branding'
 import { amount, CARD_HEADERS, CARD_SIZE, CardFrame, cardTheme, clip } from '../../_lib/card'
 
@@ -10,7 +10,10 @@ export const runtime = 'nodejs'
 type RouteParams = { params: Promise<{ playerId: string }> }
 
 // GET /api/og/sold/:playerId — 1200×630 "SOLD" card for a player bought in a
-// tournament whose results are public and final.
+// tournament whose results are public — shareable from the moment of the sale.
+
+// A sale can still be undone mid-auction (re-auction refund): cache briefly until results are final.
+const LIVE_HEADERS = { 'cache-control': 'public, max-age=60, s-maxage=120, stale-while-revalidate=600' }
 export async function GET(_req: Request, { params }: RouteParams) {
   const { playerId } = await params
   const player = await db.player
@@ -46,7 +49,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
     player.status !== 'SOLD' ||
     player.soldPrice === null ||
     !player.soldToTeam ||
-    !resultsArePublic(player.tournament, player.tournament.auction)
+    !saleIsPublic(player.tournament, player.tournament.auction)
   ) {
     return Response.json({ error: 'Not found' }, { status: 404 })
   }
@@ -97,6 +100,6 @@ export async function GET(_req: Request, { params }: RouteParams) {
         </div>
       </CardFrame>
     ),
-    { ...CARD_SIZE, headers: CARD_HEADERS },
+    { ...CARD_SIZE, headers: resultsArePublic(player.tournament, player.tournament.auction) ? CARD_HEADERS : LIVE_HEADERS },
   )
 }

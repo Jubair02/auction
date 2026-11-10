@@ -5,8 +5,10 @@ import { motion } from 'framer-motion'
 import {
   ArrowRight,
   BadgeCheck,
+  Check,
   ClipboardList,
   Coins,
+  Crown,
   DoorOpen,
   FileSpreadsheet,
   Gavel,
@@ -31,6 +33,8 @@ import { DASHBOARD_PATH } from '@/lib/access'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { useAuthState } from '@/lib/store'
 import { useLowData } from '@/lib/low-data'
+import { formatBDT } from '@/lib/format'
+import { usePlanNumbers } from '@/lib/plan-numbers'
 import type { UserRole } from '@/lib/types'
 import { TOURNAMENT_TYPES, tournamentTypeLabel } from '@/lib/tournament-types'
 
@@ -47,7 +51,7 @@ interface LandingStrings {
   haveRoomCode: string
   bdtNative: string
   cricketFootball: string
-  freeBeta: string
+  freeStart: (teams: number) => string
   heroAlt: string
   soldFor: (amount: string) => string
   stats: { value: string; label: string }[]
@@ -74,10 +78,24 @@ interface LandingStrings {
   footballHint: string
   footballRoles: string[]
   popularTypes: string
+  pricingEyebrow: string
+  pricingTitle: string
+  pricingSub: string
+  freeName: string
+  freePrice: string
+  freeWhen: string
+  freePerks: (teams: number, players: number) => string[]
+  proName: string
+  proWhen: string
+  proPerks: string[]
+  oneTime: string
+  startFree: string
+  howToPay: string
+  refundLink: string
   ctaTitle: string
   ctaSub: string
   loginAsOrganizer: string
-  ctaFoot: string
+  ctaFoot: (price: string) => string
 }
 
 const STRINGS = {
@@ -96,7 +114,7 @@ const STRINGS = {
     haveRoomCode: 'I have a room code',
     bdtNative: '৳ BDT native',
     cricketFootball: 'Cricket & Football',
-    freeBeta: 'Free during beta',
+    freeStart: (teams) => `Free for up to ${teams} teams`,
     heroAlt: 'NeelamGhor live auction room with bids, timers and team purses',
     soldFor: (amount) => `SOLD for ${amount}`,
     stats: [
@@ -166,10 +184,38 @@ const STRINGS = {
     footballHint: 'Normal mode with one base price is the classic choice',
     footballRoles: ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'],
     popularTypes: 'Popular tournament types',
+    pricingEyebrow: 'Pricing',
+    pricingTitle: 'Start free. Pay once when you need more.',
+    pricingSub:
+      'Every tournament starts on Free. Upgrade a single tournament to Pro whenever it outgrows the limits — no subscription.',
+    freeName: 'Free',
+    freePrice: '৳0',
+    freeWhen: 'For small tournaments and trying it out',
+    freePerks: (teams, players) => [
+      `Up to ${teams} teams and ${players} players`,
+      'The full live auction room — timers, budgets, categories',
+      'Player registration link',
+      'Results page, fixtures and points table',
+      'CSV import and export',
+    ],
+    proName: 'Pro',
+    proWhen: 'For leagues with more teams, sponsors and an audience',
+    proPerks: [
+      'Unlimited teams and players',
+      'SMS updates to players and team managers',
+      'Sponsor logos on the room, stream overlay and share cards',
+      'No “Powered by NeelamGhor” mark on the stream overlay',
+      'Option to hide NeelamGhor branding on public pages',
+    ],
+    oneTime: 'one-time, per tournament',
+    startFree: 'Start free',
+    howToPay:
+      'Pay for Pro with bKash or Nagad from inside your tournament. Pro turns on once we have checked the payment — usually within a few hours.',
+    refundLink: 'Refund policy',
     ctaTitle: 'Your auction. One room. Zero spreadsheets.',
     ctaSub: 'Create a free account, load your players and share the room code. The gavel is waiting.',
     loginAsOrganizer: 'Log in as organizer',
-    ctaFoot: 'Free during beta — ৳ BDT pricing built in',
+    ctaFoot: (price) => `Free to start — Pro is ${price} per tournament, paid once`,
   },
   bn: {
     homeLabel: {
@@ -186,7 +232,7 @@ const STRINGS = {
     haveRoomCode: 'আমার কাছে রুম কোড আছে',
     bdtNative: 'পুরো হিসাব ৳ টাকায়',
     cricketFootball: 'ক্রিকেট ও ফুটবল',
-    freeBeta: 'বেটা চলাকালীন ফ্রি',
+    freeStart: (teams) => `${teams}টি দল পর্যন্ত ফ্রি`,
     heroAlt: 'NeelamGhor-এর লাইভ নিলাম রুম — বিড, টাইমার আর দলের বাজেট',
     soldFor: (amount) => `${amount}-এ বিক্রি!`,
     stats: [
@@ -256,10 +302,38 @@ const STRINGS = {
     footballHint: 'এক বেস প্রাইসের নরমাল মোডই ক্লাসিক পছন্দ',
     footballRoles: ['গোলকিপার', 'ডিফেন্ডার', 'মিডফিল্ডার', 'ফরোয়ার্ড'],
     popularTypes: 'জনপ্রিয় টুর্নামেন্টগুলো',
+    pricingEyebrow: 'দাম',
+    pricingTitle: 'ফ্রিতে শুরু করুন। বেশি লাগলে একবার পেমেন্ট।',
+    pricingSub:
+      'প্রতিটি টুর্নামেন্ট ফ্রি প্ল্যানে শুরু হয়। সীমা ছাড়িয়ে গেলে শুধু সেই টুর্নামেন্টটি Pro-তে নিন — কোনো মাসিক চার্জ নেই।',
+    freeName: 'ফ্রি',
+    freePrice: '৳0',
+    freeWhen: 'ছোট টুর্নামেন্ট আর চালিয়ে দেখার জন্য',
+    freePerks: (teams, players) => [
+      `সর্বোচ্চ ${teams}টি দল ও ${players} জন খেলোয়াড়`,
+      'পুরো লাইভ নিলাম রুম — টাইমার, বাজেট, ক্যাটাগরি',
+      'খেলোয়াড় নিবন্ধনের লিংক',
+      'ফলাফল পেজ, ফিকশ্চার ও পয়েন্ট টেবিল',
+      'CSV ইমপোর্ট ও এক্সপোর্ট',
+    ],
+    proName: 'Pro',
+    proWhen: 'বেশি দল, স্পনসর আর দর্শক নিয়ে লিগের জন্য',
+    proPerks: [
+      'সীমাহীন দল ও খেলোয়াড়',
+      'খেলোয়াড় ও টিম ম্যানেজারদের SMS আপডেট',
+      'রুম, স্ট্রিম ওভারলে ও শেয়ার কার্ডে স্পনসরের লোগো',
+      'স্ট্রিম ওভারলেতে “Powered by NeelamGhor” চিহ্ন থাকবে না',
+      'পাবলিক পেজ থেকে NeelamGhor ব্র্যান্ডিং লুকানোর সুযোগ',
+    ],
+    oneTime: 'এককালীন, প্রতি টুর্নামেন্টে',
+    startFree: 'ফ্রিতে শুরু করুন',
+    howToPay:
+      'টুর্নামেন্টের ভেতর থেকেই bKash বা Nagad-এ Pro-এর টাকা দিন। পেমেন্ট যাচাইয়ের পর Pro চালু হয় — সাধারণত কয়েক ঘণ্টার মধ্যে।',
+    refundLink: 'রিফান্ড নীতি',
     ctaTitle: 'আপনার নিলাম। এক রুমে। কোনো এক্সেল শিট ছাড়াই।',
     ctaSub: 'ফ্রি অ্যাকাউন্ট খুলুন, খেলোয়াড় তুলুন আর রুম কোড শেয়ার করুন। হাতুড়ি অপেক্ষা করছে।',
     loginAsOrganizer: 'আয়োজক হিসেবে লগইন',
-    ctaFoot: 'বেটা চলাকালীন ফ্রি — দাম ৳ টাকায়, শুরু থেকেই',
+    ctaFoot: (price) => `শুরু করুন ফ্রিতে — Pro প্রতি টুর্নামেন্টে ${price}, একবারই`,
   },
 } satisfies Strings<LandingStrings>
 
@@ -280,6 +354,19 @@ function SectionHeading({ eyebrow, title, sub }: { eyebrow: string; title: strin
   )
 }
 
+function PerkList({ perks }: { perks: string[] }) {
+  return (
+    <ul className="space-y-2.5 text-sm">
+      {perks.map((perk) => (
+        <li key={perk} className="flex items-start gap-2.5">
+          <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+          <span>{perk}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 // Icons for the text lists in STRINGS (same order).
 const ORGANIZER_STEP_ICONS = [ClipboardList, Users, Trophy, Wallet, Share2, Gavel]
 const MANAGER_STEP_ICONS = [KeyRound, DoorOpen, Trophy, HandCoins, ListChecks]
@@ -291,6 +378,8 @@ export default function Landing() {
   const lang = useLang()
   // Data saver: no hero image (the page's largest download).
   const lowData = useLowData()
+  const plans = usePlanNumbers()
+  const proPrice = formatBDT(plans.proPrice)
   return (
     <div className="bg-background">
       {/* ---------------- Hero ---------------- */}
@@ -327,7 +416,7 @@ export default function Landing() {
                 <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.cricketFootball}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.freeBeta}
+                <BadgeCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> {t.freeStart(plans.freeMaxTeams)}
               </span>
             </p>
           </div>
@@ -537,6 +626,55 @@ export default function Landing() {
         </motion.div>
       </section>
 
+      {/* ---------------- Pricing ---------------- */}
+      <section id="pricing" className="scroll-mt-16 border-t bg-muted/30">
+        <div className="container mx-auto max-w-5xl px-4 py-14 sm:py-16">
+          <SectionHeading eyebrow={t.pricingEyebrow} title={t.pricingTitle} sub={t.pricingSub} />
+          <div className="mt-10 grid gap-6 md:grid-cols-2">
+            <motion.div {...fadeUp}>
+              <Card className="h-full">
+                <CardContent className="flex h-full flex-col gap-5 p-6">
+                  <div>
+                    <h3 className="text-lg font-bold">{t.freeName}</h3>
+                    <p className="text-sm text-muted-foreground">{t.freeWhen}</p>
+                  </div>
+                  <p className="text-4xl font-extrabold tracking-tight">{t.freePrice}</p>
+                  <PerkList perks={t.freePerks(plans.freeMaxTeams, plans.freeMaxPlayers)} />
+                  {user ? null : (
+                    <Button variant="outline" size="lg" className="mt-auto min-h-11" asChild>
+                      <AppLink href="/register">{t.startFree}</AppLink>
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+            <motion.div {...fadeUp}>
+              <Card className="h-full border-2 border-primary/60 shadow-md shadow-primary/10">
+                <CardContent className="flex h-full flex-col gap-5 p-6">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-lg font-bold">
+                      <Crown className="h-5 w-5 text-amber-500" aria-hidden /> {t.proName}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">{t.proWhen}</p>
+                  </div>
+                  <p className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-4xl font-extrabold tracking-tight text-primary">{proPrice}</span>
+                    <span className="text-sm text-muted-foreground">{t.oneTime}</span>
+                  </p>
+                  <PerkList perks={t.proPerks} />
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+          <p className="mx-auto mt-6 max-w-2xl text-center text-sm text-muted-foreground">
+            {t.howToPay}{' '}
+            <AppLink href="/terms#refunds" className="font-medium text-foreground underline underline-offset-4">
+              {t.refundLink}
+            </AppLink>
+          </p>
+        </div>
+      </section>
+
       {/* ---------------- Final CTA (sign-up pitch — not for logged-in users) ---------------- */}
       {user ? null : (
         <section className="container mx-auto max-w-7xl px-4 pb-16">
@@ -568,7 +706,7 @@ export default function Landing() {
                 </Button>
               </div>
               <p className="relative mt-5 flex items-center justify-center gap-1.5 text-xs text-teal-200">
-                <Coins className="h-3.5 w-3.5" aria-hidden /> {t.ctaFoot}
+                <Coins className="h-3.5 w-3.5" aria-hidden /> {t.ctaFoot(proPrice)}
               </p>
             </div>
           </motion.div>

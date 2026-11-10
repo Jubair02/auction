@@ -1,10 +1,13 @@
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
+	# Only the live auction service (3003) is reachable through ?XTransformPort.
+	# Never proxy to a port taken from the query string: that would expose every
+	# service listening on this machine's loopback (debuggers, admin ports, …).
+	@auction_service {
+		query XTransformPort=3003
 	}
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
+	handle @auction_service {
+		reverse_proxy localhost:3003 {
 			header_up Host {host}
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Forwarded-Proto {scheme}

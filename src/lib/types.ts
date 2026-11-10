@@ -51,6 +51,26 @@ export function sportLabel(sport: string, lang: 'en' | 'bn' = 'en', sportName?: 
   if (sport === 'OTHER' && sportName) return sportName
   return SPORT_LABELS[lang][sport as Sport] ?? sport
 }
+// Bangla for the built-in player roles. Roles are stored in English (CSV
+// imports, exports and the API use them), so they are translated for display.
+const PLAYER_ROLE_BN: Record<string, string> = {
+  Batsman: 'ব্যাটসম্যান',
+  Bowler: 'বোলার',
+  'All-rounder': 'অলরাউন্ডার',
+  Wicketkeeper: 'উইকেটকিপার',
+  Goalkeeper: 'গোলকিপার',
+  Defender: 'ডিফেন্ডার',
+  Midfielder: 'মিডফিল্ডার',
+  Forward: 'ফরোয়ার্ড',
+  Attacker: 'অ্যাটাকার',
+  Player: 'খেলোয়াড়',
+}
+
+/** A player role for display. Built-in roles are translated; an "Others" tournament's own roles show as typed. */
+export function playerRoleLabel(role: string, lang: 'en' | 'bn' = 'en'): string {
+  return lang === 'bn' ? (PLAYER_ROLE_BN[role] ?? role) : role
+}
+
 export const CATEGORIES = ['A', 'B', 'C', 'D', 'E'] as const
 export const DEFAULT_CATEGORY_BASE_PRICES: Record<string, number> = { A: 50000, B: 30000, C: 20000, D: 10000, E: 5000 }
 
@@ -75,6 +95,8 @@ export interface SocketIdentity {
   sv?: number
   teamId?: string
   teamName?: string
+  /** A viewer who joined without a name: counted live, never written to the participant table. */
+  anon?: boolean
   exp?: number
 }
 
@@ -257,7 +279,7 @@ export interface RoomInfo {
 
 export interface JoinResult {
   socketToken: string
-  identity: { role: RoomRole; name: string; teamId?: string; teamName?: string }
+  identity: { role: RoomRole; name: string; teamId?: string; teamName?: string; anon?: boolean }
 }
 
 // ---------- Live auction room state (socket) ----------
@@ -345,6 +367,8 @@ export interface RoomState {
     uncategorized: number
   }
   lastResult: {
+    /** For the SOLD share link; absent from older services. */
+    playerId?: string
     playerName: string
     playerNumber: number
     teamId: string | null
@@ -391,6 +415,9 @@ export interface RoomNotification {
    * else). Optional: older services do not send it.
    */
   kind?: 'bid' | 'going' | 'sold' | 'unsold' | 'system'
+  /** What the notice says, as a code + values the room renders in its language (lib/room-messages.ts). */
+  code?: string
+  params?: Record<string, string | number>
 }
 
 export type OrganizerAction =

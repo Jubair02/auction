@@ -4,7 +4,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
+import { currentLang } from '@/lib/i18n'
+import { roomNoticeText } from '@/lib/room-messages'
 import { mergeRoomState } from '@/lib/room-state'
+import { localizeServerMessage } from '@/lib/server-messages'
 export { seatBelongsTo } from '@/lib/room-state'
 import type { OrganizerAction, RoomNotification, RoomState, RoomStateWire } from '@/lib/types'
 
@@ -30,12 +33,31 @@ const QUIET_KINDS = new Set<RoomNotification['kind']>(['bid', 'going'])
 function toastNotification(n: RoomNotification) {
   const kind = n.kind
   if (kind && QUIET_KINDS.has(kind)) return
-  if (n.level === 'error') toast.error(n.message)
-  else if (n.level === 'warning') toast.warning(n.message)
-  else if (n.level === 'success') toast.success(n.message)
+  const text = roomNoticeText(n, currentLang())
+  if (n.level === 'error') toast.error(text)
+  else if (n.level === 'warning') toast.warning(text)
+  else if (n.level === 'success') toast.success(text)
   // Plain info is only toasted when the server marks it as something that matters
   // (an older server sends no `kind`, and its info messages are bids and "going").
-  else if (kind) toast(n.message)
+  else if (kind) toast(text)
+}
+
+/** A refusal from the auction service (English) in the UI language. */
+export function localizeRoomError(message: string): string {
+  return localizeServerMessage(message, currentLang())
+}
+
+/**
+ * For a join refused for a passing reason — the room's join budget, a restart,
+ * a server hiccup — how long to wait before trying again (with jitter); null
+ * when retrying cannot help (invalid seat, room not found, …).
+ */
+export function transientJoinRetryMs(error: string, random = Math.random): number | null {
+  const jitter = () => Math.round(random() * 3_000)
+  const waitS = /try again in (\d+)s/i.exec(error)
+  if (waitS) return Number(waitS[1]) * 1_000 + jitter()
+  if (/restarting|Join failed|Too many join attempts/i.test(error)) return 3_000 + jitter()
+  return null
 }
 
 export interface AuctionSocketApi {
@@ -107,9 +129,20 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     setRawClockOffset(offset)
   }, [])
 
+  // A join refused for a passing reason (a crowd joining at once, a restart)
+  // is retried automatically, spread out with jitter so a whole stream's
+  // audience doesn't come back in the same second.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const doJoinRef = useRef<() => void>(() => {})
+  const clearRetry = () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    retryTimerRef.current = null
+  }
+
   const doJoin = useCallback(() => {
     const socket = socketRef.current
     if (!socket || !socket.connected || !tokenRef.current) return
+    clearRetry()
     socket.emit('join_room', { roomCode, token: tokenRef.current }, (ack: { ok: boolean; error?: string; state?: RoomState }) => {
       if (ack?.ok && ack.state) {
         joinedRef.current = true
@@ -120,10 +153,16 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       } else {
         joinedRef.current = false
         setJoined(false)
-        setJoinError(ack?.error || 'Failed to join room')
+        const error = ack?.error || 'Failed to join room'
+        setJoinError(error)
+        const delayMs = transientJoinRetryMs(error)
+        if (delayMs != null) retryTimerRef.current = setTimeout(() => doJoinRef.current(), delayMs)
       }
     })
   }, [roomCode, setClockOffset])
+  useEffect(() => {
+    doJoinRef.current = doJoin
+  }, [doJoin])
 
   useEffect(() => {
     if (!token) return
@@ -146,7 +185,15 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
     // Counts failed connection attempts so the room can say "the live service
     // is unreachable" instead of spinning on "Connecting…" forever.
-    socket.on('connect_error', () => setConnectFailures((n) => n + 1))
+    socket.on('connect_error', () => {
+      setConnectFailures((n) => n + 1)
+      // Refused by the server's middleware ("too many connections", "restarting"):
+      // socket.io does not retry those by itself (`active` is false), so do it here.
+      if (!socket.active) {
+        clearRetry()
+        retryTimerRef.current = setTimeout(() => socket.connect(), 3_000 + Math.random() * 4_000)
+      }
+    })
     socket.on('connect', () => {
       setConnectFailures(0)
       setConnected(true)
@@ -182,7 +229,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     })
 
     socket.on('error', (e: { message: string }) => {
-      if (e?.message) toast.error(e.message)
+      if (e?.message) toast.error(localizeRoomError(e.message))
     })
 
     // The server re-checks organizer/manager seats while connected (blocked
@@ -195,6 +242,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     })
 
     return () => {
+      clearRetry()
       socket.disconnect()
       socketRef.current = null
       setConnected(false)
@@ -214,7 +262,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
       socket.timeout(ACK_TIMEOUT_MS).emit(event, data, (err: Error | null, res?: AckResponse) => {
         if (err) resolve({ ok: false, reason: 'timeout' })
         else if (res?.ok) resolve({ ok: true })
-        else resolve({ ok: false, reason: 'rejected', error: res && !res.ok ? res.error : undefined })
+        else resolve({ ok: false, reason: 'rejected', error: res && !res.ok && res.error ? localizeRoomError(res.error) : undefined })
       })
     })
   }, [])

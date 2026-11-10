@@ -27,6 +27,7 @@ import { sportLabel, type PublicBranding, type ResultsData, type ResultsViewer }
 import { brandPalette } from '@/lib/brand-color'
 import { cn } from '@/lib/utils'
 import { type Strings, useLang, useLangStore, useStrings } from '@/lib/i18n'
+import { PlayerRole } from '@/components/shared/player-role'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -46,6 +47,7 @@ import { LoadError } from '@/components/shared/load-error'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
 import { AppLink } from '@/components/shared/app-link'
 import { SponsorStrip } from '@/components/shared/sponsor-strip'
+import { ShareSaleButton } from '@/components/shared/share-sale'
 
 const EXPORT_TYPES = ['players', 'sold', 'unsold', 'squads', 'bids', 'spending', 'audit'] as const
 type ExportType = (typeof EXPORT_TYPES)[number]
@@ -519,7 +521,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
             {topBuys.map((p, i) => {
               const team = p.soldToTeamId ? teamById.get(p.soldToTeamId) : undefined
               return (
-                <li key={p.id} className="flex items-center gap-3 rounded-xl border bg-card p-3 shadow-sm lg:flex-col lg:items-start">
+                <li key={p.id} className="relative flex items-center gap-3 rounded-xl border bg-card p-3 shadow-sm lg:flex-col lg:items-start">
                   <span
                     className={cn(
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-black',
@@ -539,6 +541,14 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
                     ) : null}
                   </div>
                   <span className="shrink-0 text-base font-black tabular-nums text-teal-700 dark:text-teal-300">{formatBDT(p.soldPrice)}</span>
+                  {data.publicNow && team && p.soldPrice != null ? (
+                    <ShareSaleButton
+                      iconOnly
+                      className="shrink-0 print:hidden lg:absolute lg:right-3 lg:top-3"
+                      path={`/results/${tournament.id}`}
+                      sale={{ playerId: p.id, playerName: p.name, teamName: team.name, price: p.soldPrice }}
+                    />
+                  ) : null}
                 </li>
               )
             })}
@@ -585,7 +595,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-semibold">{p.name}</p>
                             <p className="truncate text-xs text-muted-foreground">
-                              {p.role}
+                              <PlayerRole role={p.role} />
                               {p.category ? t.cat(p.category) : ''}
                             </p>
                           </div>

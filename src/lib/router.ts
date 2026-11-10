@@ -102,6 +102,14 @@ export function consumeReturnTo(): string | null {
 }
 
 /**
+ * True when the browser's Back goes to another page of this app — not out to
+ * WhatsApp, a search engine or an empty new tab.
+ */
+export function canGoBackInApp(): boolean {
+  return typeof window !== 'undefined' && (window.history.state as { inApp?: boolean } | null)?.inApp === true
+}
+
+/**
  * Navigate within the app, e.g. navigate('/tournaments'). `replace` swaps the
  * current history entry instead of adding one (redirects away from a page).
  */
@@ -109,8 +117,9 @@ export function navigate(to: string, { replace = false }: { replace?: boolean } 
   const target = to.startsWith('/') ? to : `/${to}`
   if (!isAppPath(target)) return
   if (window.location.pathname + window.location.hash !== target) {
-    if (replace) window.history.replaceState(null, '', target)
-    else window.history.pushState(null, '', target)
+    // A pushed entry is marked: the page before it is part of this app (see canGoBackInApp).
+    if (replace) window.history.replaceState(window.history.state, '', target)
+    else window.history.pushState({ inApp: true }, '', target)
     window.dispatchEvent(new Event(NAV_EVENT))
   }
   window.scrollTo(0, 0)

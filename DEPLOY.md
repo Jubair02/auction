@@ -25,6 +25,10 @@ If the auction service isn't running, or the two parts aren't pointed at each ot
 | `NEXT_PUBLIC_SHOW_DEMO_LOGINS` | optional | — | `1` shows the demo organizer/manager logins on the sign-in page. Only for a public demo site — **never on a real deployment**. Build-time, like every `NEXT_PUBLIC_` variable. |
 | `PRODUCTION_DATABASE_URL` | optional | — | Set it (all environments) to the production `DATABASE_URL`: a Preview build that was given the same URL then prints a loud warning. |
 | `ALLOW_DB_RESET`, `SEED_ADMIN_PASSWORD` | — | — | Local only, for `bun prisma/seed.ts` / `npm run db:reset` — see "Separate databases per environment". |
+| `ALERT_WEBHOOK_URL` | recommended | recommended | Incoming-webhook URL (Slack, Discord, …) that receives an alert for every server error, browser crash and auction-engine failure — see "Monitoring". |
+| `AUCTION_DB_POOL_SIZE` | — | optional | Database connections the auction service keeps for rooms (default `10`; the SMS worker has its own 2). Ignored if `DATABASE_URL` already sets `connection_limit`. |
+| `SMS_DAILY_LIMIT_*` | — | optional | SMS spending caps — see "SMS notifications". |
+| `AUCTION_LEASE_NAME` | — | tests only | Lets a test run a second auction service against the same database on purpose. Never set it in production. |
 
 All of these are **per environment**: production, Preview and your local `.env` each get their own `DATABASE_URL` and their own `AUCTION_SECRET` (the website and the auction service *of the same environment* share one).
 
@@ -65,6 +69,9 @@ Why: a preview build runs unmerged code against whatever `DATABASE_URL` it is gi
 - **Exactly ONE instance, always.** Live auction state (timers, the current lot, who is bidding) lives in this one process's memory. Two instances = two independent auctioneers for the same room: double sales, timers that fight, budgets spent twice.
   - On Render: instance count **1**, **autoscaling off**.
   - Deploys must be **stop-then-start**, not zero-downtime / blue-green: the old instance has to be gone before the new one serves rooms. (A redeploy during a live auction disconnects everyone for a moment; clients reconnect and resync — prefer deploying between auctions.)
+  - **Enforced by a lease.** On start the service takes the `auction-engine` row in the `ServiceLease` table, renews it every 5 s and only then opens its port. A second copy logs `another instance holds the engine lease … Waiting` and serves nothing until the first one stops: a clean shutdown releases the lease at once, a crash lets it expire within 30 s. So a zero-downtime deploy fails its health check instead of running two auctioneers. If an instance ever finds that another one has taken its lease, it stops itself and alerts.
+  - **Graceful stop.** On `SIGTERM` the service refuses new joins, bids and actions, lets everything already in progress finish (up to 8 s, so a committed sale also reaches everyone), marks everyone offline, releases the lease and exits. Give the host a shutdown grace period of at least 15 s; on Render the default is 30 s.
+  - **Empty rooms pause themselves.** If no organizer and no team manager has been connected to a LIVE auction for 30 s, it pauses, so lots don't close and Auto Auction doesn't run through the pool while the venue's Wi-Fi is down. The organizer resumes it.
   - Fly.io: one machine (`fly scale count 1`); Railway: 1 replica.
 - **Always-on paid plan.** Free instances sleep after ~15 minutes without traffic and take 30–60 s to wake — the first visitors to a room see "Connecting…" and timers stall. Use a paid instance that never sleeps.
 
@@ -88,6 +95,11 @@ Environment variables (auction service only):
 | `SMS_HTTP_HEADERS` | — | JSON object of extra headers, e.g. `{"Authorization":"Bearer …"}`. |
 | `SMS_HTTP_SUCCESS` | — | Optional regex the response text must match. Many BD gateways answer HTTP 200 even on errors and put the result code in the body. |
 | `SMS_LOG_BODY` | — | `1` makes the log driver print message text in production too (it does outside production). |
+| `SMS_DAILY_LIMIT_PER_NUMBER` | `5` | At most this many texts to one phone number per 24 h. Stops anyone using the public registration form to flood a stranger's phone. |
+| `SMS_DAILY_LIMIT_PER_TOURNAMENT` | `500` | At most this many texts for one tournament per 24 h. |
+| `SMS_DAILY_LIMIT_TOTAL` | `5000` | Platform-wide ceiling per 24 h — your worst-case daily SMS bill. |
+
+Messages over a limit are marked `SKIPPED` with the reason (visible under **Admin → SMS outbox**). Texts never contain anything a player typed into the public registration form (not even their name), so the form can't be used to send our SMS with someone else's words in it.
 
 **Example (illustrative only — check your gateway's current API docs for the exact URL, parameter names and success code).** A typical Bangladeshi gateway with a GET API:
 
@@ -119,7 +131,11 @@ Set up an external uptime monitor — e.g. [UptimeRobot](https://uptimerobot.com
 
 - Alert by **email and SMS / push** (the monitors' mobile apps work) to at least two people — on auction days somebody must see it within minutes.
 - Both endpoints are cheap (one `SELECT 1`), uncached and safe to poll.
-- Later: add error tracking such as [Sentry](https://sentry.io) (free tier) to the website and the auction service, so exceptions arrive with a stack trace instead of being found in host logs.
+- Uptime monitors only see "up or down". For **errors**, set `ALERT_WEBHOOK_URL` on both the website and the auction service:
+  - Slack: *Apps → Incoming Webhooks* → copy the URL. Discord: *Channel settings → Integrations → Webhooks* → copy the URL. Point it at a channel the people running auctions watch.
+  - What is reported: every uncaught error in an API route or page render (`src/instrumentation.ts`), crashes in the browser caught by the app's error screens (`/api/client-errors`), and auction-engine failures — a sale or bid the database refused, a lot that failed to close, an unexpected exception, the service stopping because another instance took over.
+  - Each report is also one JSON log line (`"level":"error"`) in the Vercel / Render logs. The same error is sent to the webhook at most once per 10 minutes, and at most 30 alerts per hour per instance, so a bad day can't flood the channel.
+  - Test it: open `https://<your-site>/api/client-errors` with a tool that can POST `{"message":"test alert"}` — an alert should arrive.
 
 ## Backups & restore
 
@@ -133,7 +149,12 @@ npm run db:backup     # → backups/neelamghor-<timestamp>.dump
 
 - Uses `pg_dump --format=custom` over the **direct** URL (`DIRECT_URL`, or `DATABASE_URL` with `-pooler` dropped — `pg_dump` does not work through PgBouncer). Needs the PostgreSQL client tools (`pg_dump`) at the same or a newer major version than the server.
 - `backups/` is git-ignored. **Copy each dump off the machine** (cloud storage with versioning). The files contain personal data (names, phone numbers, emails) — keep them private.
-- Automate it with a scheduled job (cron on a machine you control, or a scheduled GitHub Actions workflow with `DIRECT_URL` as a secret that uploads the dump to private storage). Keep at least 14 nightly copies.
+- **Automated:** `.github/workflows/backup.yml` runs every night at 03:30 Dhaka time (and on demand: *Actions → Database backup → Run workflow*). It dumps the database, encrypts the file with AES-256 and keeps it as a workflow artifact for 14 days. Set it up once under *Settings → Secrets and variables → Actions*:
+  - `BACKUP_DATABASE_URL` — the production **direct** URL (no `-pooler`).
+  - `BACKUP_PASSPHRASE` — a long random passphrase. **Also store it in your password manager**: without it the backups can't be opened.
+  - GitHub emails you when a scheduled run fails. Check the *Actions* tab after the first night.
+  - To restore one, download the artifact (*Actions → the run → Artifacts*), unzip it, then decrypt it: `gpg --decrypt neelamghor-<timestamp>.dump.gpg > neelamghor-<timestamp>.dump`.
+  - Artifacts count against the GitHub storage quota of a private repository, and image uploads live in the database, so watch the size. For longer retention, copy dumps to versioned cloud storage as well.
 
 **3. Restore drill — do it once now, then every few months.** A backup that has never been restored is a hope, not a backup.
 

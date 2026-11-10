@@ -27,7 +27,6 @@ import { type Strings, useStrings } from '@/lib/i18n'
 const STRINGS = {
   en: {
     errNameManager: 'Enter your name (min 2 characters)',
-    errNameViewer: 'Enter a display name to watch',
     errTeam: 'Choose your team to bid for',
     errJoin: 'Could not join the room. Try again.',
     cricket: 'Cricket',
@@ -55,19 +54,16 @@ const STRINGS = {
     teamsInvite: (n: number) =>
       `${n} teams in this auction. Your team must be linked to your account — use the invite link the organizer sent you.`,
     yourName: 'Your name',
-    displayName: 'Display name',
     placeholderManager: 'e.g. Rakib Hasan',
-    placeholderViewer: 'e.g. Cricket Fan 42',
     joinBid: 'Join & bid',
     watchLive: 'Watch live',
     managerNote: 'Managers bid from their phone in real time. Your team stays linked to your account.',
-    viewerNote: 'Viewers see every bid live but cannot bid — perfect for teammates and fans.',
+    viewerNote: 'No sign-up or name needed. Viewers see every bid live but cannot bid — perfect for teammates and fans.',
     or: 'or',
     takeOrganizerSeat: 'Take the organizer seat',
   },
   bn: {
     errNameManager: 'আপনার নাম লিখুন (কমপক্ষে 2 অক্ষর)',
-    errNameViewer: 'দেখার জন্য একটি নাম দিন',
     errTeam: 'কোন দলের হয়ে বিড করবেন, বেছে নিন',
     errJoin: 'রুমে যোগ দেওয়া যায়নি। আবার চেষ্টা করুন।',
     cricket: 'ক্রিকেট',
@@ -95,19 +91,16 @@ const STRINGS = {
     teamsInvite: (n: number) =>
       `এই নিলামে ${n}টি দল। আপনার দল আপনার অ্যাকাউন্টের সাথে যুক্ত থাকতে হবে — আয়োজকের পাঠানো ইনভাইট লিংক ব্যবহার করুন।`,
     yourName: 'আপনার নাম',
-    displayName: 'ডিসপ্লে নাম',
     placeholderManager: 'যেমন: রাকিব হাসান',
-    placeholderViewer: 'যেমন: ক্রিকেট ফ্যান 42',
     joinBid: 'যোগ দিন ও বিড করুন',
     watchLive: 'লাইভ দেখুন',
     managerNote: 'ম্যানেজাররা ফোন থেকেই রিয়েল টাইমে বিড করেন। আপনার দল আপনার অ্যাকাউন্টের সাথে যুক্ত থাকে।',
-    viewerNote: 'দর্শকরা প্রতিটি বিড লাইভ দেখতে পান, তবে বিড করতে পারেন না — সতীর্থ আর ভক্তদের জন্য দারুণ।',
+    viewerNote: 'কোনো সাইন-আপ বা নাম লাগবে না। দর্শকরা প্রতিটি বিড লাইভ দেখতে পান, তবে বিড করতে পারেন না — সতীর্থ আর ভক্তদের জন্য দারুণ।',
     or: 'অথবা',
     takeOrganizerSeat: 'আয়োজকের আসনে বসুন',
   },
 } satisfies Strings<{
   errNameManager: string
-  errNameViewer: string
   errTeam: string
   errJoin: string
   cricket: string
@@ -132,9 +125,7 @@ const STRINGS = {
   teamsOpen: (n: number) => string
   teamsInvite: (n: number) => string
   yourName: string
-  displayName: string
   placeholderManager: string
-  placeholderViewer: string
   joinBid: string
   watchLive: string
   managerNote: string
@@ -177,8 +168,8 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
 
   async function join() {
     setError(null)
-    if (!name.trim() || name.trim().length < 2) {
-      setError(roleTab === 'MANAGER' ? t.errNameManager : t.errNameViewer)
+    if (roleTab === 'MANAGER' && (!name.trim() || name.trim().length < 2)) {
+      setError(t.errNameManager)
       return
     }
     if (roleTab === 'MANAGER' && !teamId) {
@@ -195,10 +186,8 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
         })
         onJoined(res, 'MANAGER')
       } else {
-        const res = await apiPost<JoinResult>(`/api/rooms/${info.roomCode}/join`, {
-          role: 'viewer',
-          name: name.trim(),
-        })
+        // No name: a signed-in visitor watches under their account name, anyone else anonymously.
+        const res = await apiPost<JoinResult>(`/api/rooms/${info.roomCode}/join`, { role: 'viewer' })
         onJoined(res, 'VIEWER')
       }
     } catch (e) {
@@ -319,20 +308,22 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
               </div>
             ) : null}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="join-name">{roleTab === 'MANAGER' ? t.yourName : t.displayName}</Label>
-              <Input
-                id="join-name"
-                value={name}
-                onChange={(e) => { setName(e.target.value); setError(null) }}
-                placeholder={roleTab === 'MANAGER' ? t.placeholderManager : t.placeholderViewer}
-                className="h-12 text-base"
-                maxLength={40}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !submitting) void join()
-                }}
-              />
-            </div>
+            {roleTab === 'MANAGER' ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="join-name">{t.yourName}</Label>
+                <Input
+                  id="join-name"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setError(null) }}
+                  placeholder={t.placeholderManager}
+                  className="h-12 text-base"
+                  maxLength={40}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !submitting) void join()
+                  }}
+                />
+              </div>
+            ) : null}
 
             {error ? (
               <Alert variant="destructive">
