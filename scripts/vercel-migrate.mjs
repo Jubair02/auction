@@ -1,8 +1,17 @@
-// Run by `npm run vercel-build` (Vercel uses that script instead of `build`).
-// Applies database migrations ONLY for production deployments. Preview
-// deployments (every branch / pull request) skip it, so an unmerged branch can
-// never change the live database's schema. Local builds and CI use `build`,
-// which never migrates — run `npm run db:deploy` yourself there.
+// Run by `npm run vercel-build` (Vercel uses that script instead of `build`),
+// AFTER `next build`: a build that fails never touches the database, and a
+// migration that fails fails the deployment, so the old version stays live.
+//
+// Production deployments always migrate. A preview deployment migrates its
+// own database only when it can prove it is not production —
+// PRODUCTION_DATABASE_URL is set and differs from its DATABASE_URL — so an
+// unmerged branch never changes the live schema, and a preview of a PR with a
+// new migration still works. Local builds and CI use `build`, which never
+// migrates — run `npm run db:deploy` yourself there.
+//
+// Because the old deployment keeps serving until the new one is live, every
+// migration must be backward compatible (add first; drop or rename only in a
+// later release) — see "Migrations" in DEPLOY.md.
 import { spawnSync } from 'node:child_process'
 
 const env = process.env.VERCEL_ENV
@@ -19,12 +28,23 @@ if (env === 'preview' && prodUrl && process.env.DATABASE_URL?.trim() === prodUrl
   )
 }
 
-if (env !== 'production') {
-  console.log(`[vercel-migrate] VERCEL_ENV=${env ?? 'unset'} — skipping database migrations.`)
+const ownPreviewDb = env === 'preview' && !!prodUrl && !!process.env.DATABASE_URL?.trim() && process.env.DATABASE_URL.trim() !== prodUrl
+
+if (env !== 'production' && !ownPreviewDb) {
+  console.log(
+    `[vercel-migrate] VERCEL_ENV=${env ?? 'unset'} — skipping database migrations` +
+      (env === 'preview' && !prodUrl
+        ? ' (set PRODUCTION_DATABASE_URL so previews can prove they have their own database and migrate it).'
+        : '.'),
+  )
   process.exit(0)
 }
 
-console.log('[vercel-migrate] Production deployment — applying database migrations…')
+console.log(
+  env === 'production'
+    ? '[vercel-migrate] Production deployment — applying database migrations…'
+    : '[vercel-migrate] Preview deployment with its own database — applying database migrations…',
+)
 // migrate.mjs runs over a direct (non-pooled) connection — see the note there.
 const result = spawnSync('node', ['scripts/migrate.mjs'], { stdio: 'inherit', shell: true })
 process.exit(result.status ?? 1)

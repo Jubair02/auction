@@ -41,6 +41,7 @@ export async function GET(req: Request, { params }: RouteParams) {
           id: true,
           name: true,
           sport: true,
+          sportName: true,
           auctionMode: true,
           organizerId: true,
           archivedAt: true,
@@ -81,6 +82,8 @@ export async function GET(req: Request, { params }: RouteParams) {
     tournamentId: auction.tournament.id,
     tournamentName: auction.tournament.name,
     sport: auction.tournament.sport as RoomInfo['sport'],
+    // An "Others" tournament's own game (Kabaddi, Volleyball…), shown instead of "Others".
+    sportName: auction.tournament.sportName?.trim() || null,
     mode: auction.tournament.auctionMode as RoomInfo['mode'],
     status: auction.status as RoomInfo['status'],
     teams: teams.map<RoomTeamInfo>((t) => ({

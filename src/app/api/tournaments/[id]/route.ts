@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { isSport, type TournamentAccess } from '@/lib/types'
 import { jsonError } from '@/lib/auth'
@@ -6,6 +6,7 @@ import { normalizeBdPhone } from '@/lib/phone'
 import {
   coercePositiveInt,
   hiddenByArchive,
+  isNotFound,
   accessAllows,
   isOwnerOrAdmin,
   loadTournamentForOwner,
@@ -301,8 +302,12 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   try {
     const updated = await db.tournament.update({ where: { id }, data })
     return Response.json({ tournament: serializeTournamentFull(updated) })
-  } catch {
-    return jsonError('Could not update tournament', 400)
+  } catch (err) {
+    // Only what the request itself can cause is a 400/404; anything else (a
+    // database outage) must surface as the server error it is.
+    if (isNotFound(err)) return jsonError('Tournament not found', 404)
+    if (err instanceof Prisma.PrismaClientValidationError) return jsonError('Could not update tournament', 400)
+    throw err
   }
 }
 
@@ -326,6 +331,12 @@ export async function DELETE(req: Request, { params }: RouteParams) {
 
   if (tournament.auction?.status === 'LIVE' || tournament.auction?.status === 'PAUSED') {
     return jsonError('Cannot delete a tournament while its auction is live or paused — end the auction first', 409)
+  }
+  // Money in review must be settled first: deleting would leave the admin
+  // approving (or refunding) a payment for a tournament that no longer exists.
+  const paymentInReview = await db.payment.findFirst({ where: { tournamentId: id, status: 'PENDING' }, select: { id: true } })
+  if (paymentInReview) {
+    return jsonError('A Pro payment for this tournament is still being reviewed — wait for it to be approved or rejected before deleting.', 409)
   }
 
   const hard = user.role === 'ADMIN' && new URL(req.url).searchParams.get('hard') === '1'

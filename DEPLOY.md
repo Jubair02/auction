@@ -34,7 +34,8 @@ All of these are **per environment**: production, Preview and your local `.env` 
 
 ## Website (Vercel)
 
-- **Build Command: leave it at the default.** Vercel then runs `npm run vercel-build`, which applies database migrations **only for production deployments** (`VERCEL_ENV=production`), over a direct connection. Preview deployments never touch the database schema.
+- **Build Command: leave it at the default.** Vercel then runs `npm run vercel-build`: it builds first, then applies database migrations over a direct connection — for production deployments, and for preview deployments only when `PRODUCTION_DATABASE_URL` is set and differs from the preview's `DATABASE_URL` (proof that it is not production). A failed build never touches the database; a failed migration fails the deployment and the previous version stays live.
+- **Migrations must be backward compatible.** The previous deployment keeps serving for a moment after the migration runs, so add columns/tables/indexes first and only drop or rename them in a later release (expand, then contract).
 - **Install:** npm (`package-lock.json` is the only lockfile).
 - **Sessions:** logins are stored server-side (`Session` table); logging out revokes that session. Deploying this version signs everyone out once.
 - **Preview deployments must use their own database** — see the next section. Never give the Preview environment the production `DATABASE_URL`.
@@ -52,7 +53,7 @@ All of these are **per environment**: production, Preview and your local `.env` 
 Why: a preview build runs unmerged code against whatever `DATABASE_URL` it is given, and testing on a preview creates, edits and deletes real rows. A shared secret would also let a session cookie from one environment log in to another.
 
 - In Vercel → Settings → Environment Variables, set `DATABASE_URL` (and `DIRECT_URL` if used) **separately** for Production and for Preview / Development. Set `PRODUCTION_DATABASE_URL` too as a tripwire (see the table above).
-- Migrations run automatically only for production deployments. To try a new migration first, run `npm run db:deploy` with `DATABASE_URL` pointing at the preview branch.
+- Migrations run automatically for production deployments, and for previews once `PRODUCTION_DATABASE_URL` is set (so a pull request with a new migration works on its preview). Without it, run `npm run db:deploy` yourself with `DATABASE_URL` pointing at the preview branch.
 - **Destructive scripts refuse to run unless you opt in.** `bun prisma/seed.ts` (wipes all users and tournaments, then loads demo data) and `npm run db:reset` (drops every table) exit immediately unless `ALLOW_DB_RESET=1` is set, and always refuse when `NODE_ENV` or `VERCEL_ENV` is `production`. Double-check which database your `.env` points at before setting it:
   ```bash
   ALLOW_DB_RESET=1 bun prisma/seed.ts          # PowerShell: $env:ALLOW_DB_RESET=1; bun prisma/seed.ts

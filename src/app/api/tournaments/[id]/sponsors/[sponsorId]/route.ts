@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { serializeSponsor } from '@/lib/branding'
-import { loadTournamentForOwner, readJson, requireSession } from '../../../../_lib/helpers'
+import { isNotFound, loadTournamentForOwner, readJson, requireSession } from '../../../../_lib/helpers'
 import { parseSponsorBody, PRO_ONLY } from '../_lib/sponsors'
 
 export const runtime = 'nodejs'
@@ -29,7 +29,13 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   const existing = await db.sponsor.findFirst({ where: { id: sponsorId, tournamentId: id }, select: { id: true } })
   if (!existing) return jsonError('Sponsor not found', 404)
 
-  const sponsor = await db.sponsor.update({ where: { id: sponsorId }, data: parsed.data })
+  let sponsor
+  try {
+    sponsor = await db.sponsor.update({ where: { id: sponsorId }, data: parsed.data })
+  } catch (err) {
+    if (isNotFound(err)) return jsonError('Sponsor not found', 404)
+    throw err
+  }
   return Response.json({ sponsor: serializeSponsor(sponsor) })
 }
 

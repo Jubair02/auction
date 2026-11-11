@@ -185,7 +185,7 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
               )}
             </li>
             <li>
-              <FooterLink href="/#pricing" onClick={(e) => jumpTo(e, '/', 'pricing')}>
+              <FooterLink href="/pricing">
                 {t.pricing}
               </FooterLink>
             </li>

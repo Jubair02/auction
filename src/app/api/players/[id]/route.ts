@@ -117,6 +117,16 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
   if (player.status === 'LIVE') return jsonError('Player is on the block right now', 409)
   if (player.status === 'SOLD') return jsonError('Cannot delete a player who has been sold', 409)
 
-  await db.player.delete({ where: { id } })
+  // Guarded delete (the player may have gone on the block or been deleted
+  // meanwhile), and their sign-up stops counting as "already registered": the
+  // person can register again instead of being refused forever.
+  const removed = await db.$transaction(async (tx) => {
+    const r = await tx.player.deleteMany({ where: { id, status: { notIn: ['LIVE', 'SOLD'] } } })
+    if (r.count === 1) {
+      await tx.playerRegistration.updateMany({ where: { playerId: id }, data: { status: 'REJECTED', playerId: null } })
+    }
+    return r.count
+  })
+  if (removed !== 1) return jsonError('Player not found', 404)
   return Response.json({ ok: true })
 }

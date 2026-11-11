@@ -42,11 +42,13 @@ export async function POST(req: Request) {
     if (!open) return jsonError('Uploads need an organizer login or an open registration link', 401)
     // Keyed on IP + tournament: a whole team signing up from one venue Wi-Fi
     // (or one carrier-NAT address) must not run out, and one tournament's
-    // sign-up rush does not use up another's. The per-tournament cap bounds
-    // what a single open link can be used to store.
+    // sign-up rush does not use up another's. The per-tournament caps bound
+    // what a single open link can be used to store (unused uploads are swept
+    // after 7 days): plenty for a real rush — registrations cap at 2000 pending.
     retryAfter =
       (await rateLimit(`${clientKey(req, 'upload-anon')}:${open.id}`, 40, HOUR)) ??
-      (await rateLimit(`upload-anon-tournament:${open.id}`, 600, HOUR))
+      (await rateLimit(`upload-anon-tournament:${open.id}`, 200, HOUR)) ??
+      (await rateLimit(`upload-anon-tournament-day:${open.id}`, 1500, 24 * HOUR))
   }
   if (retryAfter !== null) return jsonError(`Too many uploads. Please try again in ${retryAfter} seconds.`, 429)
 

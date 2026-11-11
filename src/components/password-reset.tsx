@@ -170,10 +170,13 @@ export function ResetPasswordView({ token }: { token: string }) {
   const [confirm, setConfirm] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Only a bad link (invalid, expired or already used) is fixed by requesting a new one.
+  const [linkProblem, setLinkProblem] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setLinkProblem(false)
     if (password.length < 6) return setError(t.passwordTooShort)
     if (password !== confirm) return setError(t.passwordsMismatch)
     setSubmitting(true)
@@ -183,6 +186,12 @@ export function ResetPasswordView({ token }: { token: string }) {
       navigate('/login')
     } catch (ex) {
       setError(ex instanceof ApiError ? ex.message : t.genericError)
+      setLinkProblem(
+        ex instanceof ApiError &&
+          ex.status === 400 &&
+          // The API's "This reset link is invalid or has expired", or a token mangled in the URL.
+          (/\blink\b/i.test(ex.serverMessage) || token.length < 20 || token.length > 200),
+      )
     } finally {
       setSubmitting(false)
     }
@@ -194,10 +203,15 @@ export function ResetPasswordView({ token }: { token: string }) {
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>
-              {error}{' '}
-              <button type="button" className="font-semibold underline" onClick={() => navigate('/forgot-password')}>
-                {t.sendNewLink}
-              </button>
+              {error}
+              {linkProblem ? (
+                <>
+                  {' '}
+                  <button type="button" className="font-semibold underline" onClick={() => navigate('/forgot-password')}>
+                    {t.sendNewLink}
+                  </button>
+                </>
+              ) : null}
             </AlertDescription>
           </Alert>
         ) : null}

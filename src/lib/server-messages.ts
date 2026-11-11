@@ -256,6 +256,10 @@ const EXACT: Record<string, string> = {
   'Action failed — try again': 'কাজটি করা যায়নি — আবার চেষ্টা করুন।',
   'Only the tournament owner or a co-organizer can do this': 'এটি শুধু টুর্নামেন্টের মালিক বা সহ-আয়োজক করতে পারেন।',
   'Name must be 2–60 characters': 'নাম ২ থেকে ৬০ অক্ষরের মধ্যে হতে হবে।',
+  'A Pro payment for this tournament is still being reviewed — wait for it to be approved or rejected before deleting.':
+    'এই টুর্নামেন্টের একটি Pro পেমেন্ট এখনো যাচাই হচ্ছে — মোছার আগে অনুমোদন বা বাতিল হওয়া পর্যন্ত অপেক্ষা করুন।',
+  'Another team manager in this room already uses that name — add your surname or team.':
+    'এই রুমে আরেকজন টিম ম্যানেজার এই নাম ব্যবহার করছেন — নামের সাথে পদবি বা দলের নাম যোগ করুন।',
   'Enter your current password': 'আপনার বর্তমান পাসওয়ার্ড দিন।',
   'New password must be 6–72 characters': 'নতুন পাসওয়ার্ড ৬ থেকে ৭২ অক্ষরের মধ্যে হতে হবে।',
   'Choose a password different from your current one': 'বর্তমান পাসওয়ার্ডের চেয়ে আলাদা একটি পাসওয়ার্ড দিন।',

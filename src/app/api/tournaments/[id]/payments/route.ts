@@ -81,24 +81,32 @@ export async function POST(req: Request, { params }: RouteParams) {
   }
   if (!payTo) return jsonError(`${method === 'BKASH' ? 'bKash' : 'Nagad'} payments are not accepted right now`, 400)
 
-  const pending = await db.payment.findFirst({ where: { tournamentId: id, status: 'PENDING' }, select: { id: true } })
-  if (pending) return jsonError('A payment for this tournament is already waiting for review', 409)
-
+  const WAITING = 'A payment for this tournament is already waiting for review'
   let payment: Payment
   try {
-    payment = await db.payment.create({
-      data: {
-        kind: 'TOURNAMENT_PRO',
-        tournamentId: id,
-        tournamentName: tournament.name,
-        userId: user.id,
-        payerName: user.name,
-        amount: settings.proPrice,
-        method,
-        trxId,
-        senderNumber,
-      },
+    // One payment in review per tournament: a double-tap or a second tab with a
+    // different TrxID takes its turn (per-tournament lock) and is refused, so
+    // nobody pays twice for one upgrade.
+    const created = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pro-payment:${id}`}))`
+      const pending = await tx.payment.findFirst({ where: { tournamentId: id, status: 'PENDING' }, select: { id: true } })
+      if (pending) return null
+      return tx.payment.create({
+        data: {
+          kind: 'TOURNAMENT_PRO',
+          tournamentId: id,
+          tournamentName: tournament.name,
+          userId: user.id,
+          payerName: user.name,
+          amount: settings.proPrice,
+          method,
+          trxId,
+          senderNumber,
+        },
+      })
     })
+    if (!created) return jsonError(WAITING, 409)
+    payment = created
   } catch (err) {
     if (!isUniqueViolation(err)) throw err
     // The same Transaction ID was REJECTED earlier for this very tournament

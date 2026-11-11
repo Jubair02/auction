@@ -219,6 +219,14 @@ export function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
 }
 
+/**
+ * The row an update/delete targeted is gone (P2025) — usually deleted by
+ * someone else between our check and the write. Answer 404, not a 500.
+ */
+export function isNotFound(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025'
+}
+
 export const ONE_TEAM_PER_MANAGER = 'You already manage a team in this tournament — a manager can run only one team.'
 
 // ---------- Coercion / validation ----------

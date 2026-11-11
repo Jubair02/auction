@@ -17,9 +17,13 @@ type RouteParams = { params: Promise<{ id: string }> }
 // GET /api/tournaments/:id/results — tournament staff (owner, ADMIN,
 // co-organizer, auctioneer), a manager of a team in it, or — once the auction
 // is over and the organizer left results public — anyone, logged in or not.
-export async function GET(_req: Request, { params }: RouteParams) {
+export async function GET(req: Request, { params }: RouteParams) {
   const { id } = await params
-  const user = await getSessionUser()
+  // ?view=public — what a visitor without an account sees, whoever asks. It
+  // never depends on the cookie, so the CDN may cache it for shared links (the
+  // page asks for it when nobody is signed in); the signed-in view never is.
+  const publicView = new URL(req.url).searchParams.get('view') === 'public'
+  const user = publicView ? null : await getSessionUser()
 
   const tournament = await db.tournament.findUnique({ where: { id } })
   if (!tournament || hiddenByArchive(tournament, user)) return jsonError('Tournament not found', 404)
@@ -117,5 +121,5 @@ export async function GET(_req: Request, { params }: RouteParams) {
     viewer,
     /** Logo, brand colour, sponsors and whether to hide NeelamGhor marks (PRO only). */
     branding,
-  })
+  }, publicView ? { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } } : undefined)
 }

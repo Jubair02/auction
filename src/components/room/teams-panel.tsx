@@ -79,7 +79,7 @@ export function TeamsPanel({
                 <p className="flex items-center gap-1.5 truncate text-sm font-bold">
                   {t.name}
                   {isTopBidder ? (
-                    <Badge className="bg-primary px-1.5 py-0 text-[10px] text-primary-foreground">
+                    <Badge className="bg-primary px-1.5 py-0 text-[11px] text-primary-foreground">
                       <TrendingUp className="mr-0.5 h-2.5 w-2.5" aria-hidden />
                       {s.highestBid}
                     </Badge>
@@ -91,12 +91,12 @@ export function TeamsPanel({
               </div>
               <div className="text-right">
                 <p className="text-sm font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(t.remaining)}</p>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{s.remaining}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.remaining}</p>
               </div>
             </div>
             <div className="mt-2 flex items-center gap-2">
               <Progress value={spendPct} className="h-1.5" aria-label={s.budgetUsed(t.name)} />
-              <span className="shrink-0 text-[10px] font-semibold tabular-nums text-muted-foreground">
+              <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
                 {formatBDT(t.spent)}/{formatBDT(t.budget)}
               </span>
             </div>

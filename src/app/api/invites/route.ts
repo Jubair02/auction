@@ -1,0 +1,93 @@
+import { db } from '@/lib/db'
+import { getSessionUser, jsonError } from '@/lib/auth'
+import { hashOneTimeToken } from '@/lib/crypto'
+import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
+import { isUniqueViolation, ONE_TEAM_PER_MANAGER, readJson } from '../_lib/helpers'
+
+export const runtime = 'nodejs'
+
+const INVALID = 'This invite link is invalid or has expired. Ask the organizer for a new one.'
+
+async function findInvite(req: Request, token: string) {
+  const retryAfter = await rateLimit(clientKey(req, 'invite'), 60, 10 * 60 * 1000)
+  if (retryAfter !== null) return { response: jsonError(`Too many attempts. Please try again in ${retryAfter} seconds.`, 429) }
+  if (token.length < 20 || token.length > 200) return { response: jsonError(INVALID, 404) }
+
+  const team = await db.team.findUnique({
+    where: { inviteTokenHash: hashOneTimeToken(token) },
+    include: { tournament: { include: { auction: { select: { roomCode: true } } } } },
+  })
+  if (!team || !team.inviteExpiresAt || team.inviteExpiresAt <= new Date() || team.tournament.archivedAt) {
+    return { response: jsonError(INVALID, 404) }
+  }
+  return { team }
+}
+
+async function lookup(req: Request, token: string) {
+  const found = await findInvite(req, token)
+  if ('response' in found) return found.response
+  const { team } = found
+
+  return Response.json({
+    teamName: team.name,
+    teamColor: team.color,
+    tournamentName: team.tournament.name,
+    sport: team.tournament.sport,
+    budget: team.budget,
+    expiresAt: team.inviteExpiresAt!.toISOString(),
+  })
+}
+
+/** A logged-in MANAGER accepts and becomes the team's manager. */
+async function accept(req: Request, token: string) {
+  const user = await getSessionUser()
+  if (!user) return jsonError('Log in with your team manager account to accept this invite.', 401)
+  if (user.role !== 'MANAGER') {
+    return jsonError('Invites are for team manager accounts. Log out and use (or create) a manager account.', 403)
+  }
+
+  const found = await findInvite(req, token)
+  if ('response' in found) return found.response
+  const { team } = found
+
+  const other = await db.team.findFirst({
+    where: { tournamentId: team.tournamentId, managerUserId: user.id, id: { not: team.id } },
+    select: { name: true },
+  })
+  if (other) return jsonError(`You already manage "${other.name}" in this tournament.`, 409)
+
+  // Single use, and the organizer's invite wins over any earlier claim — the
+  // previous manager's seat is revoked by the socket service on their next bid.
+  let accepted: { count: number }
+  try {
+    accepted = await db.team.updateMany({
+      where: { id: team.id, inviteTokenHash: hashOneTimeToken(token) },
+      data: { managerUserId: user.id, inviteTokenHash: null, inviteExpiresAt: null },
+    })
+  } catch (err) {
+    // Unique (tournamentId, managerUserId): two invites accepted at once by one manager.
+    if (isUniqueViolation(err)) return jsonError(ONE_TEAM_PER_MANAGER, 409)
+    throw err
+  }
+  if (accepted.count !== 1) return jsonError(INVALID, 404)
+
+  return Response.json({
+    teamId: team.id,
+    teamName: team.name,
+    tournamentId: team.tournamentId,
+    roomCode: team.tournament.auction?.roomCode ?? null,
+  })
+}
+
+/**
+ * POST /api/invites {token}          → what the invite is for
+ * POST /api/invites {token, accept}  → a logged-in MANAGER accepts it
+ *
+ * The token (the secret) travels in the body, never in the URL: paths end up
+ * in hosting request logs and in error alerts.
+ */
+export async function POST(req: Request) {
+  const body = await readJson(req)
+  const token = typeof body?.token === 'string' ? body.token : ''
+  return body?.accept === true ? accept(req, token) : lookup(req, token)
+}

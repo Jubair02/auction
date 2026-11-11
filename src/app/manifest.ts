@@ -10,7 +10,9 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: 'NeelamGhor',
     description:
       'Run live room-code player auctions for your local tournament — budgets, squads and results in ৳ BDT. Cricket & Football.',
-    start_url: '/',
+    // The installed app opens on the user's own dashboard, not the marketing
+    // page. Logged out, the router sends /dashboard to /login and comes back.
+    start_url: '/dashboard',
     scope: '/',
     display: 'standalone',
     orientation: 'any',

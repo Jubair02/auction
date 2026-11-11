@@ -5,7 +5,7 @@ import { Eye, Gavel, Loader2, LogIn, ShieldAlert, UserCog, UserPlus } from 'luci
 import { apiPost, ApiError } from '@/lib/api'
 import { formatNumber } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
-import type { JoinResult, RoomInfo } from '@/lib/types'
+import { sportLabel, type JoinResult, type RoomInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useAuthState } from '@/lib/store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -22,16 +22,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { TournamentStatusBadge } from '@/components/shared/status-badges'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
 const STRINGS = {
   en: {
     errNameManager: 'Enter your name (min 2 characters)',
     errTeam: 'Choose your team to bid for',
     errJoin: 'Could not join the room. Try again.',
-    cricket: 'Cricket',
-    football: 'Football',
-    otherSport: 'Others',
     categoryBids: 'Category bids',
     normalBids: 'Normal bids',
     joinAs: 'Join as',
@@ -66,9 +63,6 @@ const STRINGS = {
     errNameManager: 'আপনার নাম লিখুন (কমপক্ষে 2 অক্ষর)',
     errTeam: 'কোন দলের হয়ে বিড করবেন, বেছে নিন',
     errJoin: 'রুমে যোগ দেওয়া যায়নি। আবার চেষ্টা করুন।',
-    cricket: 'ক্রিকেট',
-    football: 'ফুটবল',
-    otherSport: 'অন্যান্য',
     categoryBids: 'ক্যাটাগরি বিড',
     normalBids: 'সাধারণ বিড',
     joinAs: 'যেভাবে যোগ দেবেন',
@@ -103,9 +97,6 @@ const STRINGS = {
   errNameManager: string
   errTeam: string
   errJoin: string
-  cricket: string
-  football: string
-  otherSport: string
   categoryBids: string
   normalBids: string
   joinAs: string
@@ -145,6 +136,7 @@ interface JoinCardProps {
 /** Gate before the live room — pick a seat as team manager or watch as viewer. */
 export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending = false }: JoinCardProps) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
   const { user } = useAuthState()
   const myManagedTeam = user
     ? info.teams.find((team) => team.isMine)
@@ -209,7 +201,10 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
             <h1 className="text-xl font-black tracking-tight sm:text-2xl">{info.tournamentName}</h1>
             <div className="flex flex-wrap items-center justify-center gap-1.5">
               <Badge variant="outline" className="font-mono tracking-widest">{info.roomCode}</Badge>
-              <Badge variant="secondary">{info.sport === 'CRICKET' ? t.cricket : info.sport === 'FOOTBALL' ? t.football : t.otherSport}</Badge>
+              <Badge variant="secondary">
+                {/* An "Others" tournament shows its own game's name. */}
+                {sportLabel(info.sport, lang, info.sportName)}
+              </Badge>
               <Badge variant="outline">{info.mode === 'CATEGORY' ? t.categoryBids : t.normalBids}</Badge>
               <TournamentStatusBadge status={info.status} />
             </div>
@@ -289,11 +284,11 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
                             {t.budget(formatNumber(team.budget))}
                           </span>
                           {team.isMine ? (
-                            <span className="text-[10px] font-bold uppercase text-teal-700 dark:text-teal-300">{t.tagYourTeam}</span>
+                            <span className="text-[11px] font-bold uppercase text-teal-700 dark:text-teal-300">{t.tagYourTeam}</span>
                           ) : team.claimed ? (
-                            <span className="text-[10px] font-bold uppercase text-muted-foreground">{t.tagTaken}</span>
+                            <span className="text-[11px] font-bold uppercase text-muted-foreground">{t.tagTaken}</span>
                           ) : !info.allowOpenClaim ? (
-                            <span className="text-[10px] font-bold uppercase text-muted-foreground">{t.tagInviteOnly}</span>
+                            <span className="text-[11px] font-bold uppercase text-muted-foreground">{t.tagInviteOnly}</span>
                           ) : null}
                         </span>
                       </SelectItem>
@@ -352,7 +347,7 @@ export function JoinCard({ info, onJoined, onOrganizerSeat, organizerSeatPending
 
           {onOrganizerSeat ? (
             <div className="mt-4 space-y-4">
-                <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
                   <span className="h-px flex-1 bg-border" /> {t.or} <span className="h-px flex-1 bg-border" />
                 </div>
                 <Button

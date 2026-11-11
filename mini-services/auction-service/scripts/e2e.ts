@@ -260,11 +260,11 @@ async function main() {
 
   const inv = await http('POST', `/api/teams/${alpha.id}/invite`, {}, orgC)
   check('organizer creates an invite link', inv.status === 200 && !!inv.json?.token, inv)
-  const invInfo = await http('GET', `/api/invites/${inv.json.token}`)
+  const invInfo = await http('POST', '/api/invites', { token: inv.json.token })
   check('invite link shows the team', invInfo.status === 200 && invInfo.json?.teamName === 'E2E Alpha', invInfo)
-  const acc = await http('POST', `/api/invites/${inv.json.token}`, {}, aC)
+  const acc = await http('POST', '/api/invites', { token: inv.json.token, accept: true }, aC)
   check('manager A accepts the invite', acc.status === 200 && acc.json?.roomCode === code, acc)
-  const acc2 = await http('POST', `/api/invites/${inv.json.token}`, {}, bC)
+  const acc2 = await http('POST', '/api/invites', { token: inv.json.token, accept: true }, bC)
   check('invite link is single-use', acc2.status === 404, acc2)
 
   const joinA = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E A', teamId: alpha.id }, aC)
@@ -277,6 +277,8 @@ async function main() {
   const joinB = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E B', teamId: beta.id }, bC)
   check('manager B claims Beta (open claim)', joinB.status === 200, joinB)
   const joinC = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E C', teamId: gamma.id }, cC)
+  const impostor = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'e2e b', teamId: gamma.id }, cC)
+  check("a manager cannot take another manager's name in the room (409)", impostor.status === 409, impostor)
   check('manager C claims Gamma (open claim)', joinC.status === 200, joinC)
   const twoTeams = await http('POST', `/api/rooms/${code}/join`, { role: 'manager', name: 'E2E A', teamId: gamma.id }, aC)
   check('a manager cannot hold two teams (403/409)', twoTeams.status === 403 || twoTeams.status === 409, twoTeams)
@@ -675,6 +677,23 @@ async function main() {
   const approvals = await Promise.all([1, 2, 3].map(() => http('PATCH', `/api/tournaments/${tid}/registrations`, { ids: [reg!.id], action: 'approve' }, orgC)))
   const added = (await db.player.count({ where: { tournamentId: tid } })) - beforeApprove
   check('approving the same registration three times at once adds one player', added === 1, { added, statuses: approvals.map((a) => a.status) })
+  const doubleTap = await Promise.all(
+    [1, 2].map(() => http('POST', `/api/register/${regCode}`, { name: 'E2E Double Tap', phone: '01744444444', role: 'Batsman' })),
+  )
+  const doubleRows = await db.playerRegistration.count({ where: { tournamentId: tid, phone: '01744444444' } })
+  check(
+    'a double-tapped sign-up creates one registration (the second gets 409)',
+    doubleRows === 1 && doubleTap.filter((r) => r.status === 201).length === 1 && doubleTap.filter((r) => r.status === 409).length === 1,
+    { doubleRows, statuses: doubleTap.map((r) => r.status) },
+  )
+  const approvedReg = await db.playerRegistration.findUnique({ where: { id: reg!.id } })
+  const removePlayer = await http('DELETE', `/api/players/${approvedReg?.playerId}`, undefined, orgC)
+  const reRegister = await http('POST', `/api/register/${regCode}`, { name: 'E2E Signup', phone: '01755555555', role: 'Bowler' })
+  check(
+    'deleting a player frees their phone number to register again',
+    !!approvedReg?.playerId && removePlayer.status === 200 && reRegister.status === 201,
+    { playerId: approvedReg?.playerId, remove: removePlayer.status, reRegister: reRegister.status },
+  )
 
   // Login limit is shared through the database (a made-up client IP, so nobody else is locked out).
   const probeIp = { 'X-Forwarded-For': `203.0.113.${(Date.now() % 200) + 20}` }
@@ -872,6 +891,15 @@ async function main() {
   const gen = await http('POST', `/api/tournaments/${tid}/league/generate`, { format: 'ROUND_ROBIN' }, orgC)
   const expectedMatches = (teamCount * (teamCount - 1)) / 2
   check('round-robin fixtures: every team meets every other team once', gen.status === 200 && gen.json?.created === expectedMatches, { status: gen.status, created: gen.json?.created, expectedMatches })
+  const liveMatch = await db.match.findFirst({ where: { tournamentId: tid }, orderBy: { matchNumber: 'asc' } })
+  await db.match.update({ where: { id: liveMatch!.id }, data: { status: 'LIVE', homeScore: 12 } })
+  const regenerate = await http('POST', `/api/tournaments/${tid}/league/generate`, { format: 'ROUND_ROBIN' }, orgC)
+  const stillThere = await db.match.findUnique({ where: { id: liveMatch!.id } })
+  check('regenerating fixtures never silently deletes a match being played (409 without confirmation)', regenerate.status === 409 && stillThere?.status === 'LIVE', {
+    status: regenerate.status,
+    match: stillThere?.status,
+  })
+  await db.match.update({ where: { id: liveMatch!.id }, data: { status: 'SCHEDULED', homeScore: null } })
 
   // A result on a match whose home team bought players, plus one player's stats.
   const soldPlayer = await db.player.findFirst({ where: { tournamentId: tid, status: 'SOLD' } })
@@ -923,6 +951,20 @@ async function main() {
   const resultsText = JSON.stringify(publicResults.json ?? {})
   const card = await fetch(`${WEB}/api/og/results/${tid}`)
   await card.arrayBuffer()
+  const publicView = await fetch(`${WEB}/api/tournaments/${tid}/results?view=public`)
+  await publicView.arrayBuffer()
+  const signedInView = await fetch(`${WEB}/api/tournaments/${tid}/results`, { headers: { Cookie: orgC } })
+  await signedInView.arrayBuffer()
+  const unknownPage = await fetch(`${WEB}/no-such-page-${RUN}`)
+  await unknownPage.arrayBuffer()
+  check(
+    'shared results are CDN-cacheable for visitors only; unknown addresses answer a real 404',
+    publicView.status === 200 &&
+      /s-maxage=\d+/.test(publicView.headers.get('cache-control') ?? '') &&
+      !/s-maxage/.test(signedInView.headers.get('cache-control') ?? '') &&
+      unknownPage.status === 404,
+    { public: publicView.headers.get('cache-control'), signedIn: signedInView.headers.get('cache-control'), unknown: unknownPage.status },
+  )
   check(
     'ended auction: results are public without a login, with no phone numbers, and the share card renders',
     publicResults.status === 200 && !/01[3-9]\d{8}/.test(resultsText) && card.status === 200 && (card.headers.get('content-type') ?? '').startsWith('image/'),

@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { loadTournamentForOwner, readJson, requireSession } from '../../../../_lib/helpers'
+import { isNotFound, loadTournamentForOwner, readJson, requireSession } from '../../../../_lib/helpers'
 import { listSponsors, PRO_ONLY } from '../_lib/sponsors'
 
 export const runtime = 'nodejs'
@@ -33,8 +33,14 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     return jsonError('The sponsor list changed — reload and try again', 409)
   }
 
-  await db.$transaction(
-    ids.map((sponsorId, index) => db.sponsor.update({ where: { id: sponsorId }, data: { sortOrder: index } })),
-  )
+  try {
+    await db.$transaction(
+      ids.map((sponsorId, index) => db.sponsor.update({ where: { id: sponsorId }, data: { sortOrder: index } })),
+    )
+  } catch (err) {
+    // A sponsor was deleted between the check above and this write.
+    if (isNotFound(err)) return jsonError('The sponsor list changed — reload and try again', 409)
+    throw err
+  }
   return Response.json({ sponsors: await listSponsors(id) })
 }

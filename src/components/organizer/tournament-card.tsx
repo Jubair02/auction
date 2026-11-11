@@ -48,7 +48,7 @@ const STRINGS = {
     copyCode: (code: string) => `রুম কোড ${code} কপি করুন`,
     noRoom: 'এখনো রুম নেই — নিলাম সেট আপ করুন',
     plan: { FREE: 'ফ্রি', PRO: 'প্রো' },
-    staffRole: { CO_ORGANIZER: 'সহ-আয়োজক', AUCTIONEER: 'নিলাম পরিচালক' },
+    staffRole: { CO_ORGANIZER: 'সহ-আয়োজক', AUCTIONEER: 'নিলামকারী' },
     planAria: (plan: string) => `${plan} প্ল্যান`,
   },
 } satisfies Strings<{

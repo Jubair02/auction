@@ -106,8 +106,12 @@ export function ManualBidDialog({
   state: RoomState
   open: boolean
   onOpenChange: (o: boolean) => void
-  /** Resolves true once the server accepted the bid (the dialog then closes). */
-  onSubmit: (teamId: string, amount: number) => Promise<boolean>
+  /**
+   * Resolves true once the server accepted the bid (the dialog then closes).
+   * `playerId` is the player the dialog showed when Submit was pressed — the
+   * server refuses the bid if someone else is on the block by then.
+   */
+  onSubmit: (teamId: string, amount: number, playerId: string) => Promise<boolean>
 }) {
   const tx = useStrings(STRINGS)
   const [teamId, setTeamId] = useState<string>('')
@@ -162,7 +166,7 @@ export function ManualBidDialog({
     setError(null)
     setSending(true)
     try {
-      if (await onSubmit(team.id, Math.round(n))) setAmount('')
+      if (await onSubmit(team.id, Math.round(n), player.id)) setAmount('')
     } finally {
       setSending(false)
     }

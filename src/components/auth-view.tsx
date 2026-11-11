@@ -163,11 +163,19 @@ const DEMO_ACCOUNTS = [
   { label: 'Manager', email: 'manager@neelamghor.bd', password: 'demo1234' },
 ]
 
+// /login and /register are separate mounts, so the email typed on one is kept
+// here for the other (memory only, until reload). Never the password.
+const emailDraft = { value: '' }
+
 export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
   const setUser = useAppStore((s) => s.setUser)
   const t = useStrings(STRINGS)
 
-  const [email, setEmail] = useState('')
+  const [email, setEmailState] = useState(() => emailDraft.value)
+  const setEmail = (value: string) => {
+    emailDraft.value = value
+    setEmailState(value)
+  }
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -181,6 +189,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
   const isRegister = mode === 'register'
 
   const applySuccess = (user: SafeUser, created: boolean) => {
+    emailDraft.value = ''
     setUser(user)
     const firstName = user.name.split(/\s+/)[0]
     toast.success(created ? t.welcomeNew(firstName) : t.welcomeBack(firstName))

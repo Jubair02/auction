@@ -4,9 +4,8 @@
 // their lead, the phone vibrates, a short beep plays (unless muted) and, if
 // the tab is in the background, its title says so. The bid console shows a
 // banner until the manager leads again or the player leaves the block.
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { outbidChange, type BidSnapshot } from '@/lib/room-state'
-import type { RoomState } from '@/lib/types'
 
 export interface OutbidAlert {
   byTeam: string
@@ -73,73 +72,80 @@ function beep(): void {
   }
 }
 
-function snapshotOf(state: RoomState | null): BidSnapshot | null {
-  if (!state) return null
-  const bid = state.currentBid
-  return {
-    status: state.status,
-    playerId: state.currentPlayer?.id ?? null,
-    bid: bid ? { teamId: bid.teamId, teamName: bid.teamName, amount: bid.amount } : null,
+/** Shows `text` as a background tab's title until the user comes back; returns an undo. */
+function flagTitle(text: string): () => void {
+  const original = document.title
+  document.title = `⚠ ${text}`
+  const restore = () => {
+    if (document.hidden) return
+    document.title = original
+    document.removeEventListener('visibilitychange', restore)
+  }
+  document.addEventListener('visibilitychange', restore)
+  return () => {
+    document.removeEventListener('visibilitychange', restore)
+    document.title = original
   }
 }
 
-const sameSnapshot = (a: BidSnapshot | null, b: BidSnapshot) =>
-  !!a && a.status === b.status && a.playerId === b.playerId && a.bid?.teamId === b.bid?.teamId && a.bid?.amount === b.bid?.amount
-
 /**
- * The active outbid alert for `myTeamId` (null when there is none). `titleText`
- * is what a background tab's title shows when the alarm fires.
+ * The active outbid alert for `myTeamId` (null when there is none).
+ *
+ * Fed by EVERY room update as it arrives (`subscribe`, from useAuctionSocket),
+ * not by what happens to get rendered: in a fast bidding war on a slow phone
+ * two updates can land in one render, and a lead that was lost in between
+ * must still sound the alarm. `titleFor` is the background tab's title text.
  */
-export function useOutbidAlert(state: RoomState | null, myTeamId: string | undefined, titleText: string): OutbidAlert | null {
+export function useOutbidAlert(
+  subscribe: (listener: (snap: BidSnapshot) => void) => () => void,
+  myTeamId: string | undefined,
+  titleFor: (team: string) => string,
+): OutbidAlert | null {
   const [soundOn] = useOutbidSound()
-  // Derived from successive broadcasts while rendering (no effect round trip):
-  // the previous snapshot, the alert, and a counter that bumps once per lost lead.
-  const [track, setTrack] = useState<{ snap: BidSnapshot | null; alert: OutbidAlert | null; fired: number }>({
-    snap: null,
-    alert: null,
-    fired: 0,
-  })
-  const snap = snapshotOf(state)
-  if (snap && !sameSnapshot(track.snap, snap)) {
-    const change = outbidChange(track.snap, snap, myTeamId, !!track.alert)
-    let { alert, fired } = track
-    if (change?.type === 'outbid') {
-      alert = { byTeam: change.byTeam, amount: change.amount }
-      fired += 1
-    } else if (change?.type === 'raised') {
-      alert = { byTeam: change.byTeam, amount: change.amount }
-    } else if (change?.type === 'clear') {
-      alert = null
-    }
-    setTrack({ snap, alert, fired })
-  }
-
-  // The alarm itself — once per lost lead.
+  const [alert, setAlert] = useState<OutbidAlert | null>(null)
+  // Read at alarm time, without re-subscribing when they change.
+  const soundRef = useRef(soundOn)
+  const titleRef = useRef(titleFor)
   useEffect(() => {
-    if (track.fired === 0) return
-    try {
-      navigator.vibrate?.([180, 90, 180])
-    } catch {
-      // not supported
-    }
-    if (soundOn) beep()
-    if (document.hidden) {
-      const original = document.title
-      document.title = `⚠ ${titleText}`
-      const restore = () => {
-        if (document.hidden) return
-        document.title = original
-        document.removeEventListener('visibilitychange', restore)
-      }
-      document.addEventListener('visibilitychange', restore)
-      return () => {
-        document.removeEventListener('visibilitychange', restore)
-        document.title = original
-      }
-    }
-    // Only a new lost lead re-runs this; a changed title text or mute choice must not replay it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track.fired])
+    soundRef.current = soundOn
+    titleRef.current = titleFor
+  }, [soundOn, titleFor])
 
-  return myTeamId ? track.alert : null
+  useEffect(() => {
+    if (!myTeamId) return
+    let prev: BidSnapshot | null = null
+    let alerted = false
+    let undoTitle: (() => void) | null = null
+    const off = subscribe((snap) => {
+      const change = outbidChange(prev, snap, myTeamId, alerted)
+      prev = snap
+      if (!change) return
+      if (change.type === 'clear') {
+        alerted = false
+        setAlert(null)
+        return
+      }
+      alerted = true
+      setAlert({ byTeam: change.byTeam, amount: change.amount })
+      if (change.type !== 'outbid') return
+      // The alarm itself — once per lost lead.
+      try {
+        navigator.vibrate?.([180, 90, 180])
+      } catch {
+        // not supported
+      }
+      if (soundRef.current) beep()
+      if (document.hidden) {
+        undoTitle?.()
+        undoTitle = flagTitle(titleRef.current(change.byTeam))
+      }
+    })
+    return () => {
+      off()
+      undoTitle?.()
+      setAlert(null)
+    }
+  }, [subscribe, myTeamId])
+
+  return myTeamId ? alert : null
 }

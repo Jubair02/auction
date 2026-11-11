@@ -86,7 +86,7 @@ function ParticipantsPanelView({ state, embedded = false }: { state: RoomState; 
                 </p>
               ) : null}
             </div>
-            <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{t.roles[p.role]}</span>
+            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t.roles[p.role]}</span>
             <span
               className={cn('h-2 w-2 shrink-0 rounded-full', p.online ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600')}
               aria-label={p.online ? t.online : t.offline}

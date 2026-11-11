@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ShieldCheck, Trophy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppLink } from '@/components/shared/app-link'
@@ -96,9 +96,26 @@ const STRINGS = {
   }
 >
 
+/** Kept in the URL as ?tab= (Overview has none). */
+const ADMIN_TABS = ['overview', 'users', 'tournaments', 'payments', 'settings', 'analytics', 'sms']
+const isAdminTab = (v: string | null): v is string => v !== null && ADMIN_TABS.includes(v)
+
 export default function AdminView() {
   const t = useStrings(STRINGS)
-  const [tab, setTabNow] = useState('overview')
+  const [tab, setTabState] = useState('overview')
+  // The open tab lives in the URL (?tab=users) so refresh, back and shared
+  // links keep it. Read after mount: the server render can't see the query.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('tab')
+    setTabState(isAdminTab(fromUrl) ? fromUrl : 'overview')
+  }, [])
+  const setTabNow = useCallback((next: string) => {
+    setTabState(next)
+    const url = new URL(window.location.href)
+    if (next === 'overview') url.searchParams.delete('tab')
+    else url.searchParams.set('tab', next)
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+  }, [])
   // Unsaved edits on the Settings tab: leaving it (which unmounts it) asks first.
   const [settingsDirty, setSettingsDirty] = useState(false)
   const [pendingTab, setPendingTab] = useState<string | null>(null)

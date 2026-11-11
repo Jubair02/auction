@@ -8,6 +8,8 @@ import { headerClientKey } from '@/lib/rate-limit'
 import { rateLimit } from '@/lib/rate-limit-shared'
 import { sportLabel } from '@/lib/types'
 import ClientApp from '@/components/client-app'
+import { notFound } from 'next/navigation'
+import { isKnownRoute } from '@/lib/routes'
 import { loadPublicResultsSummary, saleIsPublic } from '@/app/api/og/_lib/public-results'
 import { ogCardPath } from '@/app/api/og/_lib/sign'
 import { getPlanSettings } from '@/lib/plans'
@@ -162,6 +164,11 @@ export async function generateMetadata({ params, searchParams }: PageProps): Pro
     console.error('[metadata] lookup failed:', (err as Error).message)
   }
 
+  if (head === 'pricing') {
+    const title = 'Pricing — NeelamGhor'
+    const description = 'Start free. Upgrade a single tournament to Pro with a one-time payment — no subscription. Pay with bKash or Nagad.'
+    return { title, description, openGraph: { title, description } }
+  }
   if (head === 'terms') {
     const title = 'Terms of Service & refund policy — NeelamGhor'
     return { title, openGraph: { title } }
@@ -183,6 +190,9 @@ export async function generateMetadata({ params, searchParams }: PageProps): Pro
  */
 export default async function Page({ params }: PageProps) {
   const slug = (await params).slug ?? []
+  // No page for this address: a real 404 (status + page), not a 200 that shows
+  // a spinner and only says "not found" after the app loads.
+  if (!isKnownRoute(slug)) notFound()
   const jar = await cookies()
   const lang = parseLang(jar.get(LANG_COOKIE)?.value)
   const theme = parseTheme(jar.get(THEME_COOKIE)?.value)
@@ -190,10 +200,10 @@ export default async function Page({ params }: PageProps) {
   // page (instead of a signed-out header that flips after /api/auth/me).
   // Undefined on any failure: the browser then checks the session itself.
   const initialUser = await getSessionUser().catch(() => undefined)
-  // The landing page's pricing section shows the admin's real Free limits and
-  // Pro price in its server HTML (not a default that flips after loading).
+  // The landing and /pricing pages show the admin's real Free limits and Pro
+  // price in their server HTML (not a default that flips after loading).
   const plans =
-    slug.length === 0
+    slug.length === 0 || (slug.length === 1 && slug[0] === 'pricing')
       ? await getPlanSettings()
           .then(({ proPrice, freeMaxTeams, freeMaxPlayers }) => ({ proPrice, freeMaxTeams, freeMaxPlayers }))
           .catch(() => undefined)

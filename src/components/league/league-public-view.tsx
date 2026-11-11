@@ -129,7 +129,9 @@ const isPlayed = (m: MatchDTO) => m.status === 'COMPLETED' || m.status === 'ABAN
 /** Public league page (/league/:tournamentId): fixtures, results, points table, top performers. */
 export default function LeaguePublicView({ tournamentId }: { tournamentId: string }) {
   const t = useStrings(STRINGS)
-  const { data, loading, error, refetch } = useCachedGet<LeagueData>(`/api/league/${tournamentId}`)
+  // Signed out: the cacheable public view (shared links get busy).
+  const signedOut = !useAuthState().user
+  const { data, loading, error, refetch } = useCachedGet<LeagueData>(`/api/league/${tournamentId}${signedOut ? '?view=public' : ''}`)
 
   if (loading) {
     return (

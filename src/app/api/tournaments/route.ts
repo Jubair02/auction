@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client'
+import { after } from 'next/server'
 import { db } from '@/lib/db'
 import { track } from '@/lib/analytics'
 import { isSport, type TournamentDetail } from '@/lib/types'
@@ -130,7 +131,8 @@ export async function POST(req: Request) {
       organizerId: user.id,
     },
   })
-  void track('tournament_created', { userId: user.id, tournamentId: tournament.id })
+  // after(): runs once the response is sent, and the platform waits for it (a bare promise can be frozen mid-write).
+  after(() => track('tournament_created', { userId: user.id, tournamentId: tournament.id }))
 
   // A new tournament has no players, teams or auction yet, so this is exactly
   // what GET /api/tournaments/:id would return. Sending it now lets the Manage

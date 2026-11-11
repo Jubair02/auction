@@ -88,6 +88,8 @@ const CLOSE_GRACE_MS = 3_000
  * don't close and Auto Auction doesn't run through the pool with nobody there.
  */
 const NO_SEATS_PAUSE_MS = 30_000
+/** After a resume the lot always has at least this long left. */
+const MIN_RESUME_MS = 3_000
 
 interface BidView {
   amount: number
@@ -847,7 +849,10 @@ export class AuctionEngine {
     if (room.status !== 'PAUSED') return this.fail('Auction is not paused')
     await this.db.auction.update({ where: { id: room.auctionId }, data: { status: 'LIVE' } })
     room.status = 'LIVE'
-    room.timerEndsAt = room.currentPlayerId ? Date.now() + (room.pausedRemainingMs ?? room.sessionTimerSeconds * 1000) : null
+    // At least MIN_RESUME_MS: a lot paused with ~0 s left must not close the instant it resumes.
+    room.timerEndsAt = room.currentPlayerId
+      ? Date.now() + Math.max(MIN_RESUME_MS, room.pausedRemainingMs ?? room.sessionTimerSeconds * 1000)
+      : null
     room.pausedRemainingMs = null
     if (!room.currentPlayerId) this.scheduleAutoAdvance(room)
     this.notify(room, 'info', { code: 'resumed' })
@@ -1284,6 +1289,9 @@ export class AuctionEngine {
    */
   private async putOnBlock(room: Room, player: Player): Promise<boolean> {
     room.closing = null
+    // Back from UNSOLD/SKIPPED (picked again): a new outing, so a new cycle — its
+    // old bids stay in history but never on this outing's ladder.
+    const freshCycle = player.status === 'UNSOLD' || player.status === 'SKIPPED'
     const moved = await this.db.$transaction(async (tx) => {
       await tx.$queryRawUnsafe(BOUNDED_TX_SQL)
       const block = await tx.auction.updateMany({
@@ -1291,7 +1299,10 @@ export class AuctionEngine {
         data: { currentPlayerId: player.id, currentBidAmount: null, currentBidTeamId: null },
       })
       if (block.count !== 1) return false
-      await tx.player.update({ where: { id: player.id }, data: { status: 'LIVE' } })
+      await tx.player.update({
+        where: { id: player.id },
+        data: { status: 'LIVE', ...(freshCycle ? { auctionCycle: { increment: 1 } } : {}) },
+      })
       return true
     })
     if (!moved) {
@@ -1299,7 +1310,13 @@ export class AuctionEngine {
       return false
     }
     const i = room.players.findIndex((p) => p.id === player.id)
-    if (i >= 0) room.players[i] = { ...room.players[i], status: 'LIVE' }
+    if (i >= 0) {
+      room.players[i] = {
+        ...room.players[i],
+        status: 'LIVE',
+        auctionCycle: room.players[i].auctionCycle + (freshCycle ? 1 : 0),
+      }
+    }
     room.currentPlayerId = player.id
     room.currentBid = null
     room.currentBidHistory = []
@@ -1440,7 +1457,7 @@ export class AuctionEngine {
       type: 'SOLD',
       at,
     }
-    room.soldFeed = [{ playerName: player.name, teamName: bid.teamName, price: bid.amount, at }, ...room.soldFeed].slice(0, 12)
+    room.soldFeed = [{ playerId: player.id, playerName: player.name, teamName: bid.teamName, price: bid.amount, at }, ...room.soldFeed].slice(0, 12)
     room.currentPlayerId = null
     room.currentBid = null
     room.currentBidHistory = []
@@ -1609,8 +1626,8 @@ export class AuctionEngine {
     room.nextPlayerAt = null // claim the pick before any await
     try {
       await this.resyncPool(room)
-      const picked = await this.pickNextPlayer(room)
-      if (!picked) this.notify(room, 'info', { code: 'auto_nothing_left' })
+      // When nobody can be picked, pickNextPlayer itself tells the room why (round complete, no category left).
+      await this.pickNextPlayer(room)
     } catch (err) {
       // e.g. a dropped DB connection — try again shortly rather than stall.
       console.error('[engine] auto-advance pick failed, retrying in 3s:', (err as Error).message)
@@ -1663,8 +1680,9 @@ export class AuctionEngine {
   // Timers
   // ----------------------------------------------------------
   private async tick(): Promise<void> {
-    const now = Date.now()
     for (const room of [...this.rooms.values()]) {
+      if (this.closing) return // shutting down: no new lock work after the drain started
+      const now = Date.now()
       if (this.seatlessPauseDue(room, now) && !room.ticking) {
         room.ticking = true
         try {
@@ -1820,7 +1838,8 @@ export class AuctionEngine {
     if (room.presenceTimer) return
     room.presenceTimer = setTimeout(() => {
       room.presenceTimer = null
-      this.broadcast(room)
+      const live = this.rooms.get(room.auctionId)
+      if (live) this.broadcast(live)
     }, 200)
   }
 
@@ -1961,6 +1980,7 @@ export class AuctionEngine {
       if (p.status !== 'SOLD') continue
       const lastBid = [...bids].reverse().find((b) => b.playerId === p.id && b.cycle === p.auctionCycle)
       feed.push({
+        playerId: p.id,
         playerName: p.name,
         teamName: (p.soldToTeamId && teamNameById.get(p.soldToTeamId)) || '',
         price: p.soldPrice ?? 0,
@@ -1971,7 +1991,8 @@ export class AuctionEngine {
     room.soldFeed = feed.slice(0, 12)
     if (room.soldFeed.length > 0) {
       const f = room.soldFeed[0]
-      const p = room.players.find((x) => x.status === 'SOLD' && x.name === f.playerName)
+      // By id: two players can share a name.
+      const p = room.players.find((x) => x.id === f.playerId)
       room.lastResult = {
         playerId: p?.id,
         playerName: f.playerName,

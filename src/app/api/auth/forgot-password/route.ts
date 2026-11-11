@@ -45,13 +45,15 @@ export async function POST(req: Request) {
   if (!parsed?.success) return jsonError('Enter the email address you registered with', 400)
   const { email } = parsed.data
 
-  // Per-address cap too, so one inbox cannot be flooded from many IPs.
-  if (await rateLimit(`forgot-password-email:${email}`, 3, 60 * 60 * 1000) !== null) {
-    return Response.json(GENERIC_OK)
-  }
-
   const user = await db.user.findUnique({ where: { email } })
   if (!user || user.status !== 'ACTIVE') return Response.json(GENERIC_OK)
+
+  // Per inbox, so it can't be flooded: 3 an hour from any one address, 10 an
+  // hour overall. (A single per-email cap of 3 let a stranger silently use up
+  // someone's resets; now they only use up their own address's share.)
+  const fromHere = await rateLimit(`${clientKey(req, 'forgot-password-email')}:${email}`, 3, 60 * 60 * 1000)
+  const overall = fromHere === null ? await rateLimit(`forgot-password-email:${email}`, 10, 60 * 60 * 1000) : null
+  if (fromHere !== null || overall !== null) return Response.json(GENERIC_OK)
 
   const baseUrl = appBaseUrl(req)
   if (!baseUrl) {

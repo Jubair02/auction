@@ -4,12 +4,13 @@
 // which passes the path in so the server HTML is the real page.
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Trophy, UserCog, UserPlus, Users } from 'lucide-react'
+import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Tag, Trophy, UserCog, UserPlus, Users } from 'lucide-react'
 import { Toaster as SonnerToaster, toast } from 'sonner'
 import { useAppStore, useAuthState } from '@/lib/store'
 import { navigate, setReturnTo, useRoute } from '@/lib/router'
 import { useFullscreen } from '@/lib/use-fullscreen'
 import { canOpen, DASHBOARD_PATH, pageAccess } from '@/lib/access'
+import { cn } from '@/lib/utils'
 import { type Strings, useLang, useLangBootstrap, useLangStore, useStrings } from '@/lib/i18n'
 import { useLowDataBootstrap } from '@/lib/low-data'
 import { useServiceWorker } from '@/lib/pwa'
@@ -59,6 +60,7 @@ const LeaguePublicView = dynamic(() => import('@/components/league/league-public
 const AccountView = dynamic(() => import('@/components/account/account-view'), { loading: () => <CenterLoader /> })
 const PrivacyView = dynamic(() => import('@/components/legal/privacy-view'), { loading: () => <CenterLoader /> })
 const TermsView = dynamic(() => import('@/components/legal/terms-view'), { loading: () => <CenterLoader /> })
+const PricingView = dynamic(() => import('@/components/pricing/pricing-view'), { loading: () => <CenterLoader /> })
 
 /**
  * Leaves a page the current user may not open. Replaces the history entry, so
@@ -155,6 +157,7 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
     if (head === '') return <Landing />
     if (head === 'privacy' && segs.length === 1) return <PrivacyView />
     if (head === 'terms' && segs.length === 1) return <TermsView />
+    if (head === 'pricing' && segs.length === 1) return <PricingView />
     if (head === 'results' && segs.length === 2) return <ResultsView tournamentId={segs[1]} />
     if (head === 'league' && segs.length === 2) return <LeaguePublicView tournamentId={segs[1]} />
     if (!authChecked || !mounted) return <CenterLoader />
@@ -210,8 +213,9 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
       case head === 'join' && segs.length === 1:
         return <JoinRoomView />
       // Old link to the managers' squad page — the dashboard now shows every squad.
+      // Replacing the URL updates bookmarks and installed shortcuts.
       case head === 'my-team' && segs.length === 1:
-        return <ManagerDashboard />
+        return <Redirect to={DASHBOARD_PATH} />
       case head === 'admin' && segs.length === 1:
         return <AdminView />
       default:
@@ -237,14 +241,28 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Gavel className="h-4.5 w-4.5" aria-hidden />
             </span>
-            {/* Under 360px (small phones) only the mark shows, so the nav still fits. */}
-            <span className="text-base font-extrabold tracking-tight max-[359px]:sr-only sm:text-lg">
+            {/* Narrow phones show only the mark, so the nav still fits: under 360px for
+                signed-in users (compact avatar), under 520px for visitors (Pricing + Login + Register). */}
+            <span className={cn('text-base font-extrabold tracking-tight sm:text-lg', user ? 'max-[359px]:sr-only' : 'max-[519px]:sr-only')}>
               Neelam<span className="text-primary">Ghor</span>
             </span>
-            <Badge variant="secondary" className="ml-1 hidden sm:inline-flex">BD</Badge>
+            <Badge variant="secondary" className="ml-1 hidden md:inline-flex">BD</Badge>
           </div>
 
           <nav className="flex items-center gap-1.5" aria-label={t.mainNav}>
+            {/* Pricing: first in the nav for everyone. Icon only below 400px so the header still fits a 320px phone. */}
+            <AppLink
+              href="/pricing"
+              aria-current={head === 'pricing' ? 'page' : undefined}
+              aria-label={t.pricing}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm font-semibold transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary min-[400px]:px-3',
+                head === 'pricing' ? 'bg-primary/10 text-primary' : 'text-foreground/80',
+              )}
+            >
+              <Tag className="h-4 w-4" aria-hidden />
+              <span className="max-[399px]:sr-only">{t.pricing}</span>
+            </AppLink>
             {/* Phones: one "language & theme" button keeps the header within the screen. */}
             <div className="hidden items-center gap-1.5 sm:flex">
               <ThemeToggle />
@@ -383,9 +401,10 @@ const SHELL_STRINGS = {
     notFoundDescription: 'The page you are looking for does not exist.',
     backHome: 'Back to home',
     mainNav: 'Main navigation',
+    pricing: 'Pricing',
     accountMenu: 'Account menu',
     myAccount: 'My account',
-    role: { ADMIN: 'ADMIN', ORGANIZER: 'ORGANIZER', MANAGER: 'MANAGER' },
+    role: { ADMIN: 'Admin', ORGANIZER: 'Organizer', MANAGER: 'Team manager' },
   },
   bn: {
     joinRoom: 'নিলাম রুমে যোগ দিন',
@@ -403,11 +422,12 @@ const SHELL_STRINGS = {
     notFoundDescription: 'আপনি যে পেজটি খুঁজছেন সেটি নেই।',
     backHome: 'হোমে ফিরে যান',
     mainNav: 'প্রধান মেনু',
+    pricing: 'দাম',
     accountMenu: 'অ্যাকাউন্ট মেনু',
     myAccount: 'আমার অ্যাকাউন্ট',
     role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'tournaments' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'accountMenu' | 'myAccount', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'tournaments' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'pricing' | 'accountMenu' | 'myAccount', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {

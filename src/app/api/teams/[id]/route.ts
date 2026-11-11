@@ -10,8 +10,7 @@ import {
   loadTeamForOwner,
   readJson,
   requireSession,
-  serializeTeam,
-} from '../../_lib/helpers'
+  serializeTeam, isNotFound } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
 
@@ -185,6 +184,11 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
     return jsonError('Cannot delete a team that has placed bids — its bid history is part of the auction record', 409)
   }
 
-  await db.team.delete({ where: { id } })
+  try {
+    await db.team.delete({ where: { id } })
+  } catch (err) {
+    if (isNotFound(err)) return jsonError('Team not found', 404)
+    throw err
+  }
   return Response.json({ ok: true })
 }

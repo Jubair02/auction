@@ -1,10 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ApiError } from '@/lib/api'
+import { ApiError, apiGet } from '@/lib/api'
 import { type PaymentDTO, type PaymentStatus, type Plan, type SafeUser, type TournamentSummary } from '@/lib/types'
 
 export type AdminUser = SafeUser & { tournamentCount: number }
@@ -24,6 +25,36 @@ export const ROLE_BADGE: Record<string, string> = {
   ADMIN: 'bg-teal-100 text-teal-900 border-teal-300 dark:bg-teal-950/40 dark:text-teal-200 dark:border-teal-800',
   ORGANIZER: 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-800',
   MANAGER: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/60',
+}
+
+/** The admin users / tournaments lists hold the newest this many (the API's cap). */
+export const ADMIN_LIST_LIMIT = 500
+
+/**
+ * When a list holds only the newest ADMIN_LIST_LIMIT rows, a typed search (2+
+ * characters) asks the server instead, so older rows are still found. Null
+ * while not searching the server (or while the answer is on its way).
+ */
+export function useServerSearch<T>(baseUrl: string, key: 'users' | 'tournaments', query: string, capped: boolean): T[] | null {
+  const q = query.trim()
+  const active = capped && q.length >= 2
+  const [result, setResult] = useState<{ q: string; rows: T[] } | null>(null)
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      apiGet<Record<string, unknown>>(`${baseUrl}?q=${encodeURIComponent(q)}`)
+        .then((data) => {
+          if (!cancelled) setResult({ q, rows: (data[key] as T[] | undefined) ?? [] })
+        })
+        .catch(() => undefined)
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [active, baseUrl, key, q])
+  return active && result?.q === q ? result.rows : null
 }
 
 /** Toast for a failed list load; `fallback` is the translated "Could not load …" text. */

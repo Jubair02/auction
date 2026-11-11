@@ -288,6 +288,8 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
   const [error, setError] = useState<Error | null>(null)
   const [exporting, setExporting] = useState<string | null>(null)
   const role = useAuthState().user?.role
+  // Signed out: the cacheable public view (shared links get busy).
+  const viewQuery = role ? '' : '?view=public'
   // Staff came from the tournament page, managers from their team page; a
   // public visitor (shared link) gets the home page instead.
   const hidePlatform = !!data?.branding?.hidePlatform
@@ -296,7 +298,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
   const load = useCallback(
     async (isCancelled: () => boolean = () => false) => {
       try {
-        const res = await apiGet<ResultsWithBranding>(`/api/tournaments/${tournamentId}/results`)
+        const res = await apiGet<ResultsWithBranding>(`/api/tournaments/${tournamentId}/results${viewQuery}`)
         if (isCancelled()) return
         setData(res)
         setError(null)
@@ -307,7 +309,7 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
         if (!isCancelled()) setLoading(false)
       }
     },
-    [tournamentId],
+    [tournamentId, viewQuery],
   )
 
   useEffect(() => {

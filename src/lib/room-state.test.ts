@@ -109,7 +109,11 @@ describe('outbidChange', () => {
     assert.deepEqual(outbidChange(beaten, live(null, null), 'me', true), { type: 'clear' })
     assert.deepEqual(outbidChange(beaten, live('p1', { teamId: 'b', amount: 120 }, 'PAUSED'), 'me', true), { type: 'clear' })
   })
-  it('does nothing for viewers and unchanged broadcasts', () => {
+  it('treats a re-auctioned player as a new lot (no false alarm from the previous outing)', () => {
+    // Same player, new outing (the room keys players as "id:cycle").
+    assert.equal(outbidChange(live('p1:0', { teamId: 'me', amount: 100 }), live('p1:1', { teamId: 'b', amount: 60 }), 'me', false), null)
+  })
+    it('does nothing for viewers and unchanged broadcasts', () => {
     const s = live('p1', { teamId: 'me', amount: 100 })
     assert.equal(outbidChange(s, live('p1', { teamId: 'b', amount: 120 }), undefined, false), null)
     assert.equal(outbidChange(s, s, 'me', false), null)

@@ -171,6 +171,9 @@ function StageCountdown({
  * Always dark (an "arena" that reads from across a room or on a projector), so the
  * subtree opts into the dark tokens with the `dark` class.
  */
+/** A SOLD/UNSOLD moment older than this is not shown as a takeover (e.g. to someone joining later). */
+const RESULT_FRESH_MS = 60_000
+
 export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) {
   const t = useStrings(STRINGS)
   const hasPlayer = !!state.currentPlayer
@@ -186,7 +189,10 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
   const [resultDismissed, setResultDismissed] = useState(true)
   const resultKey = state.lastResult?.at ?? null
   useEffect(() => {
-    if (!betweenPlayers || !resultKey) {
+    // Only a moment that just happened is replayed: someone opening the room
+    // later must not see an old SOLD/UNSOLD card as if it were live.
+    const fresh = !!resultKey && Date.now() + clockOffset - Date.parse(resultKey) < RESULT_FRESH_MS
+    if (!betweenPlayers || !resultKey || !fresh) {
       const t1 = setTimeout(() => setResultDismissed(true), 0)
       return () => clearTimeout(t1)
     }
@@ -196,6 +202,8 @@ export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) 
       clearTimeout(t0)
       clearTimeout(t1)
     }
+    // clockOffset only corrects the age check; a change in it must not replay the moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [betweenPlayers, resultKey])
 
   const leaderColor = state.currentBid?.teamColor || '#2DD4BF'

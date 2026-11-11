@@ -29,13 +29,14 @@ import { isLive, plural, tournamentPhase, type TournamentPhase } from '@/lib/tou
 import { sportLabel, type Plan } from '@/lib/types'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { SHARED_STRINGS, type SharedStrings } from './strings'
-import { ListSkeleton, SearchBox, STATS_URL, type AdminTournament } from './shared'
+import { ADMIN_LIST_LIMIT, ListSkeleton, SearchBox, STATS_URL, TOURNAMENTS_URL, useServerSearch, type AdminTournament } from './shared'
 import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 const STRINGS = {
   en: {
     ...SHARED_STRINGS.en,
     searchTournaments: 'Search name, organizer or room code',
+    newestOnly: (n: number) => `Showing the newest ${n}. Search to find older tournaments.`,
     filterTournaments: 'Filter tournaments',
     live: 'Live',
     ready: 'Ready',
@@ -77,6 +78,7 @@ const STRINGS = {
   bn: {
     ...SHARED_STRINGS.bn,
     searchTournaments: 'নাম, আয়োজক বা রুম কোড দিয়ে খুঁজুন',
+    newestOnly: (n: number) => `সর্বশেষ ${n}টি দেখানো হচ্ছে। পুরোনো টুর্নামেন্ট খুঁজতে সার্চ করুন।`,
     filterTournaments: 'টুর্নামেন্ট ফিল্টার',
     live: 'লাইভ',
     ready: 'প্রস্তুত',
@@ -118,6 +120,7 @@ const STRINGS = {
 } satisfies Strings<
   SharedStrings & {
     searchTournaments: string
+    newestOnly: (n: number) => string
     filterTournaments: string
     live: string
     ready: string
@@ -234,7 +237,10 @@ export function TournamentsTab({ tournaments, refetch }: { tournaments: AdminTou
     </Button>
   )
 
-  const all = useMemo(() => tournaments ?? [], [tournaments])
+  // The list holds the newest ADMIN_LIST_LIMIT tournaments; a search then asks the server.
+  const capped = (tournaments?.length ?? 0) >= ADMIN_LIST_LIMIT
+  const searched = useServerSearch<AdminTournament>(TOURNAMENTS_URL, 'tournaments', query, capped)
+  const all = useMemo(() => searched ?? tournaments ?? [], [searched, tournaments])
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return all.filter(
@@ -251,7 +257,10 @@ export function TournamentsTab({ tournaments, refetch }: { tournaments: AdminTou
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <SearchBox value={query} onChange={setQuery} placeholder={t.searchTournaments} />
+        <div className="w-full space-y-1 sm:max-w-xs">
+          <SearchBox value={query} onChange={setQuery} placeholder={t.searchTournaments} />
+          {capped && !searched ? <p className="text-xs text-muted-foreground">{t.newestOnly(ADMIN_LIST_LIMIT)}</p> : null}
+        </div>
         <FilterChips
           label={t.filterTournaments}
           value={filter}

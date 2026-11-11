@@ -14,7 +14,7 @@ import {
   type ResultType,
 } from '@/lib/league'
 import type { Prisma } from '@prisma/client'
-import { parseDateInput, readJson, requireSession } from '../../_lib/helpers'
+import { isNotFound, parseDateInput, readJson, requireSession } from '../../_lib/helpers'
 import {
   allOutWickets,
   GROUP_NAME_RE,
@@ -277,19 +277,25 @@ export async function PATCH(req: Request, { params }: RouteParams) {
 
   Object.assign(data, next, { status, resultType, winnerTeamId, playerOfMatchId, resultNote })
 
-  const updated = await db.$transaction(async (tx) => {
-    const row = await tx.match.update({ where: { id: match.id }, data })
-    // Stat lines of players whose team is no longer in this match go with it.
-    if (teamsChanged) {
-      await tx.matchPlayerStat.deleteMany({
-        where: {
-          matchId: match.id,
-          OR: [{ teamId: null }, { teamId: { notIn: [homeTeamId, awayTeamId].filter((x): x is string => !!x) } }],
-        },
-      })
-    }
-    return row
-  })
+  const updated = await db
+    .$transaction(async (tx) => {
+      const row = await tx.match.update({ where: { id: match.id }, data })
+      // Stat lines of players whose team is no longer in this match go with it.
+      if (teamsChanged) {
+        await tx.matchPlayerStat.deleteMany({
+          where: {
+            matchId: match.id,
+            OR: [{ teamId: null }, { teamId: { notIn: [homeTeamId, awayTeamId].filter((x): x is string => !!x) } }],
+          },
+        })
+      }
+      return row
+    })
+    .catch((err: unknown) => {
+      if (isNotFound(err)) return null // deleted meanwhile
+      throw err
+    })
+  if (!updated) return jsonError('Match not found', 404)
   await syncBracket(tournament)
   return Response.json({ match: serializeMatch(updated) })
 }
@@ -304,7 +310,8 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
   const loaded = await loadMatchForStaff(id, auth.user, 'manage')
   if ('response' in loaded) return loaded.response
 
-  await db.match.delete({ where: { id: loaded.match.id } })
+  const { count } = await db.match.deleteMany({ where: { id: loaded.match.id } })
+  if (count === 0) return jsonError('Match not found', 404)
   await syncBracket(loaded.tournament)
   return Response.json({ ok: true })
 }

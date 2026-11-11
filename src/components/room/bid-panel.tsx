@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { formatBDT, formatNumber } from '@/lib/format'
 import type { ActionResult } from '@/lib/use-auction-socket'
 import { type OutbidAlert, useOutbidAlert, useOutbidSound } from '@/lib/use-outbid-alert'
+import type { BidSnapshot } from '@/lib/room-state'
 import type { RoomState, RoomTeam } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -190,10 +191,12 @@ interface BidPanelProps {
  * The manager's outbid alert for the whole room page. Call it once (not in
  * both the console and the phone bar) so the alarm sounds once.
  */
-export function useManagerOutbid(state: RoomState, myTeamId: string | undefined): OutbidAlert | null {
+export function useManagerOutbid(
+  subscribeBids: (listener: (snap: BidSnapshot) => void) => () => void,
+  myTeamId: string | undefined,
+): OutbidAlert | null {
   const t = useStrings(STRINGS)
-  const leader = state.currentBid?.teamName ?? ''
-  return useOutbidAlert(state, myTeamId, t.outbidTab(leader))
+  return useOutbidAlert(subscribeBids, myTeamId, t.outbidTab)
 }
 
 /**
@@ -233,9 +236,15 @@ export function useBidSubmitter(placeBid: (amount: number, playerId: string) => 
  */
 function useBidConsole({ state, myTeam, online, pendingAmount, onBid }: BidPanelProps) {
   const t = useStrings(STRINGS)
-  const [error, setError] = useState<string | null>(null)
-
   const player = state.currentPlayer
+  // A refusal belongs to the player it was about: when the next one comes up,
+  // the old "Minimum bid is …" must not linger.
+  const [errorFor, setErrorFor] = useState<{ playerId: string | null; message: string } | null>(null)
+  const error = errorFor && errorFor.playerId === (player?.id ?? null) ? errorFor.message : null
+  const setError = useCallback(
+    (message: string | null) => setErrorFor(message === null ? null : { playerId: player?.id ?? null, message }),
+    [player?.id],
+  )
   const minBid = useMemo(() => {
     if (!player) return 0
     return state.currentBid ? state.currentBid.amount + state.minIncrement : player.basePrice
@@ -386,7 +395,7 @@ export function BidPanel(props: BidPanelProps) {
               <Progress value={myTeam.budget > 0 ? (myTeam.spent / myTeam.budget) * 100 : 0} className="mt-1.5 h-1.5" aria-label={t.budgetUsed} />
             </div>
             <div className="text-right">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
               <p className="text-lg font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(myTeam.remaining)}</p>
             </div>
           </div>
@@ -446,7 +455,7 @@ export function BidPanel(props: BidPanelProps) {
                 type="button"
                 disabled={btnDisabled || pending}
                 onClick={() => void submit(amount)}
-                aria-label={t.bidAmount(formatBDT(amount))}
+                aria-label={overBudget ? `${t.bidAmount(formatBDT(amount))} — ${t.overBudget}` : t.bidAmount(formatBDT(amount))}
                 aria-busy={sending || undefined}
                 className={cn(
                   'flex h-14 min-w-11 flex-col items-center justify-center rounded-lg border-2 border-primary/30 bg-primary/5 text-primary transition-all',
@@ -459,16 +468,16 @@ export function BidPanel(props: BidPanelProps) {
                 {sending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    <span className="mt-0.5 text-[10px] font-semibold">{t.placing}</span>
+                    <span className="mt-0.5 text-[11px] font-semibold">{t.placing}</span>
                   </>
                 ) : (
                   <>
                     <span className="text-sm font-black leading-none">{quickLabels[i]}</span>
-                    <span className="mt-0.5 text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(amount)}</span>
+                    <span className="mt-0.5 text-[11px] font-semibold tabular-nums opacity-80">{formatNumber(amount)}</span>
                   </>
                 )}
                 {!btnDisabled || !overBudget ? null : (
-                  <span className="text-[9px] font-semibold uppercase text-rose-600 dark:text-rose-400 no-underline">{t.overBudget}</span>
+                  <span className="text-[11px] font-semibold uppercase text-rose-600 dark:text-rose-400 no-underline">{t.overBudget}</span>
                 )}
               </button>
             )
@@ -568,9 +577,9 @@ export function MobileBidBar(props: BidPanelProps) {
     >
       <div className="mx-auto flex max-w-xl items-center gap-2">
         <div className="min-w-0 flex-1 leading-tight">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{t.left}</p>
           <p className="truncate text-base font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatBDT(myTeam.remaining)}</p>
-          <p className="truncate text-[10px] text-muted-foreground tabular-nums">
+          <p className="truncate text-[11px] text-muted-foreground tabular-nums">
             {t.maxShort(formatBDT(maxBid))}
           </p>
         </div>
@@ -587,7 +596,7 @@ export function MobileBidBar(props: BidPanelProps) {
           ) : (
             <>
               <span className="text-sm font-black leading-none">{quickLabels[1]}</span>
-              <span className="text-[10px] font-semibold tabular-nums opacity-80">{formatNumber(second)}</span>
+              <span className="text-[11px] font-semibold tabular-nums opacity-80">{formatNumber(second)}</span>
             </>
           )}
         </Button>

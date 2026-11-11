@@ -6,7 +6,7 @@ import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
 import { currentLang } from '@/lib/i18n'
 import { roomNoticeText } from '@/lib/room-messages'
-import { mergeRoomState } from '@/lib/room-state'
+import { type BidSnapshot, mergeRoomState } from '@/lib/room-state'
 import { localizeServerMessage } from '@/lib/server-messages'
 export { seatBelongsTo } from '@/lib/room-state'
 import type { OrganizerAction, RoomNotification, RoomState, RoomStateWire } from '@/lib/types'
@@ -74,6 +74,25 @@ export interface AuctionSocketApi {
   placeBid: (amount: number, playerId: string) => Promise<ActionResult>
   organizerAction: (action: OrganizerAction, payload?: Record<string, unknown>) => Promise<ActionResult>
   rejoin: () => void
+  /**
+   * Called with the bidding state of EVERY room update as it arrives (render
+   * may batch several) — for alarms that must not miss a step, e.g. outbid.
+   */
+  subscribeBids: (listener: (snap: BidSnapshot) => void) => () => void
+}
+
+/**
+ * The bidding part of a room update. The player key includes their outing
+ * (auctionCycle), so a re-auctioned player is a new lot, never "the same one".
+ */
+function bidSnapshot(s: Pick<RoomStateWire, 'status' | 'currentPlayer' | 'currentBid'>): BidSnapshot {
+  const p = s.currentPlayer
+  const bid = s.currentBid
+  return {
+    status: s.status,
+    playerId: p ? `${p.id}:${p.auctionCycle ?? 0}` : null,
+    bid: bid ? { teamId: bid.teamId, teamName: bid.teamName, amount: bid.amount } : null,
+  }
 }
 
 /**
@@ -120,6 +139,13 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
   const [state, setState] = useState<RoomState | null>(null)
   const [clockOffset, setRawClockOffset] = useState(0)
   const [notifications, setNotifications] = useState<RoomNotification[]>([])
+  const bidListeners = useRef(new Set<(snap: BidSnapshot) => void>())
+  const subscribeBids = useCallback((listener: (snap: BidSnapshot) => void) => {
+    bidListeners.current.add(listener)
+    return () => {
+      bidListeners.current.delete(listener)
+    }
+  }, [])
   // Read by placeBid / organizerAction, which must not emit unless seated.
   const joinedRef = useRef(false)
   useEffect(() => {
@@ -219,6 +245,8 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
     // unchanged; merge into our copy, or re-join for a full snapshot on a gap.
     socket.on('room_state', (next: RoomStateWire) => {
       setClockOffset(next.serverTime - Date.now())
+      const snap = bidSnapshot(next)
+      for (const listener of bidListeners.current) listener(snap)
       setState((prev) => {
         const merged = mergeRoomState(prev, next)
         if (merged.needsResync) queueMicrotask(() => doJoin())
@@ -287,7 +315,7 @@ export function useAuctionSocket(roomCode: string, token: string | null): Auctio
 
   const rejoin = useCallback(() => doJoin(), [doJoin])
 
-  return { connected, joined, joinError, connectFailures, state, clockOffset, notifications, placeBid, organizerAction, rejoin }
+  return { connected, joined, joinError, connectFailures, state, clockOffset, notifications, placeBid, organizerAction, rejoin, subscribeBids }
 }
 
 /** Live countdown derived from server timerEndsAt corrected by clockOffset. */

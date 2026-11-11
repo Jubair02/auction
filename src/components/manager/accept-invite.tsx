@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TeamAvatar } from '@/components/shared/avatars'
 import { AppLink } from '@/components/shared/app-link'
-import { apiGet, apiPost, ApiError } from '@/lib/api'
+import { apiPost, ApiError } from '@/lib/api'
 import { formatBDT, formatDate } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
 import { DASHBOARD_PATH } from '@/lib/access'
@@ -107,7 +107,7 @@ export default function AcceptInvite({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false
-    apiGet<InviteInfo>(`/api/invites/${encodeURIComponent(token)}`)
+    apiPost<InviteInfo>('/api/invites', { token })
       .then((res) => !cancelled && setInfo(res))
       .catch((e) => !cancelled && setLoadError(e instanceof ApiError ? e.message : t.loadFailed))
     return () => {
@@ -135,7 +135,7 @@ export default function AcceptInvite({ token }: { token: string }) {
     setError(null)
     setAccepting(true)
     try {
-      const res = await apiPost<AcceptResult>(`/api/invites/${encodeURIComponent(token)}`, {})
+      const res = await apiPost<AcceptResult>('/api/invites', { token, accept: true })
       toast.success(t.nowManage(res.teamName))
       navigate(res.roomCode ? `/room/${res.roomCode}` : DASHBOARD_PATH)
     } catch (e) {

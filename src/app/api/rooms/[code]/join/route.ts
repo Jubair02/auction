@@ -121,6 +121,16 @@ export async function POST(req: Request, { params }: RouteParams) {
     const teamId = typeof body.teamId === 'string' ? body.teamId.trim() : ''
     if (!teamId) return jsonError('Select the team you manage', 400)
 
+    // Seats are shown (and their presence rows keyed) by name: one manager must
+    // not appear as — or take over the row of — another manager in this room.
+    if (sessionUser) {
+      const sameName = await db.roomParticipant.findFirst({
+        where: { auctionId: auction.id, role: 'MANAGER', name: { equals: name, mode: 'insensitive' }, NOT: { userId: sessionUser.id } },
+        select: { id: true },
+      })
+      if (sameName) return jsonError('Another team manager in this room already uses that name — add your surname or team.', 409)
+    }
+
     // A bidding seat spends a real team purse, so it is tied to an accountable
     // manager login — a room code alone (shared on WhatsApp) is never enough.
     if (!sessionUser) {

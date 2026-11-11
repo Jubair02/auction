@@ -679,6 +679,49 @@ describe('AuctionEngine — auction-day hardening', () => {
     assert.ok(room().currentPlayerId, 'and it brings a player up')
   })
 
+  it('resuming a lot paused with ~0 s left gives it at least 3 s, not an instant close', async (t) => {
+    const { engine, room, advance, select, sales } = await setup(t)
+    await select()
+    assert.equal(await engine.placeBid(M1, 10_000), null) // GOING TWICE closes at T0+16s
+    await advance(15_900)
+    assert.equal(await engine.organizerAction(ORG, 'pause', undefined), null) // ~100 ms left
+    await advance(5_000)
+    assert.equal(await engine.organizerAction(ORG, 'resume', undefined), null)
+    assert.ok(room().timerEndsAt - Date.now() >= 3_000)
+    await advance(1_000)
+    assert.equal(sales().length, 0) // still open for a last bid
+    await advance(2_500)
+    assert.equal(sales().length, 1)
+  })
+
+  it('a player picked again after going unsold starts a fresh bidding cycle', async (t) => {
+    const { engine, db, room, select } = await setup(t)
+    await select('p1')
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    // The organizer clears the lot without selling it.
+    db.one('auction', 'a1')!.currentBidAmount = null
+    db.one('auction', 'a1')!.currentBidTeamId = null
+    room().currentBid = null
+    assert.equal(await engine.organizerAction(ORG, 'force_unsold', { playerId: 'p1', bidAmount: null }), null)
+    assert.equal(db.one('player', 'p1')!.status, 'UNSOLD')
+    const before = db.one('player', 'p1')!.auctionCycle ?? 0
+    await select('p1')
+    assert.equal(db.one('player', 'p1')!.auctionCycle, before + 1)
+    assert.equal(room().players.find((p: { id: string }) => p.id === 'p1').auctionCycle, before + 1)
+    assert.deepEqual(room().currentBidHistory, [])
+    assert.equal(await engine.placeBid(M2, 10_000), null) // bids land in the new cycle
+    assert.equal(db.state.bid.at(-1)!.cycle, before + 1)
+  })
+
+  it('the sold feed carries player ids, so the SOLD card after a restart is the right player', async (t) => {
+    const { engine, room, select, advance } = await setup(t)
+    await select('p1')
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    await advance(17_000)
+    assert.equal(room().soldFeed[0].playerId, 'p1')
+    assert.equal(room().lastResult.playerId, 'p1')
+  })
+
   it('a manual bid is refused when the player it was opened for has left the block', async (t) => {
     const { engine, select } = await setup(t)
     await select('p1')

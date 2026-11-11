@@ -24,12 +24,13 @@ import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { SHARED_STRINGS, type SharedStrings } from './strings'
-import { ListSkeleton, ROLE_BADGE, SearchBox, type AdminUser } from './shared'
+import { ADMIN_LIST_LIMIT, ListSkeleton, ROLE_BADGE, SearchBox, USERS_URL, useServerSearch, type AdminUser } from './shared'
 
 const STRINGS = {
   en: {
     ...SHARED_STRINGS.en,
     searchUsers: 'Search name, email or phone',
+    newestOnly: (n: number) => `Showing the newest ${n}. Search to find older accounts.`,
     filterUsers: 'Filter users',
     organizers: 'Organizers',
     managers: 'Managers',
@@ -60,6 +61,7 @@ const STRINGS = {
   bn: {
     ...SHARED_STRINGS.bn,
     searchUsers: 'নাম, ইমেইল বা ফোন দিয়ে খুঁজুন',
+    newestOnly: (n: number) => `সর্বশেষ ${n}টি দেখানো হচ্ছে। পুরোনো অ্যাকাউন্ট খুঁজতে সার্চ করুন।`,
     filterUsers: 'ব্যবহারকারী ফিল্টার',
     organizers: 'আয়োজক',
     managers: 'ম্যানেজার',
@@ -90,6 +92,7 @@ const STRINGS = {
 } satisfies Strings<
   SharedStrings & {
     searchUsers: string
+    newestOnly: (n: number) => string
     filterUsers: string
     organizers: string
     managers: string
@@ -134,7 +137,10 @@ export function UsersTab({ users, refetch }: { users: AdminUser[] | undefined; r
   const [busy, setBusy] = useState(false)
   const { user: me } = useAuthState()
 
-  const all = useMemo(() => users ?? [], [users])
+  // The list holds the newest ADMIN_LIST_LIMIT accounts; a search then asks the server.
+  const capped = (users?.length ?? 0) >= ADMIN_LIST_LIMIT
+  const searched = useServerSearch<AdminUser>(USERS_URL, 'users', query, capped)
+  const all = useMemo(() => searched ?? users ?? [], [searched, users])
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return all.filter((u) => {
@@ -168,7 +174,10 @@ export function UsersTab({ users, refetch }: { users: AdminUser[] | undefined; r
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <SearchBox value={query} onChange={setQuery} placeholder={t.searchUsers} />
+        <div className="w-full space-y-1 sm:max-w-xs">
+          <SearchBox value={query} onChange={setQuery} placeholder={t.searchUsers} />
+          {capped && !searched ? <p className="text-xs text-muted-foreground">{t.newestOnly(ADMIN_LIST_LIMIT)}</p> : null}
+        </div>
         <FilterChips
           label={t.filterUsers}
           value={filter}

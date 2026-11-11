@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client'
+import { after } from 'next/server'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { generateRoomCode } from '@/lib/crypto'
@@ -83,7 +84,8 @@ export async function POST(req: Request, { params }: RouteParams) {
   }
 
   await db.tournament.update({ where: { id }, data: { status: 'READY' } })
-  void track('auction_created', { userId: user.id, tournamentId: id })
+  // after(): runs once the response is sent, and the platform waits for it (a bare promise can be frozen mid-write).
+  after(() => track('auction_created', { userId: user.id, tournamentId: id }))
 
   return Response.json({ auction: serializeAuction(auction) }, { status: 201 })
 }

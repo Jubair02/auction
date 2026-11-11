@@ -117,6 +117,7 @@ const STRINGS = {
     planNote: (teams: number, players: number, price: string) =>
       `Up to ${teams} teams and ${players} players. Need more? Upgrade this tournament to Pro for ${price} (one-time) from its Overview tab — any time before the auction.`,
     back: 'Back',
+    cancel: 'Cancel',
     next: 'Next',
     createTournament: 'Create tournament',
     changeLater: 'You can change most details later from the tournament workspace.',
@@ -179,6 +180,7 @@ const STRINGS = {
     planNote: (teams: number, players: number, price: string) =>
       `সর্বোচ্চ ${teams}টি দল ও ${players} জন খেলোয়াড়। আরও লাগলে টুর্নামেন্টের ওভারভিউ ট্যাব থেকে ${price}-এ (এককালীন) Pro-তে আপগ্রেড করুন — নিলামের আগে যেকোনো সময়।`,
     back: 'পেছনে',
+    cancel: 'বাতিল',
     next: 'পরের ধাপ',
     createTournament: 'টুর্নামেন্ট তৈরি করুন',
     changeLater: 'বেশিরভাগ তথ্য পরে টুর্নামেন্ট পেজ থেকে বদলানো যাবে।',
@@ -234,6 +236,7 @@ const STRINGS = {
   planTitle: string
   planNote: (teams: number, players: number, price: string) => string
   back: string
+  cancel: string
   next: string
   createTournament: string
   changeLater: string
@@ -244,31 +247,113 @@ const STRINGS = {
 // price is still editable individually when you add or edit them.
 const SUGGESTED_CATEGORY_PRICES = { ...DEFAULT_CATEGORY_BASE_PRICES }
 
+// An unfinished wizard survives leaving the page (or a reload) for the rest of
+// the tab's session; Create and Cancel discard it. Only what the form shows.
+const DRAFT_KEY = 'ng_tournament_create_draft'
+
+interface Draft {
+  step: number
+  name: string
+  sport: Sport | ''
+  other: OtherSportValue
+  tournamentType: string
+  location: string
+  description: string
+  startDate: string
+  auctionAt: string
+  auctionMode: 'CATEGORY' | 'NORMAL'
+  basePrice: string
+}
+
+const EMPTY_DRAFT: Draft = {
+  step: 1,
+  name: '',
+  sport: '',
+  other: EMPTY_OTHER_SPORT,
+  tournamentType: '',
+  location: '',
+  description: '',
+  startDate: '',
+  auctionAt: '',
+  auctionMode: 'CATEGORY',
+  basePrice: '10000',
+}
+
+function loadDraft(): Draft {
+  try {
+    const raw: unknown = JSON.parse(sessionStorage.getItem(DRAFT_KEY) ?? 'null')
+    if (!raw || typeof raw !== 'object') return EMPTY_DRAFT
+    const d = raw as Record<string, unknown>
+    const o = (d.other && typeof d.other === 'object' ? d.other : {}) as Record<string, unknown>
+    const text = (v: unknown, fallback = '') => (typeof v === 'string' ? v : fallback)
+    return {
+      step: d.step === 2 || d.step === 3 ? d.step : 1,
+      name: text(d.name),
+      sport: isSport(d.sport) ? d.sport : '',
+      other: {
+        sportName: text(o.sportName),
+        playerRoles: Array.isArray(o.playerRoles) ? o.playerRoles.filter((r): r is string => typeof r === 'string') : [],
+        playersPerTeam: text(o.playersPerTeam),
+        playersOnField: text(o.playersOnField),
+      },
+      tournamentType: text(d.tournamentType),
+      location: text(d.location),
+      description: text(d.description),
+      startDate: text(d.startDate),
+      auctionAt: text(d.auctionAt),
+      auctionMode: d.auctionMode === 'NORMAL' ? 'NORMAL' : 'CATEGORY',
+      basePrice: text(d.basePrice, EMPTY_DRAFT.basePrice),
+    }
+  } catch {
+    return EMPTY_DRAFT
+  }
+}
+
+function clearDraft() {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY)
+  } catch {
+    // storage unavailable — nothing was saved
+  }
+}
+
 export default function TournamentCreate() {
   const lang = useLang()
   const s = useStrings(STRINGS)
   const plans = usePlanNumbers()
-  const [step, setStep] = useState(1)
+  // Signed-in pages render after mount, so the tab's storage can be read here.
+  const [draft] = useState(loadDraft)
+  // A restored draft reopens on its step — unless step 1 is somehow incomplete.
+  const [step, setStep] = useState(() => (draft.name.trim().length >= 2 && draft.sport ? draft.step : 1))
 
   // Creating always ends on the new tournament's Manage page: fetch its code
   // while the organizer fills in the form, not after they click Create.
   useEffect(() => preloadTournamentPage(), [])
 
   // Step 1 — basics
-  const [name, setName] = useState('')
-  const [sport, setSport] = useState<Sport | ''>('')
-  const [other, setOther] = useState<OtherSportValue>(EMPTY_OTHER_SPORT)
-  const [tournamentType, setTournamentType] = useState('')
-  const [location, setLocation] = useState('')
-  const [description, setDescription] = useState('')
-  const [startDate, setStartDate] = useState('') // datetime-local
-  const [auctionAt, setAuctionAt] = useState('') // datetime-local
+  const [name, setName] = useState(draft.name)
+  const [sport, setSport] = useState<Sport | ''>(draft.sport)
+  const [other, setOther] = useState<OtherSportValue>(draft.other)
+  const [tournamentType, setTournamentType] = useState(draft.tournamentType)
+  const [location, setLocation] = useState(draft.location)
+  const [description, setDescription] = useState(draft.description)
+  const [startDate, setStartDate] = useState(draft.startDate) // datetime-local
+  const [auctionAt, setAuctionAt] = useState(draft.auctionAt) // datetime-local
 
   // Step 2 — auction mode
-  const [auctionMode, setAuctionMode] = useState<'CATEGORY' | 'NORMAL'>('CATEGORY')
-  const [basePrice, setBasePrice] = useState('10000')
+  const [auctionMode, setAuctionMode] = useState<'CATEGORY' | 'NORMAL'>(draft.auctionMode)
+  const [basePrice, setBasePrice] = useState(draft.basePrice)
 
   const [creating, setCreating] = useState(false)
+
+  useEffect(() => {
+    const current: Draft = { step, name, sport, other, tournamentType, location, description, startDate, auctionAt, auctionMode, basePrice }
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(current))
+    } catch {
+      // storage full or blocked — the form still works, it just isn't kept
+    }
+  }, [step, name, sport, other, tournamentType, location, description, startDate, auctionAt, auctionMode, basePrice])
 
   const otherError = sport === 'OTHER' ? otherSportError(other, lang) : null
   const step1Valid = name.trim().length >= 2 && isSport(sport) && !otherError
@@ -294,6 +379,11 @@ export default function TournamentCreate() {
 
   const back = () => setStep((n) => Math.max(1, n - 1))
 
+  const cancel = () => {
+    clearDraft()
+    navigate('/tournaments')
+  }
+
   const create = async () => {
     setCreating(true)
     try {
@@ -313,12 +403,21 @@ export default function TournamentCreate() {
       // The response already holds the new tournament's full page data: the
       // Manage page renders from it at once (and refreshes in the background).
       if (res.detail) seedCached(tournamentDetailUrl(res.tournament.id), res.detail)
+      clearDraft()
       toast.success(s.created)
       navigate(`/tournaments/${res.tournament.id}`)
     } catch (ex) {
       toast.error(ex instanceof ApiError ? ex.message : s.createFailed)
       setCreating(false)
     }
+  }
+
+  // Enter in a text field moves on (or creates, on the last step), like the button.
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (creating) return
+    if (step < 3) next()
+    else void create()
   }
 
   return (
@@ -359,312 +458,323 @@ export default function TournamentCreate() {
         })}
       </ol>
 
-      <AnimatePresence mode="wait">
-        {/* ---------------- STEP 1: BASICS ---------------- */}
-        {step === 1 ? (
-          <motion.div
-            key="step1"
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.25 }}
-          >
-            <Card className="mt-6">
-              <CardContent className="space-y-5 p-6">
-                <div className="space-y-1.5">
-                  <Label htmlFor="t-name">
-                    {s.tournamentName} <span className="text-rose-600 dark:text-rose-400">*</span>
-                  </Label>
-                  <Input
-                    id="t-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder={s.namePlaceholder}
-                    className="h-11"
-                    maxLength={80}
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <Label>
-                    {s.sport} <span className="text-rose-600 dark:text-rose-400">*</span>
-                  </Label>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {SPORT_CHOICES.map((choice) => {
-                      const selected = sport === choice.value
-                      const copy = s.sportChoices[choice.value]
-                      return (
-                        <button
-                          key={choice.value}
-                          type="button"
-                          onClick={() => setSport(choice.value)}
-                          aria-pressed={selected}
-                          className={`relative flex min-h-28 flex-col items-center justify-center gap-1 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                            selected ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-background hover:bg-accent'
-                          }`}
-                        >
-                          {selected ? (
-                            <span className="absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded bg-primary text-primary-foreground">
-                              <Check className="h-3.5 w-3.5" aria-hidden />
-                            </span>
-                          ) : null}
-                          <choice.icon className="h-6 w-6" aria-hidden />
-                          <span className="text-base font-bold">{copy.label}</span>
-                          <span className={`text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{copy.hint}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {sport === 'OTHER' ? <OtherSportFields value={other} onChange={setOther} idPrefix="t" /> : null}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>{s.tournamentType}</Label>
-                  <Select value={tournamentType} onValueChange={setTournamentType}>
-                    <SelectTrigger className="h-11 w-full" aria-label={s.tournamentType}>
-                      <SelectValue placeholder={s.chooseType} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TOURNAMENT_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {tournamentTypeLabel(t, lang)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="t-location">
-                    <MapPin className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.location}
-                  </Label>
-                  <Input
-                    id="t-location"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder={s.locationPlaceholder}
-                    className="h-11"
-                  />
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
+      {/* A held-down Enter must not race through the steps (the old step's field
+          stays focused while it animates out). Validation is the wizard's own. */}
+      <form onSubmit={submit} onKeyDown={(e) => e.key === 'Enter' && e.repeat && e.preventDefault()} noValidate>
+        <AnimatePresence mode="wait">
+          {/* ---------------- STEP 1: BASICS ---------------- */}
+          {step === 1 ? (
+            <motion.div
+              key="step1"
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -24 }}
+              transition={{ duration: 0.25 }}
+            >
+              <Card className="mt-6">
+                <CardContent className="space-y-5 p-6">
                   <div className="space-y-1.5">
-                    <Label htmlFor="t-start">
-                      <CalendarDays className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.startDate}
+                    <Label htmlFor="t-name">
+                      {s.tournamentName} <span className="text-rose-600 dark:text-rose-400">*</span>
                     </Label>
                     <Input
-                      id="t-start"
-                      type="datetime-local"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      id="t-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder={s.namePlaceholder}
+                      className="h-11"
+                      maxLength={80}
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label>
+                      {s.sport} <span className="text-rose-600 dark:text-rose-400">*</span>
+                    </Label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {SPORT_CHOICES.map((choice) => {
+                        const selected = sport === choice.value
+                        const copy = s.sportChoices[choice.value]
+                        return (
+                          <button
+                            key={choice.value}
+                            type="button"
+                            onClick={() => setSport(choice.value)}
+                            aria-pressed={selected}
+                            className={`relative flex min-h-28 flex-col items-center justify-center gap-1 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                              selected ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-background hover:bg-accent'
+                            }`}
+                          >
+                            {selected ? (
+                              <span className="absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded bg-primary text-primary-foreground">
+                                <Check className="h-3.5 w-3.5" aria-hidden />
+                              </span>
+                            ) : null}
+                            <choice.icon className="h-6 w-6" aria-hidden />
+                            <span className="text-base font-bold">{copy.label}</span>
+                            <span className={`text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{copy.hint}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {sport === 'OTHER' ? <OtherSportFields value={other} onChange={setOther} idPrefix="t" /> : null}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>{s.tournamentType}</Label>
+                    <Select value={tournamentType} onValueChange={setTournamentType}>
+                      <SelectTrigger className="h-11 w-full" aria-label={s.tournamentType}>
+                        <SelectValue placeholder={s.chooseType} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TOURNAMENT_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {tournamentTypeLabel(t, lang)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="t-location">
+                      <MapPin className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.location}
+                    </Label>
+                    <Input
+                      id="t-location"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder={s.locationPlaceholder}
                       className="h-11"
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="t-auction">
-                      <Gavel className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.auctionDateTime}
-                    </Label>
-                    <Input
-                      id="t-auction"
-                      type="datetime-local"
-                      value={auctionAt}
-                      onChange={(e) => setAuctionAt(e.target.value)}
-                      className="h-11"
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="t-desc">{s.description}</Label>
-                  <Textarea
-                    id="t-desc"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder={s.descPlaceholder}
-                    rows={3}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ) : null}
-
-        {/* ---------------- STEP 2: AUCTION MODE ---------------- */}
-        {step === 2 ? (
-          <motion.div
-            key="step2"
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.25 }}
-          >
-            <Card className="mt-6">
-              <CardContent className="space-y-5 p-6">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setAuctionMode('CATEGORY')}
-                    aria-pressed={auctionMode === 'CATEGORY'}
-                    className={`rounded-xl border-2 p-4 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                      auctionMode === 'CATEGORY'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border bg-background hover:bg-accent'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 font-bold">
-                      <ListChecks className="h-4.5 w-4.5 text-primary" aria-hidden /> {s.categoryBased}
-                    </span>
-                    <p className="mt-1.5 text-sm text-muted-foreground">{s.categoryDesc}</p>
-                    <Badge variant="secondary" className="mt-2">
-                      {s.recommended}
-                    </Badge>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAuctionMode('NORMAL')}
-                    aria-pressed={auctionMode === 'NORMAL'}
-                    className={`rounded-xl border-2 p-4 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                      auctionMode === 'NORMAL'
-                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40'
-                        : 'border-border bg-background hover:bg-accent'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 font-bold">
-                      <Gavel className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" aria-hidden /> {s.normal}
-                    </span>
-                    <p className="mt-1.5 text-sm text-muted-foreground">{s.normalDesc}</p>
-                  </button>
-                </div>
-
-                {auctionMode === 'CATEGORY' ? (
-                  <div className="rounded-xl border bg-muted/30 p-4">
-                    <p className="flex items-center gap-1.5 text-sm font-semibold">
-                      <Wallet className="h-4 w-4 text-primary" aria-hidden /> {s.defaultPrices}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">{s.defaultPricesHint}</p>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                      {Object.entries(SUGGESTED_CATEGORY_PRICES).map(([cat, price]) => (
-                        <div
-                          key={cat}
-                          className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2"
-                        >
-                          <Badge className="w-8 justify-center bg-primary/10 text-primary hover:bg-primary/10">
-                            {cat}
-                          </Badge>
-                          <span className="text-sm font-semibold tabular-nums">{formatBDT(price)}</span>
-                        </div>
-                      ))}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="t-start">
+                        <CalendarDays className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.startDate}
+                      </Label>
+                      <Input
+                        id="t-start"
+                        type="datetime-local"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="h-11"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="t-auction">
+                        <Gavel className="mr-1 inline h-3.5 w-3.5" aria-hidden /> {s.auctionDateTime}
+                      </Label>
+                      <Input
+                        id="t-auction"
+                        type="datetime-local"
+                        value={auctionAt}
+                        onChange={(e) => setAuctionAt(e.target.value)}
+                        className="h-11"
+                      />
                     </div>
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
-                    <Label htmlFor="t-base" className="flex items-center gap-1.5">
-                      <Wallet className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden /> {s.basePriceEvery}
-                    </Label>
-                    <Input
-                      id="t-base"
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      value={basePrice}
-                      onChange={(e) => setBasePrice(e.target.value)}
-                      className="mt-2 h-11 max-w-56"
-                      aria-describedby="t-base-hint"
-                    />
-                    <p id="t-base-hint" className="mt-1.5 text-xs text-muted-foreground">
-                      {s.basePriceHint} {parsedBasePrice > 0 ? s.current(formatBDT(parsedBasePrice)) : ''}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        ) : null}
 
-        {/* ---------------- STEP 3: REVIEW ---------------- */}
-        {step === 3 ? (
-          <motion.div
-            key="step3"
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.25 }}
-          >
-            <Card className="mt-6">
-              <CardContent className="space-y-4 p-6">
-                <h2 className="font-bold">{s.reviewCreate}</h2>
-                <dl className="divide-y rounded-xl border">
-                  {[
-                    { k: s.rowName, v: name },
-                    { k: s.rowSport, v: sport ? sportLabel(sport, lang, other.sportName.trim()) : '—' },
-                    ...(sport === 'OTHER'
-                      ? [
-                          { k: s.rowRoles, v: other.playerRoles.length > 0 ? other.playerRoles.join(' · ') : rolesForSport('OTHER').join(' · ') },
-                          {
-                            k: s.rowTeamSize,
-                            v:
-                              [other.playersPerTeam && s.perTeam(other.playersPerTeam), other.playersOnField && s.onField(other.playersOnField)]
-                                .filter(Boolean)
-                                .join(' · ') || '—',
-                          },
-                        ]
-                      : []),
-                    { k: s.rowType, v: tournamentTypeLabel(tournamentType, lang) ?? '—' },
-                    { k: s.rowLocation, v: location || '—' },
-                    { k: s.rowStart, v: formatDate(startDate, true, lang) },
-                    { k: s.rowAuctionAt, v: formatDate(auctionAt, true, lang) },
-                    { k: s.rowMode, v: auctionMode === 'CATEGORY' ? s.categoryModeValue : s.normal },
-                    {
-                      k: s.rowBasePrice,
-                      v:
+                  <div className="space-y-1.5">
+                    <Label htmlFor="t-desc">{s.description}</Label>
+                    <Textarea
+                      id="t-desc"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder={s.descPlaceholder}
+                      rows={3}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          ) : null}
+
+          {/* ---------------- STEP 2: AUCTION MODE ---------------- */}
+          {step === 2 ? (
+            <motion.div
+              key="step2"
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -24 }}
+              transition={{ duration: 0.25 }}
+            >
+              <Card className="mt-6">
+                <CardContent className="space-y-5 p-6">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setAuctionMode('CATEGORY')}
+                      aria-pressed={auctionMode === 'CATEGORY'}
+                      className={`rounded-xl border-2 p-4 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                        auctionMode === 'CATEGORY'
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border bg-background hover:bg-accent'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold">
+                        <ListChecks className="h-4.5 w-4.5 text-primary" aria-hidden /> {s.categoryBased}
+                      </span>
+                      <p className="mt-1.5 text-sm text-muted-foreground">{s.categoryDesc}</p>
+                      <Badge variant="secondary" className="mt-2">
+                        {s.recommended}
+                      </Badge>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAuctionMode('NORMAL')}
+                      aria-pressed={auctionMode === 'NORMAL'}
+                      className={`rounded-xl border-2 p-4 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
                         auctionMode === 'NORMAL'
-                          ? parsedBasePrice > 0
-                            ? formatBDT(parsedBasePrice)
-                            : '—'
-                          : s.setPerCategory,
-                    },
-                    { k: s.rowDescription, v: description.trim() || '—' },
-                  ].map((row) => (
-                    <div key={row.k} className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm">
-                      <dt className="shrink-0 font-medium text-muted-foreground">{row.k}</dt>
-                      <dd className="text-right font-semibold">{row.v}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <div className="flex items-start gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
-                  <Crown className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
-                  <div>
-                    <p className="font-semibold">{s.planTitle}</p>
-                    <p className="text-muted-foreground">
-                      {s.planNote(plans.freeMaxTeams, plans.freeMaxPlayers, formatBDT(plans.proPrice))}
-                    </p>
+                          ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40'
+                          : 'border-border bg-background hover:bg-accent'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold">
+                        <Gavel className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" aria-hidden /> {s.normal}
+                      </span>
+                      <p className="mt-1.5 text-sm text-muted-foreground">{s.normalDesc}</p>
+                    </button>
                   </div>
-                </div>
-                <p className="text-xs text-muted-foreground">{s.afterCreate}</p>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
 
-      {/* Nav buttons */}
-      <div className="mt-6 flex items-center justify-between gap-3">
-        <Button variant="outline" className="min-h-11" onClick={back} disabled={step === 1 || creating}>
-          <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {s.back}
-        </Button>
-        {step < 3 ? (
-          <Button className="min-h-11" onClick={next} disabled={creating}>
-            {s.next} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
-          </Button>
-        ) : (
-          <Button className="min-h-11" onClick={() => void create()} disabled={creating}>
-            {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Check className="mr-1.5 h-4 w-4" aria-hidden />}
-            {s.createTournament}
-          </Button>
-        )}
-      </div>
+                  {auctionMode === 'CATEGORY' ? (
+                    <div className="rounded-xl border bg-muted/30 p-4">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold">
+                        <Wallet className="h-4 w-4 text-primary" aria-hidden /> {s.defaultPrices}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{s.defaultPricesHint}</p>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                        {Object.entries(SUGGESTED_CATEGORY_PRICES).map(([cat, price]) => (
+                          <div
+                            key={cat}
+                            className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2"
+                          >
+                            <Badge className="w-8 justify-center bg-primary/10 text-primary hover:bg-primary/10">
+                              {cat}
+                            </Badge>
+                            <span className="text-sm font-semibold tabular-nums">{formatBDT(price)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
+                      <Label htmlFor="t-base" className="flex items-center gap-1.5">
+                        <Wallet className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden /> {s.basePriceEvery}
+                      </Label>
+                      <Input
+                        id="t-base"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        value={basePrice}
+                        onChange={(e) => setBasePrice(e.target.value)}
+                        className="mt-2 h-11 max-w-56"
+                        aria-describedby="t-base-hint"
+                      />
+                      <p id="t-base-hint" className="mt-1.5 text-xs text-muted-foreground">
+                        {s.basePriceHint} {parsedBasePrice > 0 ? s.current(formatBDT(parsedBasePrice)) : ''}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          ) : null}
+
+          {/* ---------------- STEP 3: REVIEW ---------------- */}
+          {step === 3 ? (
+            <motion.div
+              key="step3"
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -24 }}
+              transition={{ duration: 0.25 }}
+            >
+              <Card className="mt-6">
+                <CardContent className="space-y-4 p-6">
+                  <h2 className="font-bold">{s.reviewCreate}</h2>
+                  <dl className="divide-y rounded-xl border">
+                    {[
+                      { k: s.rowName, v: name },
+                      { k: s.rowSport, v: sport ? sportLabel(sport, lang, other.sportName.trim()) : '—' },
+                      ...(sport === 'OTHER'
+                        ? [
+                            { k: s.rowRoles, v: other.playerRoles.length > 0 ? other.playerRoles.join(' · ') : rolesForSport('OTHER').join(' · ') },
+                            {
+                              k: s.rowTeamSize,
+                              v:
+                                [other.playersPerTeam && s.perTeam(other.playersPerTeam), other.playersOnField && s.onField(other.playersOnField)]
+                                  .filter(Boolean)
+                                  .join(' · ') || '—',
+                            },
+                          ]
+                        : []),
+                      { k: s.rowType, v: tournamentTypeLabel(tournamentType, lang) ?? '—' },
+                      { k: s.rowLocation, v: location || '—' },
+                      { k: s.rowStart, v: formatDate(startDate, true, lang) },
+                      { k: s.rowAuctionAt, v: formatDate(auctionAt, true, lang) },
+                      { k: s.rowMode, v: auctionMode === 'CATEGORY' ? s.categoryModeValue : s.normal },
+                      {
+                        k: s.rowBasePrice,
+                        v:
+                          auctionMode === 'NORMAL'
+                            ? parsedBasePrice > 0
+                              ? formatBDT(parsedBasePrice)
+                              : '—'
+                            : s.setPerCategory,
+                      },
+                      { k: s.rowDescription, v: description.trim() || '—' },
+                    ].map((row) => (
+                      <div key={row.k} className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm">
+                        <dt className="shrink-0 font-medium text-muted-foreground">{row.k}</dt>
+                        <dd className="text-right font-semibold">{row.v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="flex items-start gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+                    <Crown className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                    <div>
+                      <p className="font-semibold">{s.planTitle}</p>
+                      <p className="text-muted-foreground">
+                        {s.planNote(plans.freeMaxTeams, plans.freeMaxPlayers, formatBDT(plans.proPrice))}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{s.afterCreate}</p>
+                </CardContent>
+              </Card>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        {/* Nav buttons. On the first step there is nothing to go back to: Cancel
+            discards the draft and returns to the tournament list instead. */}
+        <div className="mt-6 flex items-center justify-between gap-3">
+          {step === 1 ? (
+            <Button type="button" variant="outline" className="min-h-11" onClick={cancel} disabled={creating}>
+              {s.cancel}
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" className="min-h-11" onClick={back} disabled={creating}>
+              <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {s.back}
+            </Button>
+          )}
+          {step < 3 ? (
+            <Button key="next" type="submit" className="min-h-11" disabled={creating}>
+              {s.next} <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden />
+            </Button>
+          ) : (
+            <Button key="create" type="submit" className="min-h-11" disabled={creating}>
+              {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Check className="mr-1.5 h-4 w-4" aria-hidden />}
+              {s.createTournament}
+            </Button>
+          )}
+        </div>
+      </form>
 
       <Separator className="mt-8" />
       <p className="mt-4 text-center text-xs text-muted-foreground">

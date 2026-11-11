@@ -7,6 +7,8 @@ import { normalizeBdPhone } from '@/lib/phone'
 import { rolesForTournament } from '@/lib/types'
 import { isUniqueViolation, readJson } from '../../_lib/helpers'
 
+class AlreadyRegistered extends Error {}
+
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ code: string }> }
@@ -121,37 +123,43 @@ export async function POST(req: Request, { params }: RouteParams) {
     fee = { feeAmount: t.registrationFee, payMethod: data.payMethod, payTrxId: trxId, paySender: sender, payStatus: 'CLAIMED' }
   }
 
+  // Older rows may hold the +880 / 880 form of the same number.
+  const sameNumber = { tournamentId: t.id, phone: { in: [phone, `+88${phone}`, `88${phone}`] }, status: { in: ['PENDING', 'APPROVED'] } }
+  const ALREADY = 'This phone number is already registered for this tournament.'
   const [duplicate, pendingCount] = await Promise.all([
-    db.playerRegistration.findFirst({
-      // Older rows may hold the +880 / 880 form of the same number.
-      where: { tournamentId: t.id, phone: { in: [phone, `+88${phone}`, `88${phone}`] }, status: { in: ['PENDING', 'APPROVED'] } },
-      select: { id: true },
-    }),
+    db.playerRegistration.findFirst({ where: sameNumber, select: { id: true } }),
     db.playerRegistration.count({ where: { tournamentId: t.id, status: 'PENDING' } }),
   ])
-  if (duplicate) return jsonError('This phone number is already registered for this tournament.', 409)
+  if (duplicate) return jsonError(ALREADY, 409)
   if (pendingCount >= MAX_PENDING_PER_TOURNAMENT) {
     return jsonError('Registration is full right now. Please contact the organizer.', 403)
   }
 
+  // Checked again under a per-number lock: a double-tap on a slow connection
+  // sends two requests that would both pass the check above.
   const create = () =>
-    db.playerRegistration.create({
-      data: {
-        tournamentId: t.id,
-        name: data.name,
-        phone,
-        role: data.role,
-        previousTeam: data.previousTeam || null,
-        photoUrl: data.photoUrl || null,
-        smsConsent: data.smsConsent === true,
-        ...(fee ?? {}),
-      },
+    db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`register:${t.id}:${phone}`}))`
+      if (await tx.playerRegistration.findFirst({ where: sameNumber, select: { id: true } })) throw new AlreadyRegistered()
+      return tx.playerRegistration.create({
+        data: {
+          tournamentId: t.id,
+          name: data.name,
+          phone,
+          role: data.role,
+          previousTeam: data.previousTeam || null,
+          photoUrl: data.photoUrl || null,
+          smsConsent: data.smsConsent === true,
+          ...(fee ?? {}),
+        },
+      })
     })
   const trxTaken = () =>
     jsonError('This Transaction ID was already used for a registration. Check the ID in your payment message.', 409)
   try {
     await create()
   } catch (err) {
+    if (err instanceof AlreadyRegistered) return jsonError(ALREADY, 409)
     if (!isUniqueViolation(err)) throw err
     if (!fee) return trxTaken()
     // The same player's earlier sign-up for this tournament was REJECTED: they
@@ -171,6 +179,7 @@ export async function POST(req: Request, { params }: RouteParams) {
     try {
       await create()
     } catch (retryErr) {
+      if (retryErr instanceof AlreadyRegistered) return jsonError(ALREADY, 409)
       if (isUniqueViolation(retryErr)) return trxTaken()
       throw retryErr
     }

@@ -49,7 +49,7 @@ export function CategoryChips({ state, onAction }: OrganizerControlsProps) {
               )}
             >
               <span className="text-sm font-black">{tx.catShort(c.code)}</span>
-              <span className={cn('text-[10px] font-semibold tabular-nums', activeCat ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
+              <span className={cn('text-[11px] font-semibold tabular-nums', activeCat ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
                 {tx.catLine(c.available, formatBDT(c.basePrice))}
               </span>
             </button>

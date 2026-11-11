@@ -68,19 +68,21 @@ export async function POST(req: Request, { params }: RouteParams) {
   if ('response' in auth) return auth.response
   const { user } = auth
 
-  const retryAfter =
-    (await rateLimit(clientKey(req, 'staff-add'), ADDS_PER_WINDOW, ADD_WINDOW_MS)) ??
-    (await rateLimit(`staff-add-tournament:${id}`, ADDS_PER_WINDOW, ADD_WINDOW_MS))
-  if (retryAfter !== null) {
-    return Response.json(
+  const tooMany = (retryAfter: number) =>
+    Response.json(
       { error: `Too many attempts. Please try again in ${retryAfter} seconds.` },
       { status: 429, headers: { 'Retry-After': String(retryAfter) } },
     )
-  }
+  const perIp = await rateLimit(clientKey(req, 'staff-add'), ADDS_PER_WINDOW, ADD_WINDOW_MS)
+  if (perIp !== null) return tooMany(perIp)
 
   const loaded = await loadTournamentForOwner(id, user, 'owner')
   if ('response' in loaded) return loaded.response
   const { tournament } = loaded
+  // Charged only once the caller is known to be the owner: anyone else could
+  // otherwise use up this tournament's budget and lock the owner out.
+  const perTournament = await rateLimit(`staff-add-tournament:${id}`, ADDS_PER_WINDOW, ADD_WINDOW_MS)
+  if (perTournament !== null) return tooMany(perTournament)
 
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)

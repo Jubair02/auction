@@ -15,7 +15,7 @@ import {
   useAuctionSocket,
   type StoredIdentity,
 } from '@/lib/use-auction-socket'
-import type { AuctionStatus, JoinResult, PublicBranding, RoomInfo, RoomState, RoomTeam } from '@/lib/types'
+import { sportLabel, type AuctionStatus, type JoinResult, type PublicBranding, type RoomInfo, type RoomState, type RoomTeam } from '@/lib/types'
 import { brandPalette } from '@/lib/brand-color'
 import { cn } from '@/lib/utils'
 import {
@@ -43,7 +43,7 @@ import { PlayerPoolPanel, SoldFeed } from './player-pool-panel'
 import { SquadPanel } from './squad-panel'
 import { JoinCard } from './join-card'
 import { SponsorStrip } from '@/components/shared/sponsor-strip'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
 const STRINGS = {
   en: {
@@ -62,9 +62,6 @@ const STRINGS = {
     serviceUnreachableDev: 'Running locally? Start it with "npm run dev" (starts the website and the auction service together) or "npm run dev:auction".',
     watchingNote: 'You’re watching — only team managers can bid.',
     goBack: 'Go back',
-    cricket: 'Cricket',
-    football: 'Football',
-    otherSport: 'Others',
     category: 'Category',
     normal: 'Normal',
     status: { READY: 'Ready', LIVE: 'Live', PAUSED: 'Paused', ENDED: 'Ended' },
@@ -109,9 +106,6 @@ const STRINGS = {
     serviceUnreachableDev: 'লোকালি চালাচ্ছেন? "npm run dev" (ওয়েবসাইট ও নিলাম সার্ভিস একসাথে চালু হয়) বা "npm run dev:auction" দিয়ে চালু করুন।',
     watchingNote: 'আপনি দেখছেন — শুধু টিম ম্যানেজাররা বিড করতে পারবেন।',
     goBack: 'ফিরে যান',
-    cricket: 'ক্রিকেট',
-    football: 'ফুটবল',
-    otherSport: 'অন্যান্য',
     category: 'ক্যাটাগরি',
     normal: 'সাধারণ',
     status: { READY: 'প্রস্তুত', LIVE: 'লাইভ', PAUSED: 'বিরতি', ENDED: 'শেষ' },
@@ -156,9 +150,6 @@ const STRINGS = {
   serviceUnreachableDev: string
   watchingNote: string
   goBack: string
-  cricket: string
-  football: string
-  otherSport: string
   category: string
   normal: string
   status: Record<AuctionStatus, string>
@@ -560,7 +551,7 @@ function ManagerLayout({
   // One bid in flight for both the console and the phone bid bar.
   const bids = useBidSubmitter(sock.placeBid)
   const online = sock.connected && sock.joined
-  const outbid = useManagerOutbid(state, myTeam?.id)
+  const outbid = useManagerOutbid(sock.subscribeBids, myTeam?.id)
   const bidProps = { state, myTeam, online, pendingAmount: bids.pendingAmount, onBid: bids.submit, outbid }
   return (
     <>
@@ -679,7 +670,7 @@ function PoolKpiStrip({ state }: { state: LiveState }) {
       {items.map((i) => (
         <div key={i.label} className="px-1 py-2.5 text-center">
           <p className={cn('text-lg font-black leading-tight tabular-nums sm:text-xl', i.tone)}>{i.value}</p>
-          <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i.label}</p>
+          <p className="break-words text-[11px] font-semibold leading-tight text-muted-foreground">{i.label}</p>
         </div>
       ))}
     </div>
@@ -708,6 +699,7 @@ function RoomHeader({
   onLeave?: () => void
 }) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
   const [confirmLeave, setConfirmLeave] = useState(false)
   const fullscreen = useFullscreen()
   const status = liveStatus ?? info.status
@@ -746,11 +738,14 @@ function RoomHeader({
             <Badge variant="outline" className="font-mono text-xs font-bold tracking-[0.18em]">
               {info.roomCode}
             </Badge>
-            <Badge variant="secondary" className="text-xs">{info.sport === 'CRICKET' ? t.cricket : info.sport === 'FOOTBALL' ? t.football : t.otherSport}</Badge>
+            <Badge variant="secondary" className="text-xs">
+              {/* An "Others" tournament shows its own game's name. */}
+              {sportLabel(info.sport, lang, info.sportName)}
+            </Badge>
             <Badge variant="outline" className="text-xs">{info.mode === 'CATEGORY' ? t.category : t.normal}</Badge>
             <span
               className={cn(
-                'rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-widest',
+                'rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-widest',
                 STATUS_CHIP[status]
               )}
             >

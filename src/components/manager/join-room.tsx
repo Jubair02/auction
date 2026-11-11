@@ -48,12 +48,30 @@ const STRINGS = {
   backTo: Record<UserRole, string>
 }>
 
+// The demo room exists only on demo deployments (seeded database), flagged by
+// the same switch as the demo logins on the sign-in page — elsewhere the
+// lookup would only 404 on every visit.
+const SHOW_DEMO_ROOM = process.env.NEXT_PUBLIC_SHOW_DEMO_LOGINS === '1'
+
+function DemoRoomButton() {
+  const t = useStrings(STRINGS)
+  // Even then, never offer a room that 404s.
+  const demo = useCachedGet<RoomInfo>(`/api/rooms/${DEMO_ROOM_CODE}`)
+  if (!demo.data) return null
+  return (
+    <div className="w-full border-t pt-4">
+      <Button variant="outline" className="h-11 w-full" onClick={() => navigate(`/room/${DEMO_ROOM_CODE}`)}>
+        <Sparkles className="mr-2 h-4 w-4 text-amber-500" aria-hidden />
+        {t.tryDemo}
+      </Button>
+    </div>
+  )
+}
+
 export default function JoinRoomView() {
   const [code, setCode] = useState('')
   const t = useStrings(STRINGS)
   const role = useAuthState().user?.role
-  // Only seeded databases have the demo room — never offer a room that 404s.
-  const demo = useCachedGet<RoomInfo>(`/api/rooms/${DEMO_ROOM_CODE}`)
 
   const clean = code.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9)
   const valid = /^[A-Z]{2}\d{2}-[A-Z0-9]{4}$/.test(clean)
@@ -104,14 +122,7 @@ export default function JoinRoomView() {
             </p>
           </div>
 
-          {demo.data ? (
-            <div className="w-full border-t pt-4">
-              <Button variant="outline" className="h-11 w-full" onClick={() => navigate(`/room/${DEMO_ROOM_CODE}`)}>
-                <Sparkles className="mr-2 h-4 w-4 text-amber-500" aria-hidden />
-                {t.tryDemo}
-              </Button>
-            </div>
-          ) : null}
+          {SHOW_DEMO_ROOM ? <DemoRoomButton /> : null}
         </CardContent>
       </Card>
     </div>

@@ -378,7 +378,7 @@ function PlayerPoolPanelView({ state, canSelect, canReauction = true, onAction }
                   <p className="truncate text-sm font-semibold">
                     {p.name}
                     {p.status === 'LIVE' ? (
-                      <Badge className="ml-2 bg-amber-500 px-1.5 py-0 text-[10px] text-white">{t.onBlock}</Badge>
+                      <Badge className="ml-2 bg-amber-500 px-1.5 py-0 text-[11px] text-white">{t.onBlock}</Badge>
                     ) : null}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">

@@ -11,8 +11,11 @@ import type { CardBranding } from './card-branding'
 
 export const CARD_SIZE = { width: 1200, height: 630 }
 
-/** CDN-cacheable for an hour; the result is final once the auction has ended. */
-export const CARD_HEADERS = { 'cache-control': 'public, max-age=600, s-maxage=3600, stale-while-revalidate=86400' }
+/**
+ * CDN-cacheable for minutes: final results rarely change, but an organizer can
+ * still make them private (or delete the tournament) and the card must go too.
+ */
+export const CARD_HEADERS = { 'cache-control': 'public, max-age=300, s-maxage=600, stale-while-revalidate=300' }
 
 export const amount = (n: number) => `BDT ${new Intl.NumberFormat('en-IN').format(Math.round(n))}`
 

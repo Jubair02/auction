@@ -5,6 +5,9 @@ import { generateFixtures, LEAGUE_FORMATS, scheduleFixtures, type LeagueFormatKi
 import { isUniqueViolation, loadTournamentForOwner, parseDateInput, readJson, requireSession } from '../../../../_lib/helpers'
 import { optionalInt, optionalText } from '../../../../matches/_lib/league-server'
 
+const RESULTS_EXIST = 'Some matches already have results. Confirm replacing to delete every match and its stats.'
+class ResultsExist extends Error {}
+
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
@@ -56,14 +59,20 @@ export async function POST(req: Request, { params }: RouteParams) {
     }
   }
 
-  const existing = await db.match.findMany({
-    where: { tournamentId: id },
-    select: { status: true, _count: { select: { stats: true } } },
-  })
-  const hasResults = existing.some((m) => m.status === 'COMPLETED' || m.status === 'ABANDONED' || m._count.stats > 0)
-  if (hasResults && body.replace !== true) {
-    return jsonError('Some matches already have results. Confirm replacing to delete every match and its stats.', 409)
-  }
+  // A match with a result, stats, or one being played right now (LIVE) is only
+  // replaced when the organizer confirms. Checked again inside the transaction
+  // below, so a result saved meanwhile is never deleted without that.
+  const replace = body.replace === true
+  const hasResults = (client: Pick<typeof db, 'match'>) =>
+    client.match
+      .count({
+        where: {
+          tournamentId: id,
+          OR: [{ status: { in: ['COMPLETED', 'ABANDONED', 'LIVE'] } }, { stats: { some: {} } }],
+        },
+      })
+      .then((n) => n > 0)
+  if (!replace && (await hasResults(db))) return jsonError(RESULTS_EXIST, 409)
 
   const generated = generateFixtures({
     format,
@@ -79,9 +88,10 @@ export async function POST(req: Request, { params }: RouteParams) {
     : null
 
   try {
-    await db.$transaction([
-      db.match.deleteMany({ where: { tournamentId: id } }),
-      db.match.createMany({
+    await db.$transaction(async (tx) => {
+      if (!replace && (await hasResults(tx))) throw new ResultsExist()
+      await tx.match.deleteMany({ where: { tournamentId: id } })
+      await tx.match.createMany({
         data: fixtures.map((f, i) => ({
           tournamentId: id,
           matchNumber: f.matchNumber,
@@ -95,16 +105,15 @@ export async function POST(req: Request, { params }: RouteParams) {
           scheduledAt: dates ? dates[i] : null,
           venue: venue ?? null,
         })),
-      }),
-      db.tournament.update({ where: { id }, data: { leagueFormat: format } }),
+      })
+      await tx.tournament.update({ where: { id }, data: { leagueFormat: format } })
       // Save the (possibly auto-balanced) groups on the teams.
-      ...(groups
-        ? [...groups.entries()].map(([groupName, ids]) =>
-            db.team.updateMany({ where: { tournamentId: id, id: { in: ids } }, data: { groupName } }),
-          )
-        : []),
-    ])
+      for (const [groupName, ids] of groups ? [...groups.entries()] : []) {
+        await tx.team.updateMany({ where: { tournamentId: id, id: { in: ids } }, data: { groupName } })
+      }
+    })
   } catch (e) {
+    if (e instanceof ResultsExist) return jsonError(RESULTS_EXIST, 409)
     if (isUniqueViolation(e)) return jsonError('Fixtures were being changed at the same moment. Please try again.', 409)
     throw e
   }

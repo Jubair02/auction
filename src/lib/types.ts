@@ -271,6 +271,8 @@ export interface RoomInfo {
   tournamentId: string
   tournamentName: string
   sport: Sport
+  /** OTHER only: the game's own name (null for cricket/football or when not set). */
+  sportName?: string | null
   mode: AuctionMode
   status: AuctionStatus
   teams: RoomTeamInfo[]
@@ -386,7 +388,8 @@ export interface RoomState {
     type: 'SOLD' | 'UNSOLD'
     at: string
   } | null
-  soldFeed: { playerName: string; teamName: string; price: number; at: string }[]
+  /** `playerId` is absent from older services. */
+  soldFeed: { playerId?: string; playerName: string; teamName: string; price: number; at: string }[]
   minIncrement: number
   /** Configured bidding duration — applied to each NEW player's session. */
   bidTimerSeconds: number
