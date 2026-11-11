@@ -17,7 +17,7 @@ import { headerClientKey, rateLimit } from '../../src/lib/rate-limit'
 import { reportError } from '../../src/lib/report-error'
 import type { RoomState, SocketIdentity } from '../../src/lib/types'
 import { AuctionEngine, ROOM_CLOSED, SocketGone } from './engine'
-import { acquireLease, type Lease } from './lease'
+import { acquireLease, IS_PRODUCTION_HOST, SHARED_DB_WARNING, type Lease } from './lease'
 import { startOutboxWorker } from './outbox'
 
 // Fail fast: without the shared secret no token can be verified.
@@ -99,11 +99,22 @@ const db = createResilientClient(withPoolSize(POOL_SIZE))
 // The SMS outbox, the retention sweep and the engine lease get their own small
 // pool, so background work never makes a bid wait for a connection.
 const backgroundDb = createResilientClient(withPoolSize(2))
-// Delivers queued SMS (Notification outbox) and runs the hourly data-retention sweep.
-const stopOutbox = startOutboxWorker(backgroundDb)
+// Delivers queued SMS (Notification outbox) and runs the hourly data-retention
+// sweep. Started only once this instance holds the engine lease (below), so a
+// standby instance — or a local copy kept out by production — never sends,
+// skips or deletes anything.
+let stopOutbox: () => void = () => undefined
 
 /** Set once shutdown starts: no new connections, joins, bids or actions. */
 let shuttingDown = false
+/**
+ * True until this instance holds the engine lease. The port is open (so a host
+ * doing a zero-downtime deploy, like Render, sees the new instance come up) but
+ * every connection is refused like a restart — clients retry — so no room is
+ * ever loaded and no timer runs. Once the host stops the old instance, its lease
+ * is released and this one takes over within a few seconds.
+ */
+let standby = true
 const RESTARTING = 'The auction service is restarting — try again in a moment'
 const httpServer = createServer()
 const io = new Server(httpServer, {
@@ -145,7 +156,8 @@ async function dbReachable(): Promise<boolean> {
 
 async function healthz(res: ServerResponse): Promise<void> {
   const ok = await dbReachable()
-  const body = { ok, uptimeSec: Math.round((Date.now() - startedAt) / 1000), rooms: engine.roomCount, ...(ok ? {} : { error: 'database unreachable' }) }
+  // A standby instance is healthy (it is ready to take over) — it just isn't serving rooms yet.
+  const body = { ok, standby, uptimeSec: Math.round((Date.now() - startedAt) / 1000), rooms: engine.roomCount, ...(ok ? {} : { error: 'database unreachable' }) }
   res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
   res.end(JSON.stringify(body))
 }
@@ -319,7 +331,7 @@ async function seatRevoked(socket: Socket, identity: SeatIdentity): Promise<stri
 }
 
 io.use((socket, next) => {
-  if (shuttingDown) return next(new Error(RESTARTING))
+  if (shuttingDown || standby) return next(new Error(RESTARTING))
   const { limit, windowMs } = LIMITS.connect
   const key = headerClientKey((name) => socket.handshake.headers[name], 'socket-connect', socket.handshake.address)
   if (rateLimit(key, limit, windowMs) !== null) return next(new Error('Too many connections — try again shortly'))
@@ -460,12 +472,22 @@ io.on('connection', (socket) => {
 // Hosts like Render assign the port via PORT; locally it stays 3003.
 const PORT = Number(process.env.PORT) || 3003
 
-// Single-instance guard: hold the engine lease BEFORE listening. While another
-// instance holds it this one serves nothing — clients keep retrying against
-// the live instance, and a zero-downtime deploy (which this service must not
-// use) fails its health check instead of running two auctioneers at once.
+// Open the port at once — in standby (see `standby`). Hosts that deploy with
+// zero downtime (Render starts the new instance and only stops the old one
+// once the new one has opened its port) would otherwise fail every deploy
+// while the old instance holds the lease.
+httpServer.listen(PORT, () => {
+  console.log(`[auction-service] port ${PORT} open (health check GET /healthz) — standby until this instance holds the engine lease`)
+})
+
+// Single-instance guard: serve rooms only while holding the engine lease. While
+// another instance holds it, this one stays in standby: it refuses connections
+// (clients keep using, or retrying, the live instance) and runs no room timers,
+// so two auctioneers never run at once.
 let lease: Lease | null = null
 lease = await acquireLease(backgroundDb, (holder) => {
+  // A local copy sharing the production database: production took over, as it should.
+  if (!IS_PRODUCTION_HOST && holder?.startsWith('prod:')) console.error(SHARED_DB_WARNING)
   void reportError(new Error(`Engine lease taken over by ${holder ?? 'another instance'} — stopping this instance`), {
     source: 'auction-service',
     where: 'lease',
@@ -473,7 +495,10 @@ lease = await acquireLease(backgroundDb, (holder) => {
   void shutdown('LEASE_LOST', 1)
 })
 
-httpServer.listen(PORT, () => {
+// Lease held: start serving rooms and the background work.
+standby = false
+stopOutbox = startOutboxWorker(backgroundDb)
+{
   console.log(`[auction-service] live auction engine listening on port ${PORT} (path "/", health check GET /healthz)`)
   console.log(
     '[auction-service] NOTE: run exactly ONE instance of this service — rooms, bid timers and locks live in this ' +
@@ -491,7 +516,7 @@ httpServer.listen(PORT, () => {
   }
   // Must equal the "secret" value from the website's /api/health.
   console.log(`[auction-service] AUCTION_SECRET fingerprint: ${secretFingerprint()}`)
-})
+}
 
 // ---------- graceful shutdown ----------
 // Refuse new work, let every bid / action / timer step already running finish
