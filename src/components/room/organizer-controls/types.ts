@@ -11,4 +11,6 @@ export interface OrganizerControlsProps {
   clockOffset?: number
   /** Connected and seated — actions are disabled while the room is offline. */
   online?: boolean
+  /** Reopening an ended auction (co-organizer and up — false for auctioneers). */
+  canReopen?: boolean
 }

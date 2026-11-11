@@ -2,18 +2,19 @@
 
 import { useEffect, useState } from 'react'
 import type { Sport } from '@/lib/types'
-import { CheckCircle2, Loader2, LogIn, MailWarning, UserPlus } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Loader2, LogIn, LogOut, MailWarning, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TeamAvatar } from '@/components/shared/avatars'
+import { AppLink } from '@/components/shared/app-link'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
-import { formatBDT } from '@/lib/format'
+import { formatBDT, formatDate } from '@/lib/format'
 import { navigate, setReturnTo } from '@/lib/router'
 import { DASHBOARD_PATH } from '@/lib/access'
-import { useAuthState } from '@/lib/store'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { useAppStore, useAuthState } from '@/lib/store'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
 type AcceptInviteStrings = {
   loadFailed: string
@@ -30,6 +31,9 @@ type AcceptInviteStrings = {
   wrongRole: (isAdmin: boolean) => string
   acceptAs: (name: string) => string
   expires: (date: string) => string
+  switchAccount: string
+  backHome: string
+  toDashboard: string
 }
 
 const STRINGS = {
@@ -49,6 +53,9 @@ const STRINGS = {
       `You're logged in as ${isAdmin ? 'an admin' : 'an organizer'}. Invites are for team manager accounts — log out and accept with a manager account.`,
     acceptAs: (name) => `Accept as ${name}`,
     expires: (date) => `The link works once and expires ${date}.`,
+    switchAccount: 'Log out and switch account',
+    backHome: 'Back to home',
+    toDashboard: 'Go to dashboard',
   },
   bn: {
     loadFailed: 'আমন্ত্রণটি খোলা যায়নি।',
@@ -66,6 +73,9 @@ const STRINGS = {
       `আপনি ${isAdmin ? 'অ্যাডমিন' : 'আয়োজক'} হিসেবে লগইন করে আছেন। আমন্ত্রণ শুধু টিম ম্যানেজার অ্যাকাউন্টের জন্য — লগ আউট করে ম্যানেজার অ্যাকাউন্ট দিয়ে গ্রহণ করুন।`,
     acceptAs: (name) => `${name} হিসেবে গ্রহণ করুন`,
     expires: (date) => `লিংকটি একবারই কাজ করবে, মেয়াদ ${date} পর্যন্ত।`,
+    switchAccount: 'লগ আউট করে অ্যাকাউন্ট বদলান',
+    backHome: 'হোমে ফিরে যান',
+    toDashboard: 'ড্যাশবোর্ডে যান',
   },
 } satisfies Strings<AcceptInviteStrings>
 
@@ -86,6 +96,9 @@ interface AcceptResult {
 /** /invite#<token> — a manager accepts the organizer's invite for one team. */
 export default function AcceptInvite({ token }: { token: string }) {
   const { user } = useAuthState()
+  const logout = useAppStore((s) => s.logout)
+  const lang = useLang()
+  const [switching, setSwitching] = useState(false)
   const [info, setInfo] = useState<InviteInfo | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [accepting, setAccepting] = useState(false)
@@ -106,6 +119,16 @@ export default function AcceptInvite({ token }: { token: string }) {
     // Keep the secret in the fragment (never sent to the server) through the login round-trip.
     setReturnTo(`/invite#${token}`)
     navigate(to)
+  }
+
+  async function switchAccount() {
+    setSwitching(true)
+    try {
+      await logout() // lands on '/' — come straight back so they can log in as a manager
+      navigate(`/invite#${token}`, { replace: true })
+    } finally {
+      setSwitching(false)
+    }
   }
 
   async function accept() {
@@ -131,6 +154,11 @@ export default function AcceptInvite({ token }: { token: string }) {
               <MailWarning className="h-4 w-4" aria-hidden />
               <AlertDescription>{loadError}</AlertDescription>
             </Alert>
+            <Button variant="ghost" className="mt-3 w-full" asChild>
+              <AppLink href={user ? DASHBOARD_PATH : '/'}>
+                <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {user ? t.toDashboard : t.backHome}
+              </AppLink>
+            </Button>
           </CardContent>
         ) : !info ? (
           <CardContent className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
@@ -169,11 +197,26 @@ export default function AcceptInvite({ token }: { token: string }) {
                   </div>
                 </>
               ) : user.role !== 'MANAGER' ? (
-                <Alert>
-                  <AlertDescription>
-                    {t.wrongRole(user.role === 'ADMIN')}
-                  </AlertDescription>
-                </Alert>
+                <>
+                  <Alert>
+                    <AlertDescription>
+                      {t.wrongRole(user.role === 'ADMIN')}
+                    </AlertDescription>
+                  </Alert>
+                  <div className="grid gap-2">
+                    <Button className="h-11 font-bold" disabled={switching} onClick={() => void switchAccount()}>
+                      {switching ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
+                      ) : (
+                        <LogOut className="mr-1.5 h-4 w-4" aria-hidden />
+                      )}
+                      {t.switchAccount}
+                    </Button>
+                    <Button variant="outline" className="h-11 font-bold" asChild>
+                      <AppLink href={DASHBOARD_PATH}>{t.toDashboard}</AppLink>
+                    </Button>
+                  </div>
+                </>
               ) : (
                 <Button className="h-12 w-full text-base font-black" disabled={accepting} onClick={() => void accept()}>
                   {accepting ? (
@@ -185,7 +228,7 @@ export default function AcceptInvite({ token }: { token: string }) {
                 </Button>
               )}
               <p className="text-center text-xs text-muted-foreground">
-                {t.expires(new Date(info.expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}
+                {t.expires(formatDate(info.expiresAt, false, lang))}
               </p>
             </CardContent>
           </>

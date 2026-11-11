@@ -254,6 +254,11 @@ const EXACT: Record<string, string> = {
   'Bid failed — try again': 'বিড পাঠানো যায়নি — আবার চেষ্টা করুন।',
   'Only the organizer can perform this action': 'শুধু আয়োজক এই কাজটি করতে পারেন।',
   'Action failed — try again': 'কাজটি করা যায়নি — আবার চেষ্টা করুন।',
+  'Only the tournament owner or a co-organizer can do this': 'এটি শুধু টুর্নামেন্টের মালিক বা সহ-আয়োজক করতে পারেন।',
+  'Name must be 2–60 characters': 'নাম ২ থেকে ৬০ অক্ষরের মধ্যে হতে হবে।',
+  'Enter your current password': 'আপনার বর্তমান পাসওয়ার্ড দিন।',
+  'New password must be 6–72 characters': 'নতুন পাসওয়ার্ড ৬ থেকে ৭২ অক্ষরের মধ্যে হতে হবে।',
+  'Choose a password different from your current one': 'বর্তমান পাসওয়ার্ডের চেয়ে আলাদা একটি পাসওয়ার্ড দিন।',
 }
 
 /** Messages with numbers or names in them: [pattern, Bangla builder]. */

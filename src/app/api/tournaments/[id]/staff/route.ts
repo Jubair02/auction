@@ -24,6 +24,8 @@ const ADD_WINDOW_MS = 15 * 60 * 1000
 /**
  * GET /api/tournaments/:id/staff — any staff member (incl. auctioneers).
  * → { owner: {userId, name, email}, staff: [{userId, name, email, role, addedAt}], myAccess }
+ * Emails go to the owner, ADMINs and co-organizers only: auctioneers run the
+ * room and never get contact details (email is null for them).
  */
 export async function GET(_req: Request, { params }: RouteParams) {
   const { id } = await params
@@ -42,12 +44,13 @@ export async function GET(_req: Request, { params }: RouteParams) {
     }),
   ])
 
+  const seesEmails = loaded.access !== 'AUCTIONEER'
   return Response.json({
-    owner: owner ? { userId: owner.id, name: owner.name, email: owner.email } : null,
+    owner: owner ? { userId: owner.id, name: owner.name, email: seesEmails ? owner.email : null } : null,
     staff: rows.map((r) => ({
       userId: r.userId,
       name: r.user.name,
-      email: r.user.email,
+      email: seesEmails ? r.user.email : null,
       role: r.role,
       addedAt: r.createdAt.toISOString(),
     })),

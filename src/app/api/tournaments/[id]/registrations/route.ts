@@ -9,9 +9,9 @@ import { DEFAULT_CATEGORY_BASE_PRICES, type RegistrationDTO, type RegistrationPa
 import {
   coercePositiveInt,
   insertPlayersNumbered,
+  RosterRefusal,
   loadTournamentForOwner,
   normalizeCategory,
-  PLAYER_NUMBER_CONFLICT,
   readJson,
   requireSession,
 } from '../../../_lib/helpers'
@@ -30,11 +30,17 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const loaded = await loadTournamentForOwner(id, auth.user)
   if ('response' in loaded) return loaded.response
 
-  const registrations = await db.playerRegistration.findMany({
-    where: { tournamentId: id },
-    orderBy: { createdAt: 'desc' },
-    take: 1000,
-  })
+  // Every PENDING sign-up (the public form caps them at 2000), so none is ever
+  // out of reach of approval; handled ones only the newest 1000, for reference.
+  const [pendingRows, handledRows] = await Promise.all([
+    db.playerRegistration.findMany({ where: { tournamentId: id, status: 'PENDING' }, orderBy: { createdAt: 'desc' }, take: 2000 }),
+    db.playerRegistration.findMany({
+      where: { tournamentId: id, status: { not: 'PENDING' } },
+      orderBy: { createdAt: 'desc' },
+      take: 1000,
+    }),
+  ])
+  const registrations = [...pendingRows, ...handledRows].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
   const t = loaded.tournament
   return Response.json({
     registrationOpen: t.registrationOpen,
@@ -167,42 +173,41 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     basePrice = (category && DEFAULT_CATEGORY_BASE_PRICES[category]) || tournament.basePrice
   }
 
-  // Claim first, atomically: a double-click or a second organizer tab can't
-  // both read the same PENDING rows and create every player twice — each row
-  // flips to APPROVED for exactly one request.
-  const claimedRows = await db.$queryRaw<{ id: string }[]>`
-    UPDATE "PlayerRegistration" SET "status" = 'APPROVED'
-    WHERE "id" = ANY(${pending.map((r) => r.id)}::text[]) AND "tournamentId" = ${id} AND "status" = 'PENDING'
-    RETURNING "id"`
-  const claimedIds = new Set(claimedRows.map((r) => r.id))
-  const claimed = pending.filter((r) => claimedIds.has(r.id))
-  if (claimed.length === 0) return jsonError('Those registrations were already handled', 409)
-
+  // One transaction for claim → players → link: a double-click or a second
+  // organizer tab can't approve the same rows twice (each row flips to
+  // APPROVED for exactly one request), and a failure part-way leaves nothing
+  // half-done — no player without its registration link, which the SMS
+  // consent check relies on.
+  let claimed: typeof pending = []
   const inserted = await insertPlayersNumbered(
-    id,
-    claimed.map((r) => ({
-      name: r.name,
-      phone: r.phone,
-      role: r.role,
-      category,
-      basePrice,
-      previousTeam: r.previousTeam,
-      photoUrl: r.photoUrl,
-    })),
-  ).catch((err) => {
-    console.error('[registrations] creating players failed:', err)
-    return null
-  })
-  if (!inserted) {
-    // Give the claimed rows back so the organizer can simply retry.
-    await db.playerRegistration.updateMany({ where: { id: { in: [...claimedIds] } }, data: { status: 'PENDING' } })
-    return jsonError(PLAYER_NUMBER_CONFLICT, 409)
-  }
-
-  // insertPlayersNumbered preserves input order, so rows line up with `claimed`.
-  await db.$transaction(
-    claimed.map((r, i) => db.playerRegistration.update({ where: { id: r.id }, data: { playerId: inserted[i]?.id ?? null } })),
+    tournament,
+    async (tx) => {
+      const claimedRows = await tx.$queryRaw<{ id: string }[]>`
+        UPDATE "PlayerRegistration" SET "status" = 'APPROVED'
+        WHERE "id" = ANY(${pending.map((r) => r.id)}::text[]) AND "tournamentId" = ${id} AND "status" = 'PENDING'
+        RETURNING "id"`
+      const claimedIds = new Set(claimedRows.map((r) => r.id))
+      claimed = pending.filter((r) => claimedIds.has(r.id))
+      if (claimed.length === 0) throw new RosterRefusal(jsonError('Those registrations were already handled', 409))
+      return claimed.map((r) => ({
+        name: r.name,
+        phone: r.phone,
+        role: r.role,
+        category,
+        basePrice,
+        previousTeam: r.previousTeam,
+        photoUrl: r.photoUrl,
+      }))
+    },
+    // Rows come back in input order, so they line up with `claimed`.
+    async (tx, created) => {
+      for (let i = 0; i < claimed.length; i++) {
+        await tx.playerRegistration.update({ where: { id: claimed[i].id }, data: { playerId: created[i].id } })
+      }
+    },
   )
+  if (inserted instanceof Response) return inserted
+
   notifyDecisions(tournament, claimed, 'APPROVED')
   return Response.json({ approved: inserted.length })
 }

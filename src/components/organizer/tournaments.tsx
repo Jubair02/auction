@@ -60,6 +60,8 @@ import { tournamentTypeLabel } from '@/lib/tournament-types'
 // CSV export types — these keys go to the API and into the file name.
 const EXPORT_TYPES = ['players', 'sold', 'unsold', 'squads', 'bids', 'spending', 'audit'] as const
 type ExportType = (typeof EXPORT_TYPES)[number]
+/** Exports carrying players' phone numbers — co-organizer and up (the server enforces it too). */
+const CONTACT_EXPORTS: readonly ExportType[] = ['players']
 
 type StatusFilter = 'ALL' | TournamentPhase
 type SortKey = 'attention' | 'auction' | 'name' | 'newest'
@@ -367,23 +369,28 @@ export default function TournamentsList() {
             <Download className="mr-2 h-4 w-4" /> {s.export}
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            {EXPORT_TYPES.map((type) => (
+            {(t.staffRole === 'AUCTIONEER' ? EXPORT_TYPES.filter((x) => !CONTACT_EXPORTS.includes(x)) : EXPORT_TYPES).map((type) => (
               <DropdownMenuItem key={type} onClick={() => void downloadExport(t, type)}>
                 <FileSpreadsheet className="mr-2 h-4 w-4" /> {s.exportLabels[type]}
               </DropdownMenuItem>
             ))}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        <DropdownMenuSeparator />
-        {/* The server refuses while the auction runs — say so instead of failing. */}
-        <DropdownMenuItem
-          variant="destructive"
-          disabled={t.auctionStatus === 'LIVE' || t.auctionStatus === 'PAUSED'}
-          onClick={() => setDeleteTarget(t)}
-        >
-          <Trash2 className="mr-2 h-4 w-4" />
-          {t.auctionStatus === 'LIVE' || t.auctionStatus === 'PAUSED' ? s.deleteEndFirst : s.delete}
-        </DropdownMenuItem>
+        {/* Only the owner (or an admin) may delete — staff rows carry their staffRole. */}
+        {t.staffRole ? null : (
+          <>
+            <DropdownMenuSeparator />
+            {/* The server refuses while the auction runs — say so instead of failing. */}
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={t.auctionStatus === 'LIVE' || t.auctionStatus === 'PAUSED'}
+              onClick={() => setDeleteTarget(t)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              {t.auctionStatus === 'LIVE' || t.auctionStatus === 'PAUSED' ? s.deleteEndFirst : s.delete}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AppLink } from '@/components/shared/app-link'
+import { ProfileActions } from '@/components/account/profile-dialogs'
 import { Arena } from '@/components/shared/arena'
 import { TeamAvatar } from '@/components/shared/avatars'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -486,6 +487,7 @@ function AccountDetails() {
               <Field icon={CalendarDays} label={t.joined} value={formatDate(user.createdAt, false, lang)} />
               <Field icon={Receipt} label={t.paymentsMade} value={t.paymentsValue(data.payments, data.pendingPayments ?? 0)} mono />
             </dl>
+            <ProfileActions user={user} onSaved={() => void refetch()} />
           </Panel>
 
           <Panel title={t.dataTitle} icon={Download}>

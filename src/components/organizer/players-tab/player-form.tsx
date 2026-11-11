@@ -6,8 +6,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ImageUpload } from '@/components/shared/image-upload'
 import { formatBDT } from '@/lib/format'
-import { CATEGORIES, DEFAULT_CATEGORY_BASE_PRICES, type AuctionMode } from '@/lib/types'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { CATEGORIES, DEFAULT_CATEGORY_BASE_PRICES, playerRoleLabel, type AuctionMode } from '@/lib/types'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { SHARED_STRINGS, type SharedPlayersStrings } from './strings'
 
 const STRINGS = {
@@ -94,6 +94,7 @@ export function PlayerFormFields({
   pricingLocked?: boolean
 }) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
   const set = (patch: Partial<PlayerFormState>) => onChange({ ...form, ...patch })
 
   return (
@@ -128,7 +129,7 @@ export function PlayerFormFields({
           <SelectContent>
             {roles.map((r) => (
               <SelectItem key={r} value={r}>
-                {r}
+                {playerRoleLabel(r, lang)}
               </SelectItem>
             ))}
           </SelectContent>

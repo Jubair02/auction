@@ -13,3 +13,6 @@ export const db =
   })
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+
+/** The client inside `db.$transaction(async (tx) => …)` (db is an extended client, so not Prisma.TransactionClient). */
+export type DbTx = Parameters<Extract<Parameters<ResilientClient['$transaction']>[0], (...args: never[]) => unknown>>[0]

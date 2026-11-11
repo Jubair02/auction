@@ -33,7 +33,7 @@ import { apiPost, ApiError } from '@/lib/api'
 import { invalidateCached, seedCached } from '@/lib/api-cache'
 import { TOURNAMENTS_URL, preloadTournamentPage, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
-import { formatBDT } from '@/lib/format'
+import { formatBDT, formatDate } from '@/lib/format'
 import { DEFAULT_CATEGORY_BASE_PRICES, isSport, rolesForSport, sportLabel, type Sport, type TournamentDetail } from '@/lib/types'
 import {
   EMPTY_OTHER_SPORT,
@@ -613,8 +613,8 @@ export default function TournamentCreate() {
                       : []),
                     { k: s.rowType, v: tournamentTypeLabel(tournamentType, lang) ?? '—' },
                     { k: s.rowLocation, v: location || '—' },
-                    { k: s.rowStart, v: startDate ? new Date(startDate).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-                    { k: s.rowAuctionAt, v: auctionAt ? new Date(auctionAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+                    { k: s.rowStart, v: formatDate(startDate, true, lang) },
+                    { k: s.rowAuctionAt, v: formatDate(auctionAt, true, lang) },
                     { k: s.rowMode, v: auctionMode === 'CATEGORY' ? s.categoryModeValue : s.normal },
                     {
                       k: s.rowBasePrice,

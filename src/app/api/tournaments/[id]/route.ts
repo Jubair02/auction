@@ -22,6 +22,9 @@ import {
   parseImageUrl,
 } from '../../_lib/helpers'
 
+/** Stands in for another manager's account id when the viewer may not see it (only "is linked" matters). */
+const LINKED_MANAGER = 'linked'
+
 export const runtime = 'nodejs'
 
 type RouteParams = { params: Promise<{ id: string }> }
@@ -74,10 +77,17 @@ export async function GET(_req: Request, { params }: RouteParams) {
     ? serializePlayer
     : (p: (typeof players)[number]) => ({ ...serializePlayer(p), phone: null })
 
-  // Likewise other managers' login emails are organizer data.
+  // Likewise other managers' accounts are organizer data: not their emails, and
+  // not their account ids either (an id is enough to link that manager to a
+  // team elsewhere and read their email back). A manager keeps their own id;
+  // other linked teams only show that a manager is linked.
   const toTeam = seesContacts
     ? serializeTeam
-    : (t: (typeof teams)[number]) => ({ ...serializeTeam(t), managerEmail: null })
+    : (t: (typeof teams)[number]) => ({
+        ...serializeTeam(t),
+        managerEmail: null,
+        managerUserId: t.managerUserId === null ? null : t.managerUserId === user.id ? user.id : LINKED_MANAGER,
+      })
 
   return Response.json({
     tournament: serializeTournamentFull(tournament),

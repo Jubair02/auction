@@ -134,8 +134,8 @@ export async function POST(req: Request, { params }: RouteParams) {
     return jsonError('Registration is full right now. Please contact the organizer.', 403)
   }
 
-  try {
-    await db.playerRegistration.create({
+  const create = () =>
+    db.playerRegistration.create({
       data: {
         tournamentId: t.id,
         name: data.name,
@@ -147,11 +147,33 @@ export async function POST(req: Request, { params }: RouteParams) {
         ...(fee ?? {}),
       },
     })
+  const trxTaken = () =>
+    jsonError('This Transaction ID was already used for a registration. Check the ID in your payment message.', 409)
+  try {
+    await create()
   } catch (err) {
-    if (isUniqueViolation(err)) {
-      return jsonError('This Transaction ID was already used for a registration. Check the ID in your payment message.', 409)
+    if (!isUniqueViolation(err)) throw err
+    if (!fee) return trxTaken()
+    // The same player's earlier sign-up for this tournament was REJECTED: they
+    // may try again with the fee they already paid. That rejected row gives the
+    // Transaction ID up; an ID claimed by anyone or anywhere else stays refused.
+    const released = await db.playerRegistration.updateMany({
+      where: {
+        tournamentId: t.id,
+        phone: { in: [phone, `+88${phone}`, `88${phone}`] },
+        status: 'REJECTED',
+        payMethod: fee.payMethod,
+        payTrxId: fee.payTrxId,
+      },
+      data: { payTrxId: null },
+    })
+    if (released.count !== 1) return trxTaken()
+    try {
+      await create()
+    } catch (retryErr) {
+      if (isUniqueViolation(retryErr)) return trxTaken()
+      throw retryErr
     }
-    throw err
   }
   await track('player_registered', { tournamentId: t.id, props: { fee: fee !== null } })
   return Response.json({ ok: true }, { status: 201 })

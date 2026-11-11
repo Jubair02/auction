@@ -49,7 +49,7 @@ interface LotSnapshot {
 }
 
 /** Organizer cockpit — start/pause/sell controls, manual bid, category chips. */
-export function OrganizerControls({ state, onAction, clockOffset = 0, online = true }: OrganizerControlsProps) {
+export function OrganizerControls({ state, onAction, clockOffset = 0, online = true, canReopen = true }: OrganizerControlsProps) {
   const tx = useStrings(STRINGS)
   const [confirm, setConfirm] = useState<ConfirmKind>(null)
   const [manualOpen, setManualOpen] = useState(false)
@@ -154,9 +154,11 @@ export function OrganizerControls({ state, onAction, clockOffset = 0, online = t
               <p className="rounded-lg bg-muted px-3 py-3 text-center text-sm font-medium text-muted-foreground">
                 {tx.endedNote}
               </p>
-              <Button variant="outline" className="h-11 w-full" onClick={() => setConfirm('reopen')}>
-                <RotateCcw className="mr-1.5 h-4 w-4" /> {tx.reopenAuction}
-              </Button>
+              {canReopen ? (
+                <Button variant="outline" className="h-11 w-full" onClick={() => setConfirm('reopen')}>
+                  <RotateCcw className="mr-1.5 h-4 w-4" /> {tx.reopenAuction}
+                </Button>
+              ) : null}
             </div>
           ) : null}
 

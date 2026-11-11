@@ -5,6 +5,7 @@ import { clearSessionCookie, jsonError } from '@/lib/auth'
 import { hashPassword, verifyPassword } from '@/lib/crypto'
 import { track } from '@/lib/analytics'
 import { clientKey, rateLimit } from '@/lib/rate-limit-shared'
+import { normalizeBdPhone } from '@/lib/phone'
 import { readJson, requireSession } from '../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -71,6 +72,36 @@ export async function GET() {
     platform,
     canDelete: !isAdmin,
   })
+}
+
+// PATCH /api/account {name?, phone?} — edit your own profile. Email (the login)
+// and role stay as they are. → { user }
+export async function PATCH(req: Request) {
+  const auth = await requireSession()
+  if ('response' in auth) return auth.response
+  const { user } = auth
+
+  const body = await readJson(req)
+  if (!body) return jsonError('Invalid request body', 400)
+  const data: { name?: string; phone?: string | null } = {}
+  if (body.name !== undefined) {
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (name.length < 2 || name.length > 60) return jsonError('Name must be 2–60 characters', 400)
+    data.name = name
+  }
+  if (body.phone !== undefined) {
+    const raw = typeof body.phone === 'string' ? body.phone.trim() : ''
+    if (raw === '') data.phone = null
+    else {
+      const phone = normalizeBdPhone(raw)
+      if (!phone) return jsonError('Enter a valid Bangladeshi mobile number, e.g. 01712345678', 400)
+      data.phone = phone
+    }
+  }
+  if (Object.keys(data).length === 0) return jsonError('No valid fields to update', 400)
+
+  const updated = await db.user.update({ where: { id: user.id }, data })
+  return Response.json({ user: { ...user, name: updated.name, phone: updated.phone } })
 }
 
 // DELETE /api/account {password} — anonymizes the caller's account.

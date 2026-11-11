@@ -319,6 +319,8 @@ export interface StoredIdentity {
   at: number
   /** Account the seat was issued to (null for an anonymous viewer). A seat is only reused by that account. */
   userId?: string | null
+  /** Organizer seats: the holder's access level (auctioneers can't undo sales or reopen). */
+  staff?: 'OWNER' | 'ADMIN' | 'CO_ORGANIZER' | 'AUCTIONEER' | null
 }
 
 export function saveRoomIdentity(roomCode: string, identity: StoredIdentity) {

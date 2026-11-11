@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   ArrowLeft,
+  CalendarRange,
   Copy,
   Download,
   Gavel,
@@ -56,6 +57,7 @@ const STRINGS = {
   en: {
     backToTeam: 'Back to my team',
     backToTournament: 'Back to tournament',
+    fixturesTable: 'Fixtures & table',
     couldNotLoad: 'Could not load results',
     resultsWhat: 'the results',
     downloadFailed: 'Download failed. Please try again.',
@@ -128,6 +130,7 @@ const STRINGS = {
   bn: {
     backToTeam: 'আমার দলে ফিরে যান',
     backToTournament: 'টুর্নামেন্টে ফিরে যান',
+    fixturesTable: 'ফিকচার ও টেবিল',
     couldNotLoad: 'ফলাফল লোড করা যায়নি',
     resultsWhat: 'ফলাফল',
     downloadFailed: 'ডাউনলোড হয়নি। আবার চেষ্টা করুন।',
@@ -200,6 +203,7 @@ const STRINGS = {
 } satisfies Strings<{
   backToTeam: string
   backToTournament: string
+  fixturesTable: string
   couldNotLoad: string
   resultsWhat: string
   downloadFailed: string
@@ -454,7 +458,15 @@ export default function ResultsView({ tournamentId }: { tournamentId: string }) 
             {tournament.location ? <span>{tournament.location}</span> : null}
           </div>
         </div>
-        <div className="flex shrink-0 gap-2 print:hidden">
+        <div className="flex shrink-0 flex-wrap gap-2 print:hidden">
+          {/* Staff and managers always see the league page; anyone else only while it is public. */}
+          {data.viewer !== 'public' || data.resultsPublic ? (
+            <Button variant="outline" asChild>
+              <AppLink href={`/league/${tournament.id}`}>
+                <CalendarRange className="mr-2 h-4 w-4" aria-hidden /> {t.fixturesTable}
+              </AppLink>
+            </Button>
+          ) : null}
           <Button variant="outline" onClick={() => window.print()}>
             <Printer className="mr-2 h-4 w-4" /> {t.printReport}
           </Button>

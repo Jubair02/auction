@@ -7,7 +7,6 @@ import dynamic from 'next/dynamic'
 import { Gavel, KeyRound, Loader2, LogIn, LogOut, Megaphone, Plus, ShieldCheck, Trophy, UserCog, UserPlus, Users } from 'lucide-react'
 import { Toaster as SonnerToaster, toast } from 'sonner'
 import { useAppStore, useAuthState } from '@/lib/store'
-import { useCachedGet } from '@/lib/api-cache'
 import { navigate, setReturnTo, useRoute } from '@/lib/router'
 import { useFullscreen } from '@/lib/use-fullscreen'
 import { canOpen, DASHBOARD_PATH, pageAccess } from '@/lib/access'
@@ -24,6 +23,7 @@ import { DataSaverMenuItem } from '@/components/shared/data-saver'
 import { ThemeToggle } from '@/components/shared/theme-toggle'
 import { PreferencesMenu } from '@/components/shared/preferences-menu'
 import { SiteFooter } from '@/components/shared/site-footer'
+import { useSiteSettings } from '@/components/shared/site-settings'
 import { useTheme } from '@/lib/theme'
 import { InstallAppMenuItem, InstallHelpHost, InstallHint } from '@/components/shared/install-app'
 import {
@@ -433,11 +433,6 @@ function LangToggle() {
 }
 
 /** Site-wide banner driven by the admin "announcement" setting. */
-/** Public admin settings (announcement, site name, support phone) — one cached request for the shell. */
-function useSiteSettings(): Record<string, string> {
-  return useCachedGet<{ settings: Record<string, string> }>('/api/settings').data?.settings ?? {}
-}
-
 function AnnouncementBanner() {
   const message = useSiteSettings().announcement?.trim()
 

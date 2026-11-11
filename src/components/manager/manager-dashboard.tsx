@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, ChevronDown, DoorOpen, History, Plus, Radio, Users } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CalendarRange, ChevronDown, DoorOpen, History, Plus, Radio, Users } from 'lucide-react'
 import { apiGet } from '@/lib/api'
 import { useCachedGet } from '@/lib/api-cache'
 import { tournamentDetailUrl } from '@/lib/tournament-prefetch'
@@ -77,6 +77,7 @@ const STRINGS = {
     squadNeedMore: (needed, min) => ` · ${needed} more for the minimum of ${min}`,
     enterRoom: 'Enter room',
     results: 'Results',
+    fixturesTable: 'Fixtures & table',
     hideSquad: 'Hide squad',
     showSquad: (n) => `Show squad (${n})`,
     couldNotLoad: 'Could not load your teams',
@@ -125,6 +126,7 @@ const STRINGS = {
     squadNeedMore: (needed, min) => ` · ন্যূনতম ${min} জন পূরণে আরও ${needed} জন লাগবে`,
     enterRoom: 'রুমে ঢুকুন',
     results: 'ফলাফল',
+    fixturesTable: 'ফিকচার ও টেবিল',
     hideSquad: 'স্কোয়াড লুকান',
     showSquad: (n) => `স্কোয়াড দেখুন (${n})`,
     couldNotLoad: 'আপনার দলগুলো লোড করা যায়নি',
@@ -173,6 +175,7 @@ const STRINGS = {
   squadNeedMore: (needed: number, min: number) => string
   enterRoom: string
   results: string
+  fixturesTable: string
   hideSquad: string
   showSquad: (n: number) => string
   couldNotLoad: string
@@ -393,6 +396,11 @@ function TeamCard({ team, defaultOpen }: { team: MyTeamRow; defaultOpen: boolean
             <Button asChild size="sm" variant="ghost" className="h-9">
               <AppLink href={`/results/${team.tournamentId}`}>
                 <History className="mr-1.5 h-4 w-4" aria-hidden /> {t.results}
+              </AppLink>
+            </Button>
+            <Button asChild size="sm" variant="ghost" className="h-9">
+              <AppLink href={`/league/${team.tournamentId}`}>
+                <CalendarRange className="mr-1.5 h-4 w-4" aria-hidden /> {t.fixturesTable}
               </AppLink>
             </Button>
             <CollapsibleTrigger asChild>

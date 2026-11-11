@@ -100,8 +100,27 @@ export async function POST(req: Request, { params }: RouteParams) {
       },
     })
   } catch (err) {
-    if (isUniqueViolation(err)) return jsonError('This Transaction ID was already submitted', 409)
-    throw err
+    if (!isUniqueViolation(err)) throw err
+    // The same Transaction ID was REJECTED earlier for this very tournament
+    // (e.g. checked before the money arrived): put that payment back in review
+    // with the new details. A TrxID used anywhere else stays refused.
+    const reopened = await db.payment.updateMany({
+      where: { method, trxId, tournamentId: id, status: 'REJECTED' },
+      data: {
+        status: 'PENDING',
+        senderNumber,
+        amount: settings.proPrice,
+        userId: user.id,
+        payerName: user.name,
+        tournamentName: tournament.name,
+        reviewNote: null,
+        reviewedById: null,
+        reviewedAt: null,
+        createdAt: new Date(),
+      },
+    })
+    if (reopened.count !== 1) return jsonError('This Transaction ID was already submitted', 409)
+    payment = (await db.payment.findUnique({ where: { method_trxId: { method, trxId } } }))!
   }
 
   await track('payment_submitted', { userId: user.id, tournamentId: id, props: { method, amount: payment.amount } })

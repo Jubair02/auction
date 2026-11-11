@@ -5,7 +5,8 @@ import { ImagePlus, Loader2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
+import { localizeServerMessage } from '@/lib/server-messages'
 
 const STRINGS = {
   en: {
@@ -115,6 +116,7 @@ export function ImageUpload({ label, kind, value, onChange, registrationCode, di
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const t = useStrings(STRINGS)
+  const lang = useLang()
 
   async function upload(file: File) {
     setUploading(true)
@@ -139,7 +141,8 @@ export function ImageUpload({ label, kind, value, onChange, registrationCode, di
       const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null
       // 413 comes from our size check or from the host itself (no JSON body then).
       if (res.status === 413) throw new Error(t.tooBig)
-      if (!res.ok || !data?.url) throw new Error(data?.error || t.uploadFailed(res.status))
+      // A raw fetch skips lib/api's translation — do it here so Bangla users get Bangla.
+      if (!res.ok || !data?.url) throw new Error(data?.error ? localizeServerMessage(data.error, lang) : t.uploadFailed(res.status))
       onChange(data.url)
     } catch (e) {
       toast.error((e as Error).message)

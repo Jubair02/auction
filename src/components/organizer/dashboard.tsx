@@ -44,6 +44,7 @@ type DashboardStrings = {
   enterLive: string
   openAuctionRoom: string
   continueSetup: string
+  viewTournament: string
   viewResults: string
   biddingUnderWay: string
   heldAt: (when: string) => string
@@ -107,6 +108,7 @@ const STRINGS = {
     enterLive: 'Enter live room',
     openAuctionRoom: 'Open auction room',
     continueSetup: 'Continue setup',
+    viewTournament: 'View tournament',
     viewResults: 'View results',
     biddingUnderWay: 'Bidding is under way',
     heldAt: (when) => `Held ${when}`,
@@ -169,6 +171,7 @@ const STRINGS = {
     enterLive: 'লাইভ রুমে ঢুকুন',
     openAuctionRoom: 'নিলাম রুম খুলুন',
     continueSetup: 'সেট আপ চালিয়ে যান',
+    viewTournament: 'টুর্নামেন্ট দেখুন',
     viewResults: 'ফলাফল দেখুন',
     biddingUnderWay: 'বিড চলছে',
     heldAt: (when) => `অনুষ্ঠিত: ${when}`,
@@ -250,7 +253,8 @@ function Spotlight({ t }: { t: TournamentSummary }) {
       : level === 1
         ? { label: s.openAuctionRoom, icon: DoorOpen, href: `/room/${t.roomCode}` }
         : level === 2
-          ? { label: s.continueSetup, icon: ArrowRight, href: `/tournaments/${t.id}` }
+          ? // Auctioneers can't edit setup — they just get to look at it.
+            { label: t.staffRole === 'AUCTIONEER' ? s.viewTournament : s.continueSetup, icon: ArrowRight, href: `/tournaments/${t.id}` }
           : { label: s.viewResults, icon: Trophy, href: `/results/${t.id}` }
 
   return (

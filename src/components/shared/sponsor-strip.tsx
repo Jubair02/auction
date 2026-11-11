@@ -224,25 +224,25 @@ function OverlayStrip({ sponsors, brandColor, className }: { sponsors: SponsorDT
   return (
     <div
       className={cn(
-        'pointer-events-none flex items-center gap-[1vw] rounded-[0.6vw] bg-slate-950/85 py-[0.5vw] pl-[1vw] pr-[0.8vw] text-white shadow-2xl',
+        'pointer-events-none flex items-center gap-[calc(1*var(--u,1vw))] rounded-[calc(0.6*var(--u,1vw))] bg-slate-950/85 py-[calc(0.5*var(--u,1vw))] pl-[calc(1*var(--u,1vw))] pr-[calc(0.8*var(--u,1vw))] text-white shadow-2xl',
         className,
       )}
-      style={{ borderLeft: `0.3vw solid ${palette.bg}` }}
+      style={{ borderLeft: `calc(0.3*var(--u,1vw)) solid ${palette.bg}` }}
       aria-label={t.sponsors}
     >
       {title ? (
-        <div className="flex items-center gap-[0.6vw]">
-          <span className="text-[0.75vw] font-bold uppercase tracking-[0.15em] text-white/70">{t.presentedBy}</span>
+        <div className="flex items-center gap-[calc(0.6*var(--u,1vw))]">
+          <span className="text-[calc(0.75*var(--u,1vw))] font-bold uppercase tracking-[0.15em] text-white/70">{t.presentedBy}</span>
           <OverlayMark sponsor={title} big />
         </div>
       ) : (
-        <span className="text-[0.75vw] font-bold uppercase tracking-[0.15em] text-white/70">{t.sponsors}</span>
+        <span className="text-[calc(0.75*var(--u,1vw))] font-bold uppercase tracking-[0.15em] text-white/70">{t.sponsors}</span>
       )}
       {shown.length > 0 ? (
         <>
-          {title ? <span aria-hidden className="h-[2vw] w-px bg-white/25" /> : null}
+          {title ? <span aria-hidden className="h-[calc(2*var(--u,1vw))] w-px bg-white/25" /> : null}
           {reduce ? (
-            <div className="flex items-center gap-[0.8vw]">
+            <div className="flex items-center gap-[calc(0.8*var(--u,1vw))]">
               {shown.map((s) => (
                 <OverlayMark key={s.id} sponsor={s} />
               ))}
@@ -270,10 +270,10 @@ function OverlayStrip({ sponsors, brandColor, className }: { sponsors: SponsorDT
 function OverlayMark({ sponsor, big }: { sponsor: SponsorDTO; big?: boolean }) {
   if (sponsor.logoUrl) {
     return (
-      <span className={cn('flex items-center rounded-[0.35vw] bg-white px-[0.4vw] py-[0.2vw]', big ? 'h-[2.8vw]' : 'h-[2.2vw]')}>
-        <img src={sponsor.logoUrl} alt={sponsor.name} className="h-full w-auto max-w-[10vw] object-contain" />
+      <span className={cn('flex items-center rounded-[calc(0.35*var(--u,1vw))] bg-white px-[calc(0.4*var(--u,1vw))] py-[calc(0.2*var(--u,1vw))]', big ? 'h-[calc(2.8*var(--u,1vw))]' : 'h-[calc(2.2*var(--u,1vw))]')}>
+        <img src={sponsor.logoUrl} alt={sponsor.name} className="h-full w-auto max-w-[calc(10*var(--u,1vw))] object-contain" />
       </span>
     )
   }
-  return <span className={cn('max-w-[16vw] truncate font-extrabold', big ? 'text-[1.4vw]' : 'text-[1.1vw]')}>{sponsor.name}</span>
+  return <span className={cn('max-w-[calc(16*var(--u,1vw))] truncate font-extrabold', big ? 'text-[calc(1.4*var(--u,1vw))]' : 'text-[calc(1.1*var(--u,1vw))]')}>{sponsor.name}</span>
 }

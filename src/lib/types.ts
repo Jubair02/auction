@@ -97,6 +97,8 @@ export interface SocketIdentity {
   teamName?: string
   /** A viewer who joined without a name: counted live, never written to the participant table. */
   anon?: boolean
+  /** Organizer seats: the holder's access to the tournament (absent on passes issued before it existed). */
+  staff?: 'OWNER' | 'ADMIN' | 'CO_ORGANIZER' | 'AUCTIONEER' | null
   exp?: number
 }
 
@@ -279,7 +281,14 @@ export interface RoomInfo {
 
 export interface JoinResult {
   socketToken: string
-  identity: { role: RoomRole; name: string; teamId?: string; teamName?: string; anon?: boolean }
+  identity: {
+    role: RoomRole
+    name: string
+    teamId?: string
+    teamName?: string
+    anon?: boolean
+    staff?: 'OWNER' | 'ADMIN' | 'CO_ORGANIZER' | 'AUCTIONEER' | null
+  }
 }
 
 // ---------- Live auction room state (socket) ----------

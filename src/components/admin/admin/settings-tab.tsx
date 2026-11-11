@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Crown, Loader2, Megaphone } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { api, ApiError } from '@/lib/api'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { LoadError } from '@/components/shared/load-error'
+import { siteSettingsChanged } from '@/components/shared/site-settings'
 import { type Strings, useStrings } from '@/lib/i18n'
 import { SHARED_STRINGS, type SharedStrings } from './strings'
 import { ListSkeleton, loadError, PLANS_URL, SETTINGS_URL } from './shared'
@@ -122,19 +123,26 @@ const ANNOUNCEMENT_MAX = 300
 const PAY_INSTRUCTIONS_MAX = 300
 const FORM_KEYS: readonly string[] = [...FIELDS.map((f) => f.key), 'announcement', ...PLAN_FIELDS.map((f) => f.key), 'pay_instructions']
 
-export function SettingsTab() {
+/** `onDirtyChange` tells the admin page about unsaved edits, so it can warn before they are lost. */
+export function SettingsTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const t = useStrings(STRINGS)
   const { data, loading, error, refetch } = useCachedGet<{ settings: Record<string, string> }>(SETTINGS_URL, loadError(t.couldNotLoad(t.whatSettings)))
   const [draft, setDraft] = useState<Record<string, string> | null>(null)
   const [saving, setSaving] = useState(false)
 
+  const saved = data?.settings ?? {}
+  const values = draft ?? saved
+  const dirty = !!data && FORM_KEYS.some((k) => (values[k] ?? '') !== (saved[k] ?? ''))
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+  // Unmounted (tab left): nothing unsaved remains.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+
   if (!data && error) return <LoadError what={t.whatSettings} error={error} onRetry={refetch} />
   if (loading || !data) return <ListSkeleton rows={3} />
 
-  const saved = data.settings
-  const values = draft ?? saved
   const set = (key: string, value: string) => setDraft({ ...values, [key]: value })
-  const dirty = FORM_KEYS.some((k) => (values[k] ?? '') !== (saved[k] ?? ''))
   // Keys saved by an older version of this page. Nothing reads them, but the
   // API replaces the whole set on save — so send them back untouched.
   const extraKeys = Object.keys(saved).filter((k) => !FORM_KEYS.includes(k))
@@ -151,6 +159,8 @@ export function SettingsTab() {
       }
       await api(SETTINGS_URL, { method: 'PUT', body: { settings: payload } })
       invalidateCached(PLANS_URL)
+      // The banner and footer (app shell) read the public settings — refresh them too.
+      siteSettingsChanged()
       await refetch()
       setDraft(null)
       toast.success(t.settingsSaved)

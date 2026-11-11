@@ -1,10 +1,20 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ShieldCheck, Trophy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppLink } from '@/components/shared/app-link'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { LoadError } from '@/components/shared/load-error'
 import { type Strings, useStrings } from '@/lib/i18n'
@@ -41,6 +51,10 @@ const STRINGS = {
     tabAnalytics: 'Analytics',
     tabSms: 'SMS log',
     manageTournaments: 'Manage tournaments',
+    unsavedTitle: 'Discard unsaved changes?',
+    unsavedDesc: 'Your changes to the settings have not been saved. If you leave this tab, they will be lost.',
+    keepEditing: 'Keep editing',
+    discardLeave: 'Discard changes',
   },
   bn: {
     ...SHARED_STRINGS.bn,
@@ -56,6 +70,10 @@ const STRINGS = {
     tabAnalytics: 'অ্যানালিটিক্স',
     tabSms: 'SMS লগ',
     manageTournaments: 'টুর্নামেন্ট ম্যানেজ করুন',
+    unsavedTitle: 'সেভ না করা পরিবর্তন বাদ দেবেন?',
+    unsavedDesc: 'সেটিংসের পরিবর্তনগুলো এখনো সেভ করা হয়নি। এই ট্যাব ছেড়ে গেলে সেগুলো হারিয়ে যাবে।',
+    keepEditing: 'এডিট চালিয়ে যান',
+    discardLeave: 'পরিবর্তন বাদ দিন',
   },
 } satisfies Strings<
   SharedStrings & {
@@ -71,12 +89,33 @@ const STRINGS = {
     tabAnalytics: string
     tabSms: string
     manageTournaments: string
+    unsavedTitle: string
+    unsavedDesc: string
+    keepEditing: string
+    discardLeave: string
   }
 >
 
 export default function AdminView() {
   const t = useStrings(STRINGS)
-  const [tab, setTab] = useState('overview')
+  const [tab, setTabNow] = useState('overview')
+  // Unsaved edits on the Settings tab: leaving it (which unmounts it) asks first.
+  const [settingsDirty, setSettingsDirty] = useState(false)
+  const [pendingTab, setPendingTab] = useState<string | null>(null)
+  const setTab = (next: string) => {
+    if (tab === 'settings' && next !== 'settings' && settingsDirty) setPendingTab(next)
+    else setTabNow(next)
+  }
+  // …and so does closing or reloading the page.
+  useEffect(() => {
+    if (!settingsDirty) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [settingsDirty])
   const users = useCachedGet<{ users: AdminUser[] }>(USERS_URL, loadError(t.couldNotLoad(t.whatUsers)))
   const tournaments = useCachedGet<{ tournaments: AdminTournament[] }>(TOURNAMENTS_URL, loadError(t.couldNotLoad(t.whatTournaments)))
   // For the "Payments" tab badge; the tab itself opens on the same (cached) list.
@@ -148,7 +187,7 @@ export default function AdminView() {
           ) : null}
         </TabsContent>
         <TabsContent value="settings" className="mt-4">
-          {tab === 'settings' ? <SettingsTab /> : null}
+          {tab === 'settings' ? <SettingsTab onDirtyChange={setSettingsDirty} /> : null}
         </TabsContent>
         <TabsContent value="analytics" className="mt-4">
           {tab === 'analytics' ? <AnalyticsPanel /> : null}
@@ -157,6 +196,28 @@ export default function AdminView() {
           {tab === 'sms' ? <NotificationsPanel /> : null}
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={pendingTab !== null} onOpenChange={(open) => !open && setPendingTab(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.unsavedTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{t.unsavedDesc}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.keepEditing}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => {
+                if (pendingTab) setTabNow(pendingTab)
+                setSettingsDirty(false)
+                setPendingTab(null)
+              }}
+            >
+              {t.discardLeave}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

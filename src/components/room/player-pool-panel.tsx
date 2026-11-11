@@ -41,6 +41,8 @@ interface PlayerPoolPanelProps {
   state: RoomState
   /** Organizer + auction LIVE + nobody on the block → rows are selectable */
   canSelect: boolean
+  /** Re-auctioning a sold player refunds the team: co-organizer and up (false for auctioneers). */
+  canReauction?: boolean
   onAction: (action: OrganizerAction, payload?: Record<string, unknown>) => void
 }
 
@@ -238,6 +240,7 @@ function samePoolProps(a: PlayerPoolPanelProps, b: PlayerPoolPanelProps): boolea
   const n = b.state
   return (
     a.canSelect === b.canSelect &&
+    a.canReauction === b.canReauction &&
     a.onAction === b.onAction &&
     s.players === n.players &&
     s.mode === n.mode &&
@@ -254,7 +257,7 @@ function samePoolProps(a: PlayerPoolPanelProps, b: PlayerPoolPanelProps): boolea
 /** Full player pool with filters, on-block selection and re-auction. */
 export const PlayerPoolPanel = memo(PlayerPoolPanelView, samePoolProps)
 
-function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProps) {
+function PlayerPoolPanelView({ state, canSelect, canReauction = true, onAction }: PlayerPoolPanelProps) {
   const t = useStrings(STRINGS)
   const [filter, setFilter] = useState<'ALL' | PlayerStatus>('ALL')
   const [category, setCategory] = useState<string>('ALL')
@@ -390,7 +393,7 @@ function PlayerPoolPanelView({ state, canSelect, onAction }: PlayerPoolPanelProp
                 ) : (
                   <PlayerStatusBadge status={p.status} className="hidden sm:inline-flex" />
                 )}
-                {p.status === 'SOLD' ? (
+                {p.status === 'SOLD' && canReauction ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button

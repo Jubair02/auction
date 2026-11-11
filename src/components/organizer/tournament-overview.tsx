@@ -328,6 +328,9 @@ export function goTo(step: Pick<NextStep, 'tab' | 'href'>, setTab: (tab: DetailT
   else if (step.tab) setTab(step.tab)
 }
 
+/** Owner, admin or co-organizer — the same line the detail page draws for its setup tabs. */
+const canManage = ({ myAccess }: TournamentDetail) => myAccess === 'OWNER' || myAccess === 'ADMIN' || myAccess === 'CO_ORGANIZER'
+
 interface ChecklistItem {
   key: string
   title: string
@@ -338,7 +341,8 @@ interface ChecklistItem {
   action?: { label: string; tab?: DetailTab; href?: string }
 }
 
-function checklist({ tournament: t, players, teams, auction }: TournamentDetail, s: OverviewStrings): ChecklistItem[] {
+function checklist(data: TournamentDetail, s: OverviewStrings): ChecklistItem[] {
+  const { tournament: t, players, teams, auction } = data
   const uncategorized = t.auctionMode === 'CATEGORY' ? players.filter((p) => !p.category).length : 0
   const managed = teams.filter((tm) => tm.managerUserId).length
   const started = !!auction && auction.status !== 'READY'
@@ -414,6 +418,10 @@ function checklist({ tournament: t, players, teams, auction }: TournamentDetail,
         : undefined,
     },
   )
+  // Read-only staff can't open the setup tabs — keep only the links that leave the page.
+  if (!canManage(data)) {
+    for (const item of items) if (item.action?.tab) item.action = undefined
+  }
   return items
 }
 
@@ -514,9 +522,11 @@ function RoomCard({ data, setTab }: { data: TournamentDetail; setTab: (tab: Deta
           <KeyRound className="h-7 w-7 text-muted-foreground" aria-hidden />
           <p className="font-semibold">{s.noRoomCode}</p>
           <p className="max-w-xs text-sm text-muted-foreground">{s.noRoomDesc}</p>
-          <Button variant="outline" size="sm" className="mt-1" onClick={() => setTab('auction')}>
-            {s.setUpAuction}
-          </Button>
+          {canManage(data) ? (
+            <Button variant="outline" size="sm" className="mt-1" onClick={() => setTab('auction')}>
+              {s.setUpAuction}
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
     )

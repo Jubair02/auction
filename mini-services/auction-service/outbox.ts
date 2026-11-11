@@ -24,6 +24,7 @@
 // load this file for outbox.test.ts.
 // ============================================================
 import type { ResilientClient } from '../../src/lib/db-resilience'
+import { smsSafeName } from '../../src/lib/sms-text.ts'
 import { toSmsNumber } from '../../src/lib/phone.ts'
 
 export const MAX_ATTEMPTS = 5
@@ -141,9 +142,13 @@ const EN_IN = new Intl.NumberFormat('en-IN')
  */
 export function soldSmsBody(lang: string, v: { tournament: string; team: string; price: number }): string {
   const price = `৳${EN_IN.format(v.price)}`
-  return lang === 'en'
-    ? `Congratulations! ${v.team} bought you for ${price} in the ${v.tournament} auction. — NeelamGhor`
-    : `অভিনন্দন! ${v.tournament} নিলামে ${v.team} দল আপনাকে ${price}-এ কিনেছে। — NeelamGhor`
+  // Tournament and team names are organizer-written: cleaned of numbers and links (sms-text.ts).
+  const en = lang === 'en'
+  const tournament = smsSafeName(v.tournament, en ? 'the' : '')
+  const team = smsSafeName(v.team, en ? 'A team' : 'একটি')
+  return en
+    ? `Congratulations! ${team} bought you for ${price} in the ${tournament} auction. — NeelamGhor`
+    : `অভিনন্দন! ${tournament ? `${tournament} ` : ''}নিলামে ${team} দল আপনাকে ${price}-এ কিনেছে। — NeelamGhor`
 }
 
 export interface SmsLimits {

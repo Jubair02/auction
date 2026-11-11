@@ -690,6 +690,20 @@ async function main() {
   console.log('\nPlans, payments & staff (REST)')
   const fifthTeam = await http('POST', `/api/tournaments/${tid}/teams`, { teams: [{ name: 'E2E Over', budget: 60000, maxSquad: 3, minSquad: 0 }, { name: 'E2E Over2', budget: 60000, maxSquad: 3, minSquad: 0 }] }, orgC)
   check('a Free tournament cannot go past its team limit (402, upgrade hint)', fifthTeam.status === 402 && /free plan/i.test(fifthTeam.json?.error ?? ''), fifthTeam.json)
+  const teamsBefore = await db.team.count({ where: { tournamentId: tid } })
+  const race = await Promise.all(
+    [1, 2, 3, 4].map((n) =>
+      http('POST', `/api/tournaments/${tid}/teams`, { teams: [{ name: `E2E Race ${n}`, budget: 60000, maxSquad: 3, minSquad: 0 }] }, orgC),
+    ),
+  )
+  const teamsAfter = await db.team.count({ where: { tournamentId: tid } })
+  check(
+    'four simultaneous team adds cannot overshoot the Free limit (exactly one fits)',
+    teamsBefore === 3 && teamsAfter === 4 && race.filter((r) => r.status === 201).length === 1 && race.filter((r) => r.status === 402).length === 3,
+    { teamsBefore, teamsAfter, statuses: race.map((r) => r.status) },
+  )
+  // Keep the rest of the run's numbers as they were: the racer's team goes again.
+  await db.team.deleteMany({ where: { tournamentId: tid, name: { startsWith: 'E2E Race' } } })
 
   // The platform's bKash number must be set for Pro payments; restore whatever was there afterwards.
   const prevBkash = await db.setting.findUnique({ where: { key: 'pay_bkash_number' } })
@@ -701,6 +715,21 @@ async function main() {
   check('the organizer submits a bKash Transaction ID; a second one waits for the first', pay.status === 201 && payAgain.status === 409, { pay: pay.json, again: payAgain.status })
   const admin = await mkUser('admin', 'ADMIN')
   const adminC = await login(admin.email)
+  // Checked before the money arrived → rejected; the organizer sends the same TrxID again.
+  const reject = await http('PATCH', `/api/admin/payments/${pay.json?.payment?.id}`, { action: 'reject', note: 'not received yet' }, adminC)
+  const resubmit = await http('POST', `/api/tournaments/${tid}/payments`, { method: 'BKASH', trxId: trx, senderNumber: '01711111111' }, orgC)
+  const otherTournament = await db.tournament.create({ data: { name: `E2E Other ${RUN}`, organizerId: org.id } })
+  const stolen = await http('POST', `/api/tournaments/${otherTournament.id}/payments`, { method: 'BKASH', trxId: trx, senderNumber: '01711111111' }, orgC)
+  await db.tournament.delete({ where: { id: otherTournament.id } })
+  check(
+    'a rejected Transaction ID can be resubmitted for the same tournament (back in review), never for another',
+    reject.status === 200 &&
+      resubmit.status === 201 &&
+      resubmit.json?.payment?.id === pay.json?.payment?.id &&
+      resubmit.json?.payment?.status === 'PENDING' &&
+      stolen.status === 409,
+    { reject: reject.status, resubmit: resubmit.json, stolen: stolen.status },
+  )
   const approve = await http('PATCH', `/api/admin/payments/${pay.json?.payment?.id}`, { action: 'approve' }, adminC)
   const approveTwice = await http('PATCH', `/api/admin/payments/${pay.json?.payment?.id}`, { action: 'approve' }, adminC)
   const planNow = (await db.tournament.findUnique({ where: { id: tid }, select: { plan: true } }))?.plan
@@ -730,6 +759,21 @@ async function main() {
       (auView.json?.players ?? []).every((pl: { phone: string | null }) => pl.phone === null),
     { addCo: addCo.status, addAu: addAu.status, addMgr: addMgr.status, coEdit: coEdit.status, coDelete: coDelete.status, auEdit: auEdit.status, access: auView.json?.myAccess },
   )
+  const mgrView = await http('GET', `/api/tournaments/${tid}`, undefined, bC)
+  const mgrTeams: { id: string; managerUserId: string | null; managerEmail: string | null }[] = mgrView.json?.teams ?? []
+  const auStaff = await http('GET', `/api/tournaments/${tid}/staff`, undefined, auC)
+  const ownerStaff = await http('GET', `/api/tournaments/${tid}/staff`, undefined, orgC)
+  check(
+    'managers see their own account id but no other manager\'s id or email; auctioneers get no staff emails',
+    mgrView.status === 200 &&
+      mgrTeams.find((tm) => tm.id === beta.id)?.managerUserId === mB.id &&
+      mgrTeams.every((tm) => tm.managerEmail === null && (tm.id === beta.id || ![mA.id, mC.id].includes(tm.managerUserId ?? ''))) &&
+      auStaff.status === 200 &&
+      auStaff.json?.owner?.email === null &&
+      (auStaff.json?.staff ?? []).every((m: { email: string | null }) => m.email === null) &&
+      typeof ownerStaff.json?.owner?.email === 'string',
+    { teams: mgrTeams.map((tm) => [tm.id === beta.id ? 'beta' : 'other', tm.managerUserId]), auOwner: auStaff.json?.owner },
+  )
   const staffList = await http('GET', '/api/tournaments', undefined, coC)
   check('the tournament appears in the co-organizer’s list', (staffList.json?.tournaments ?? []).some((x: { id: string; staffRole?: string }) => x.id === tid && x.staffRole === 'CO_ORGANIZER'), staffList.status)
 
@@ -747,6 +791,34 @@ async function main() {
     { unpaid: unpaid.status, paid: paid.status, before: feeReg?.payStatus, verify: verify.status, after: feeRegAfter?.payStatus },
   )
   await http('PATCH', `/api/tournaments/${tid}`, { registrationFee: null }, orgC)
+
+  // My account: edit the profile; change the password (other sessions end, this one stays).
+  const acct = await mkUser('account', 'ORGANIZER')
+  const [acctC1, acctC2] = [await login(acct.email), await login(acct.email)]
+  const rename = await http('PATCH', '/api/account', { name: 'E2E Renamed', phone: '01799 999999' }, acctC1)
+  const badPhone = await http('PATCH', '/api/account', { phone: '12345' }, acctC1)
+  const wrongPw = await http('POST', '/api/account/password', { currentPassword: 'not-it', newPassword: 'new-pass-123' }, acctC1)
+  const changePw = await http('POST', '/api/account/password', { currentPassword: PASSWORD, newPassword: 'new-pass-123' }, acctC1)
+  const freshCookie = changePw.setCookie.map((c) => c.split(';')[0]).find((c) => c.startsWith('ng_session='))
+  const [otherDevice, thisDevice] = [await http('GET', '/api/auth/me', undefined, acctC2), await http('GET', '/api/auth/me', undefined, freshCookie)]
+  const oldPwLogin = await http('POST', '/api/auth/login', { email: acct.email, password: PASSWORD })
+  const newPwLogin = await http('POST', '/api/auth/login', { email: acct.email, password: 'new-pass-123' })
+  check(
+    'account: edit name and phone; a password change keeps this device signed in and ends the others',
+    rename.status === 200 &&
+      rename.json?.user?.name === 'E2E Renamed' &&
+      rename.json?.user?.phone === '01799999999' &&
+      badPhone.status === 400 &&
+      wrongPw.status === 401 &&
+      changePw.status === 200 &&
+      !!freshCookie &&
+      thisDevice.status === 200 &&
+      thisDevice.json?.user?.name === 'E2E Renamed' &&
+      (otherDevice.status === 401 || otherDevice.json?.user == null) &&
+      oldPwLogin.status === 401 &&
+      newPwLogin.status === 200,
+    { rename: rename.status, badPhone: badPhone.status, wrongPw: wrongPw.status, changePw: changePw.status, thisDevice: thisDevice.status, otherDevice: otherDevice.status, oldPw: oldPwLogin.status, newPw: newPwLogin.status },
+  )
 
   // SMS is Pro-only; the reminder dry run counts recipients without sending.
   const smsOn = await http('PATCH', `/api/tournaments/${tid}`, { smsEnabled: true }, orgC)

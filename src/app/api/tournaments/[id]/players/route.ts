@@ -3,7 +3,6 @@ import { assertWithinPlan } from '@/lib/plans'
 import {
   coercePositiveInt,
   insertPlayersNumbered,
-  PLAYER_NUMBER_CONFLICT,
   loadTournamentForOwner,
   normalizeCategory,
   readJson,
@@ -91,11 +90,12 @@ export async function POST(req: Request, { params }: RouteParams) {
     validated.push(result)
   }
 
+  // Early, friendly check; insertPlayersNumbered re-checks under the roster lock.
   const overLimit = await assertWithinPlan(loaded.tournament, { players: validated.length })
   if (overLimit) return overLimit
 
-  const inserted = await insertPlayersNumbered(id, validated)
-  if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)
+  const inserted = await insertPlayersNumbered(loaded.tournament, validated)
+  if (inserted instanceof Response) return inserted
 
   const created = inserted.map((p) => serializePlayer(p))
   return Response.json({ created: created.length, players: created }, { status: 201 })

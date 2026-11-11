@@ -4,8 +4,8 @@ import { Plus, Search, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { CATEGORIES, type AuctionMode, type PlayerStatus } from '@/lib/types'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { CATEGORIES, playerRoleLabel, type AuctionMode, type PlayerStatus } from '@/lib/types'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { SHARED_STRINGS, type SharedPlayersStrings } from './strings'
 
 const ALL_STATUSES: PlayerStatus[] = ['AVAILABLE', 'LIVE', 'SOLD', 'UNSOLD', 'SKIPPED']
@@ -114,6 +114,7 @@ export function PlayersToolbar({
   onUpgrade: () => void
 }) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
 
   return (
     <div className="flex flex-col gap-3">
@@ -165,7 +166,7 @@ export function PlayersToolbar({
               <SelectItem value="ALL">{t.allRoles}</SelectItem>
               {roles.map((r) => (
                 <SelectItem key={r} value={r}>
-                  {r}
+                  {playerRoleLabel(r, lang)}
                 </SelectItem>
               ))}
             </SelectContent>

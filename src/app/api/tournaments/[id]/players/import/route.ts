@@ -8,7 +8,6 @@ import {
   coercePositiveInt,
   insertPlayersNumbered,
   loadTournamentForOwner,
-  PLAYER_NUMBER_CONFLICT,
   normalizeCategory,
   readJson,
   requireSession,
@@ -202,10 +201,10 @@ export async function POST(req: Request, { params }: RouteParams) {
     if (overPlan) return overPlan
     // All valid rows land together or not at all — no half-imported sheet.
     const inserted = await insertPlayersNumbered(
-      id,
+      tournament,
       toInsert.map((r) => ({ ...r.data, basePrice: r.data.basePrice! })),
     )
-    if (!inserted) return jsonError(PLAYER_NUMBER_CONFLICT, 409)
+    if (inserted instanceof Response) return inserted
   }
 
   return Response.json({ created: toInsert.length, skipped, errors })

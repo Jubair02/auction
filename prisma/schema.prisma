@@ -308,6 +308,8 @@ model PlayerRegistration {
   // A Transaction ID can be claimed once per payment network.
   @@unique([payMethod, payTrxId])
   @@index([tournamentId, status])
+  // The SMS worker's consent check looks registrations up by player on every sale.
+  @@index([playerId])
 }
 
 // Uploaded images (player photos, team/tournament logos, banners), re-encoded

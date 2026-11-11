@@ -4,6 +4,7 @@
 //
 // Every number lives in the Setting table so the admin can change it without a
 // deploy. Server-only (uses the database).
+import type { DbTx } from '@/lib/db'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { PLAN_DEFAULTS } from '@/lib/plan-defaults'
@@ -48,18 +49,30 @@ export async function getPlanSettings(): Promise<PlanSettings> {
 }
 
 /**
+ * Serializes every change to a tournament's roster (teams, players) for the
+ * rest of the transaction `tx`: two requests can't both pass the Free-plan
+ * count and then both insert. A transaction-scoped advisory lock — released at
+ * commit/rollback, safe behind PgBouncer's transaction pooling.
+ */
+export async function lockRoster(tx: DbTx, tournamentId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`roster:${tournamentId}`}))`
+}
+
+/**
  * Null when adding `add.teams` teams / `add.players` players keeps a FREE
  * tournament within its limits (PRO is unlimited); otherwise a 402 response
- * that tells the organizer to upgrade.
+ * that tells the organizer to upgrade. Pass the transaction (after lockRoster)
+ * to make the check binding; without one it is only an early, friendly check.
  */
 export async function assertWithinPlan(
   tournament: { id: string; plan: string },
   add: { teams?: number; players?: number },
+  client: DbTx = db,
 ): Promise<Response | null> {
   if (tournament.plan === 'PRO') return null
   const settings = await getPlanSettings()
   if (add.teams) {
-    const teams = await db.team.count({ where: { tournamentId: tournament.id } })
+    const teams = await client.team.count({ where: { tournamentId: tournament.id } })
     if (teams + add.teams > settings.freeMaxTeams) {
       return jsonError(
         `The free plan allows up to ${settings.freeMaxTeams} teams. Upgrade this tournament to Pro for unlimited teams.`,
@@ -68,7 +81,7 @@ export async function assertWithinPlan(
     }
   }
   if (add.players) {
-    const players = await db.player.count({ where: { tournamentId: tournament.id } })
+    const players = await client.player.count({ where: { tournamentId: tournament.id } })
     if (players + add.players > settings.freeMaxPlayers) {
       return jsonError(
         `The free plan allows up to ${settings.freeMaxPlayers} players. Upgrade this tournament to Pro for unlimited players.`,

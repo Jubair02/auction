@@ -12,7 +12,7 @@ import { apiPost, ApiError } from '@/lib/api'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
 import { copyText } from '@/lib/clipboard'
 import { formatBDT, formatDate } from '@/lib/format'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import type { PaymentDTO, PaymentMethod, PlanInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -330,6 +330,7 @@ function UpgradeBody({
   onSubmitted?: () => void
 }) {
   const t = useStrings(STRINGS)
+  const lang = useLang()
   const plans = useCachedGet<PlanInfo>(PLANS_URL)
   const payments = useCachedGet<{ payments: PaymentDTO[] }>(paymentsUrl(tournamentId))
   const [step, setStep] = useState<1 | 2>(1)
@@ -393,7 +394,7 @@ function UpgradeBody({
           <Clock className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <div>
             <p className="font-semibold">{t.underReview}</p>
-            <p className="text-sm">{t.underReviewDesc(METHOD_LABEL[pending.method], pending.trxId, formatDate(pending.createdAt, true))}</p>
+            <p className="text-sm">{t.underReviewDesc(METHOD_LABEL[pending.method], pending.trxId, formatDate(pending.createdAt, true, lang))}</p>
           </div>
         </div>
       ) : methods.length === 0 ? (

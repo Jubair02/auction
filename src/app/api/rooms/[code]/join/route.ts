@@ -61,8 +61,10 @@ export async function POST(req: Request, { params }: RouteParams) {
   const session = await getSessionUserWithVersion()
   const sessionUser = session?.user ?? null
   // Owner, ADMIN and tournament staff (co-organizer / auctioneer) all run the room.
-  const isOrganizer =
-    role === 'organizer' && sessionUser ? (await tournamentAccess(auction.tournament, sessionUser)) !== null : false
+  // The level travels in the seat pass: undoing finished business (refunding a
+  // sale, reopening a finalized auction) is for co-organizers and up.
+  const access = role === 'organizer' && sessionUser ? await tournamentAccess(auction.tournament, sessionUser) : null
+  const isOrganizer = access !== null
 
   const upsertParticipant = async (data: {
     role: 'ORGANIZER' | 'MANAGER' | 'VIEWER'
@@ -101,13 +103,14 @@ export async function POST(req: Request, { params }: RouteParams) {
         role: 'ORGANIZER',
         name: sessionUser.name,
         userId: sessionUser.id,
+        staff: access,
         sv: session!.sessionVersion,
         sid: await currentSessionId(),
       },
       SOCKET_TOKEN_TTL,
     )
     await upsertParticipant({ role: 'ORGANIZER', name: sessionUser.name, userId: sessionUser.id })
-    return Response.json({ socketToken: token, identity: { role: 'ORGANIZER', name: sessionUser.name } })
+    return Response.json({ socketToken: token, identity: { role: 'ORGANIZER', name: sessionUser.name, staff: access } })
   }
 
   if (role === 'manager') {

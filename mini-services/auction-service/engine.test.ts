@@ -632,6 +632,53 @@ describe('AuctionEngine — auction-day hardening', () => {
     assert.equal(db.one('auction', 'a1')!.status, 'ENDED')
   })
 
+  it('an auctioneer runs the floor but cannot refund a sale or reopen a finished auction', async (t) => {
+    const { engine, room, select, advance } = await setup(t)
+    const AUCT: SocketIdentity = { ...ORG, staff: 'AUCTIONEER' }
+    await select('p1')
+    assert.equal(await engine.placeBid(M1, 10_000), null)
+    assert.equal(await engine.organizerAction(AUCT, 'force_sell', { playerId: 'p1', bidAmount: 10_000 }), null) // floor control: fine
+    await advance(500)
+    assert.match((await engine.organizerAction(AUCT, 'reauction', { playerId: 'p1' }))!, /owner or a co-organizer/)
+    assert.equal(room().players.find((p: { id: string }) => p.id === 'p1').status, 'SOLD')
+    assert.equal(await engine.organizerAction(AUCT, 'end', {}), null)
+    assert.match((await engine.organizerAction(AUCT, 'reopen', {}))!, /owner or a co-organizer/)
+    // The owner (or a co-organizer) still can.
+    assert.equal(await engine.organizerAction({ ...ORG, staff: 'CO_ORGANIZER' }, 'reopen', {}), null)
+  })
+
+  it('putting a player up follows the database when someone is already on the block (no player stranded as LIVE)', async (t) => {
+    quiet(t)
+    const { engine, db, room } = await setup(t)
+    // An earlier attempt committed p2 to the block but its reply was lost: memory still shows an empty block.
+    Object.assign(db.one('auction', 'a1')!, { currentPlayerId: 'p2' })
+    Object.assign(db.one('player', 'p2')!, { status: 'LIVE' })
+    assert.match((await engine.organizerAction(ORG, 'select_player', { playerId: 'p1' }))!, /player on the block changed/)
+    assert.equal(room().currentPlayerId, 'p2')
+    assert.equal(db.one('player', 'p1')!.status, 'AVAILABLE') // never marked LIVE
+    assert.equal(db.one('auction', 'a1')!.currentPlayerId, 'p2')
+    assert.ok(room().timerEndsAt > Date.now()) // and p2 has a live bidding clock
+  })
+
+  it('a failure bringing up the first player after Start still announces the live auction and keeps Auto Auction going', async (t) => {
+    quiet(t)
+    const { engine, db, room, advance } = await setup(t, seed({ auction: { status: 'READY', autoAdvance: true } }))
+    let failOnce = true
+    db.hook((c) => {
+      if (failOnce && c.model === 'auction' && c.op === 'updateMany' && c.args.where?.currentPlayerId === null) {
+        failOnce = false
+        throw new Error('connection lost')
+      }
+    })
+    const err = await engine.organizerAction(ORG, 'start', {}).catch((e: Error) => e.message)
+    assert.ok(err !== null, 'the failed pick is reported')
+    assert.equal(room().status, 'LIVE')
+    assert.equal(db.one('auction', 'a1')!.status, 'LIVE')
+    assert.ok(room().nextPlayerAt != null, 'Auto Auction is scheduled to try again')
+    await advance(10_000)
+    assert.ok(room().currentPlayerId, 'and it brings a player up')
+  })
+
   it('a manual bid is refused when the player it was opened for has left the block', async (t) => {
     const { engine, select } = await setup(t)
     await select('p1')

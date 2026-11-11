@@ -73,7 +73,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
     ...serializeTeam(team),
     managerName: null,
     managerEmail: null,
-    ...(viewer === 'public' ? { managerUserId: null } : {}),
+    // Account ids are organizer data too: a manager sees only their own.
+    managerUserId: viewer === 'staff' || (user && team.managerUserId === user.id) ? team.managerUserId : null,
   })
 
   return Response.json({

@@ -2,6 +2,7 @@
 // enqueue rows; the always-on auction service delivers them (see
 // mini-services/auction-service/outbox.ts). Server-only (uses the database).
 import { db } from '@/lib/db'
+import { smsSafeName } from '@/lib/sms-text'
 import { toSmsNumber } from '@/lib/phone'
 
 export interface EnqueueSmsInput {
@@ -79,14 +80,16 @@ export function auctionReminderBody(
           hour12: true,
         }).format(auctionAt)
       : null
+  // The organizer typed the name: never let it carry a number or a link (see sms-text.ts).
+  const name = smsSafeName(tournament.name, bn ? 'আপনার টুর্নামেন্টের' : 'your tournament')
   if (bn) {
     return when
-      ? `মনে করিয়ে দিচ্ছি: ${tournament.name} নিলাম শুরু ${when}-এ। লাইভ দেখুন: ${roomLink} — NeelamGhor`
-      : `মনে করিয়ে দিচ্ছি: ${tournament.name} নিলাম শিগগিরই শুরু হচ্ছে। লাইভ দেখুন: ${roomLink} — NeelamGhor`
+      ? `মনে করিয়ে দিচ্ছি: ${name} নিলাম শুরু ${when}-এ। লাইভ দেখুন: ${roomLink} — NeelamGhor`
+      : `মনে করিয়ে দিচ্ছি: ${name} নিলাম শিগগিরই শুরু হচ্ছে। লাইভ দেখুন: ${roomLink} — NeelamGhor`
   }
   return when
-    ? `Reminder: the ${tournament.name} auction starts ${when}. Watch live: ${roomLink} — NeelamGhor`
-    : `Reminder: the ${tournament.name} auction starts soon. Watch live: ${roomLink} — NeelamGhor`
+    ? `Reminder: the ${name} auction starts ${when}. Watch live: ${roomLink} — NeelamGhor`
+    : `Reminder: the ${name} auction starts soon. Watch live: ${roomLink} — NeelamGhor`
 }
 
 /** Texts a player that their registration was approved or rejected (if the tournament has SMS on). */
@@ -98,15 +101,17 @@ export async function notifyRegistrationDecision(
   if (!smsAllowed(tournament) || !reg.smsConsent) return
   const bn = tournament.smsLang !== 'en'
   // Never the registrant's name: anyone can type anything into the public form
-  // (with someone else's number), and our SMS must not carry their words.
+  // (with someone else's number), and our SMS must not carry their words. The
+  // tournament name is the organizer's, so it is cleaned of numbers and links.
+  const name = smsSafeName(tournament.name, bn ? 'টুর্নামেন্ট' : 'the tournament')
   const body =
     decision === 'APPROVED'
       ? bn
-        ? `${tournament.name}-এ আপনার নিবন্ধন অনুমোদিত হয়েছে। নিলামে শুভকামনা! — NeelamGhor`
-        : `Your registration for ${tournament.name} is approved. Good luck at the auction! — NeelamGhor`
+        ? `${name}-এ আপনার নিবন্ধন অনুমোদিত হয়েছে। নিলামে শুভকামনা! — NeelamGhor`
+        : `Your registration for ${name} is approved. Good luck at the auction! — NeelamGhor`
       : bn
-        ? `${tournament.name}-এ আপনার নিবন্ধন এবার গ্রহণ করা হয়নি। — NeelamGhor`
-        : `Your registration for ${tournament.name} was not accepted this time. — NeelamGhor`
+        ? `${name}-এ আপনার নিবন্ধন এবার গ্রহণ করা হয়নি। — NeelamGhor`
+        : `Your registration for ${name} was not accepted this time. — NeelamGhor`
   await enqueueSms({
     to: reg.phone,
     body,

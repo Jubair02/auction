@@ -31,20 +31,21 @@ import { TOURNAMENTS_URL, tournamentDetailUrl } from '@/lib/tournament-prefetch'
 import { navigate } from '@/lib/router'
 import { useAuthState } from '@/lib/store'
 import { formatDate } from '@/lib/format'
-import { type Strings, useStrings } from '@/lib/i18n'
+import { type Strings, useLang, useStrings } from '@/lib/i18n'
 
 type StaffRole = 'CO_ORGANIZER' | 'AUCTIONEER'
 
 interface StaffMember {
   userId: string
   name: string
-  email: string
+  /** Null for auctioneers — they never get contact details. */
+  email: string | null
   role: StaffRole
   addedAt: string
 }
 
 interface StaffResponse {
-  owner: { userId: string; name: string; email: string } | null
+  owner: { userId: string; name: string; email: string | null } | null
   staff: StaffMember[]
 }
 
@@ -165,6 +166,7 @@ const ROLES: StaffRole[] = ['CO_ORGANIZER', 'AUCTIONEER']
 
 export default function StaffPanel({ tournamentId, canEdit }: { tournamentId: string; canEdit: boolean }) {
   const s = useStrings(STRINGS)
+  const lang = useLang()
   const url = `/api/tournaments/${tournamentId}/staff`
   const { data, loading, error, refetch } = useCachedGet<StaffResponse>(url)
   const myId = useAuthState().user?.id ?? null
@@ -309,7 +311,7 @@ export default function StaffPanel({ tournamentId, canEdit }: { tournamentId: st
                     {data.owner.name}
                     {data.owner.userId === myId ? <span className="font-normal text-muted-foreground"> ({s.you})</span> : null}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">{data.owner.email}</p>
+                  {data.owner.email ? <p className="truncate text-xs text-muted-foreground">{data.owner.email}</p> : null}
                 </div>
                 <Badge variant="secondary">{s.owner}</Badge>
               </li>
@@ -322,7 +324,8 @@ export default function StaffPanel({ tournamentId, canEdit }: { tournamentId: st
                     {m.userId === myId ? <span className="font-normal text-muted-foreground"> ({s.you})</span> : null}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {m.email} · {s.addedOn(formatDate(m.addedAt))}
+                    {m.email ? `${m.email} · ` : null}
+                    {s.addedOn(formatDate(m.addedAt, false, lang))}
                   </p>
                 </div>
                 {canEdit ? (

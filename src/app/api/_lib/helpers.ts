@@ -2,8 +2,9 @@
 // NeelamGhor — shared guards/serializers for API route handlers.
 // Private folder (leading underscore) — never routed by Next.js.
 // ============================================================
-import { db } from '@/lib/db'
+import { db, type DbTx } from '@/lib/db'
 import { getSessionUser, jsonError } from '@/lib/auth'
+import { assertWithinPlan, lockRoster } from '@/lib/plans'
 import type {
   AuctionDTO,
   AuctionMode,
@@ -161,24 +162,52 @@ export async function auctionInProgress(tournamentId: string): Promise<boolean> 
 
 export type NewPlayerInput = Omit<Prisma.PlayerCreateManyInput, 'tournamentId' | 'playerNumber' | 'status'>
 
+/** Ends a roster transaction with a ready-made response (rolls everything back). */
+export class RosterRefusal extends Error {
+  constructor(readonly response: Response) {
+    super('roster change refused')
+  }
+}
+
 /**
- * Inserts players with sequential player numbers in ONE transaction: all or
- * nothing, one round trip instead of one per row. Returns null when a
- * concurrent insert took the same numbers (the unique index on
- * tournamentId+playerNumber rejects it) — the caller should ask for a retry.
+ * Inserts players with the next free player numbers, all or nothing, in ONE
+ * transaction that holds the tournament's roster lock (lockRoster):
+ *  - the Free-plan player limit is checked inside it, so parallel requests
+ *    can't overshoot it, and numbering can't collide;
+ *  - `rows` may be a function that prepares them inside the transaction (e.g.
+ *    claiming registrations), and `after` runs before commit (e.g. linking
+ *    registrations to the new players) — a failure anywhere undoes it all.
+ * Throw RosterRefusal from `rows`/`after` to answer with that response.
+ * Returns the players (in input order), or the response to send.
  */
-export async function insertPlayersNumbered(tournamentId: string, rows: NewPlayerInput[]): Promise<Player[] | null> {
+export async function insertPlayersNumbered(
+  tournament: { id: string; plan: string },
+  rows: NewPlayerInput[] | ((tx: DbTx) => Promise<NewPlayerInput[]>),
+  after?: (tx: DbTx, created: Player[]) => Promise<void>,
+): Promise<Player[] | Response> {
   try {
-    return await db.$transaction(async (tx) => {
-      const maxAgg = await tx.player.aggregate({ where: { tournamentId }, _max: { playerNumber: true } })
-      let nextNumber = (maxAgg._max.playerNumber ?? 0) + 1
-      const created = await tx.player.createManyAndReturn({
-        data: rows.map((p) => ({ ...p, tournamentId, playerNumber: nextNumber++, status: 'AVAILABLE' })),
-      })
-      return created.sort((a, b) => a.playerNumber - b.playerNumber)
-    })
+    return await db.$transaction(
+      async (tx) => {
+        await lockRoster(tx, tournament.id)
+        const list = typeof rows === 'function' ? await rows(tx) : rows
+        if (list.length === 0) return []
+        const overLimit = await assertWithinPlan(tournament, { players: list.length }, tx)
+        if (overLimit) throw new RosterRefusal(overLimit)
+        const maxAgg = await tx.player.aggregate({ where: { tournamentId: tournament.id }, _max: { playerNumber: true } })
+        let nextNumber = (maxAgg._max.playerNumber ?? 0) + 1
+        const created = (
+          await tx.player.createManyAndReturn({
+            data: list.map((p) => ({ ...p, tournamentId: tournament.id, playerNumber: nextNumber++, status: 'AVAILABLE' })),
+          })
+        ).sort((a, b) => a.playerNumber - b.playerNumber)
+        if (after) await after(tx, created)
+        return created
+      },
+      { timeout: 20_000 },
+    )
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return null
+    if (e instanceof RosterRefusal) return e.response
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return jsonError(PLAYER_NUMBER_CONFLICT, 409)
     throw e
   }
 }

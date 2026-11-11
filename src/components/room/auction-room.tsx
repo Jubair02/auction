@@ -264,6 +264,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
               socketToken: jr.socketToken,
               at: Date.now(),
               userId: useAppStore.getState().user?.id ?? null,
+              staff: jr.identity?.staff ?? null,
             }
             saveRoomIdentity(roomCode, ident)
             setCanOrganize(true)
@@ -329,6 +330,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
         socketToken: jr.socketToken,
         at: Date.now(),
         userId: useAppStore.getState().user?.id ?? null,
+        staff: jr.identity?.staff ?? null,
       }
       saveRoomIdentity(roomCode, ident)
       setIdentity(ident)
@@ -493,7 +495,7 @@ export default function AuctionRoom({ roomCode }: { roomCode: string }) {
           {/* A crash inside the live layouts keeps the header and offers "Reload room". */}
           <ErrorBoundary variant="room" key={`${roomCode}:${role}`}>
             {role === 'ORGANIZER' ? (
-              <OrganizerLayout state={state} sock={sock} />
+              <OrganizerLayout state={state} sock={sock} canUndo={identity?.staff !== 'AUCTIONEER'} />
             ) : role === 'MANAGER' ? (
               <ManagerLayout state={state} sock={sock} myTeam={myTeam} />
             ) : (
@@ -511,7 +513,8 @@ type LiveState = RoomState
 
 // ---------- layouts ----------
 
-function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
+/** `canUndo`: false for auctioneers — re-auctioning a sale and reopening are for co-organizers and up. */
+function OrganizerLayout({ state, sock, canUndo }: { state: LiveState; sock: Sock; canUndo: boolean }) {
   const canSelect = state.status === 'LIVE' && !state.currentPlayer
   // Pool actions (put on block, re-auction) explain a refused or unconfirmed send too.
   const poolAction = useOrganizerAction(sock.organizerAction)
@@ -532,13 +535,14 @@ function OrganizerLayout({ state, sock }: { state: LiveState; sock: Sock }) {
           onAction={sock.organizerAction}
           clockOffset={sock.clockOffset}
           online={sock.connected && sock.joined}
+          canReopen={canUndo}
         />
         <RoomSideTabs state={state} notifications={sock.notifications} tabs={['teams', 'people', 'activity']} />
       </div>
 
       <div className="space-y-3 lg:col-start-1 lg:row-start-2">
         <PoolKpiStrip state={state} />
-        <PlayerPoolPanel state={state} canSelect={canSelect} onAction={poolAction} />
+        <PlayerPoolPanel state={state} canSelect={canSelect} canReauction={canUndo} onAction={poolAction} />
       </div>
     </div>
   )

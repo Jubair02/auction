@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { sportLabel, type Sport } from '@/lib/types'
-import { CheckCircle2, ClipboardSignature, Loader2, MapPin } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { playerRoleLabel, sportLabel, type Sport } from '@/lib/types'
+import { ArrowLeft, CheckCircle2, ClipboardSignature, Loader2, MapPin } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ImageUpload } from '@/components/shared/image-upload'
+import { AppLink } from '@/components/shared/app-link'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT, formatDate } from '@/lib/format'
 import type { PaymentMethod } from '@/lib/types'
@@ -52,6 +53,7 @@ type RegisterPlayerStrings = {
   smsConsent: string
   privacy: string
   registeredPaid: string
+  backHome: string
 }
 
 const STRINGS = {
@@ -86,6 +88,7 @@ const STRINGS = {
     smsConsent: 'Send me SMS updates about my registration and the auction',
     privacy: 'Privacy',
     registeredPaid: 'The organizer will check your payment too.',
+    backHome: 'Back to home',
   },
   bn: {
     loadFailed: 'পেজটি খোলা যায়নি।',
@@ -118,6 +121,7 @@ const STRINGS = {
     smsConsent: 'আমার নিবন্ধন ও নিলাম নিয়ে আমাকে SMS-এ জানাবেন',
     privacy: 'গোপনীয়তা নীতি',
     registeredPaid: 'আয়োজক আপনার পেমেন্টও যাচাই করবেন।',
+    backHome: 'হোমে ফিরে যান',
   },
 } satisfies Strings<RegisterPlayerStrings>
 
@@ -150,10 +154,28 @@ export default function RegisterPlayer({ code }: { code: string }) {
   const [payment, setPayment] = useState<PaymentFieldsValue>({ method: null, trxId: '', sender: '' })
   const paymentError = usePaymentFieldsError()
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setErrorText] = useState<string | null>(null)
+  // Bumped on every error, so the same message twice still brings the alert back into view.
+  const [errorTick, setErrorTick] = useState(0)
+  const errorRef = useRef<HTMLDivElement>(null)
   const [done, setDone] = useState(false)
   const t = useStrings(STRINGS)
   const lang = useLang()
+
+  function setError(message: string | null) {
+    setErrorText(message)
+    if (message) setErrorTick((n) => n + 1)
+  }
+
+  // The alert sits at the top of a long form — scroll to it and move focus there.
+  useEffect(() => {
+    if (!errorTick) return
+    const el = errorRef.current
+    if (!el) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' })
+    el.focus({ preventScroll: true })
+  }, [errorTick])
 
   useEffect(() => {
     let cancelled = false
@@ -209,6 +231,11 @@ export default function RegisterPlayer({ code }: { code: string }) {
             <Alert variant="destructive">
               <AlertDescription>{loadError}</AlertDescription>
             </Alert>
+            <Button variant="ghost" className="mt-3 w-full" asChild>
+              <AppLink href="/">
+                <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {t.backHome}
+              </AppLink>
+            </Button>
           </CardContent>
         ) : !info ? (
           <CardContent className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
@@ -246,13 +273,20 @@ export default function RegisterPlayer({ code }: { code: string }) {
                   </p>
                 </div>
               ) : !info.open ? (
-                <Alert>
-                  <AlertDescription>{t.closed}</AlertDescription>
-                </Alert>
+                <>
+                  <Alert>
+                    <AlertDescription>{t.closed}</AlertDescription>
+                  </Alert>
+                  <Button variant="ghost" className="mt-3 w-full" asChild>
+                    <AppLink href="/">
+                      <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden /> {t.backHome}
+                    </AppLink>
+                  </Button>
+                </>
               ) : (
                 <form onSubmit={submit} className="space-y-4" noValidate>
                   {error ? (
-                    <Alert variant="destructive">
+                    <Alert ref={errorRef} tabIndex={-1} variant="destructive" className="scroll-mt-20 outline-none">
                       <AlertDescription>{error}</AlertDescription>
                     </Alert>
                   ) : null}
@@ -274,7 +308,7 @@ export default function RegisterPlayer({ code }: { code: string }) {
                       <SelectContent>
                         {info.roles.map((r) => (
                           <SelectItem key={r} value={r}>
-                            {r}
+                            {playerRoleLabel(r, lang)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -317,7 +351,8 @@ export default function RegisterPlayer({ code }: { code: string }) {
                   </Button>
                   <p className="text-center text-xs text-muted-foreground">
                     {t.phonePrivacy}{' '}
-                    <a href="/privacy" className="font-medium underline underline-offset-2 hover:text-foreground">
+                    {/* A new tab, so reading it doesn't wipe the half-filled form. */}
+                    <a href="/privacy" target="_blank" rel="noopener" className="font-medium underline underline-offset-2 hover:text-foreground">
                       {t.privacy}
                     </a>
                   </p>

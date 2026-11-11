@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
-import { assertWithinPlan } from '@/lib/plans'
+import { assertWithinPlan, lockRoster } from '@/lib/plans'
 import type { TeamDTO } from '@/lib/types'
 import {
   coercePositiveInt,
@@ -81,19 +81,32 @@ export async function POST(req: Request, { params }: RouteParams) {
     valid.push({ name: name.slice(0, 60), color, captainName, logoUrl, budget, maxSquad, minSquad })
   }
 
+  // Early, friendly check; repeated below under the roster lock.
   const overLimit = await assertWithinPlan(loaded.tournament, { teams: valid.length })
   if (overLimit) return overLimit
 
-  const created: TeamDTO[] = []
-  for (const t of valid) {
-    const team = await db.team.create({
-      data: { ...t, tournamentId: id, spent: 0 },
-      include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
-    })
-    created.push(serializeTeam(team))
-  }
+  // All teams or none, and the Free-plan count is binding: the roster lock makes
+  // parallel requests take turns instead of each passing the same count.
+  const result = await db.$transaction(
+    async (tx) => {
+      await lockRoster(tx, id)
+      const refused = await assertWithinPlan(loaded.tournament, { teams: valid.length }, tx)
+      if (refused) return refused
+      const teams: TeamDTO[] = []
+      for (const t of valid) {
+        const team = await tx.team.create({
+          data: { ...t, tournamentId: id, spent: 0 },
+          include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
+        })
+        teams.push(serializeTeam(team))
+      }
+      return teams
+    },
+    { timeout: 20_000 },
+  )
+  if (result instanceof Response) return result
 
-  return Response.json({ created: created.length, teams: created }, { status: 201 })
+  return Response.json({ created: result.length, teams: result }, { status: 201 })
 }
 
 function coerceIntNonNegative(value: unknown): number | null {
