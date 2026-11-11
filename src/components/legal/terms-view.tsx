@@ -5,7 +5,7 @@ import { AlertTriangle, ScrollText } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { AppLink } from '@/components/shared/app-link'
 import { BackButton } from '@/components/shared/back-button'
-import { useCachedGet } from '@/lib/api-cache'
+import { useSupportPhone } from '@/components/shared/site-settings'
 import { formatBDT } from '@/lib/format'
 import { type Lang, useLang } from '@/lib/i18n'
 import { usePlanNumbers } from '@/lib/plan-numbers'
@@ -339,8 +339,7 @@ function doc(lang: Lang, price: string, supportPhone: string | null) {
 export default function TermsView() {
   const lang = useLang()
   const plans = usePlanNumbers()
-  const { data } = useCachedGet<{ settings: Record<string, string> }>('/api/settings')
-  const supportPhone = data?.settings?.supportPhone?.trim() || null
+  const supportPhone = useSupportPhone()
   const page = doc(lang, formatBDT(plans.proPrice), supportPhone)
 
   // /terms#refunds (linked from pricing and the upgrade dialog) opens at that section.

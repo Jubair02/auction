@@ -1,6 +1,8 @@
+import { after } from 'next/server'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { track } from '@/lib/analytics'
+import { notifyPaymentDecision } from '@/lib/notify'
 import { readJson, requireSessionRole } from '../../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -9,6 +11,8 @@ type RouteParams = { params: Promise<{ id: string }> }
 
 // PATCH /api/admin/payments/:id {action: 'approve'|'reject', note?} — ADMIN only.
 // Approving makes the tournament Pro. Only a PENDING payment can be reviewed, once.
+// The note is stored on the payment (reviewNote): the organizer sees it with the
+// decision on their tournament page, and gets an SMS about the decision.
 export async function PATCH(req: Request, { params }: RouteParams) {
   const { id } = await params
   const auth = await requireSessionRole('ADMIN')
@@ -33,6 +37,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     // Compare-and-swap: a second admin tab can't review the same payment twice.
     const claimed = await db.payment.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'REJECTED', ...review } })
     if (claimed.count === 0) return jsonError('This payment was already reviewed', 409)
+    after(() => notifyPaymentDecision(payment, 'REJECTED', note))
     return Response.json({ ok: true, status: 'REJECTED' })
   }
 
@@ -49,6 +54,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     return true
   })
   if (!approved) return jsonError('This payment was already reviewed', 409)
+  after(() => notifyPaymentDecision(payment, 'APPROVED', note))
 
   await track('pro_activated', {
     userId: payment.userId,

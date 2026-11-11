@@ -133,6 +133,11 @@ const EXACT: Record<string, string> = {
   'Could not add the match. Please try again.': 'ম্যাচ যোগ করা যায়নি। আবার চেষ্টা করুন।',
   'Days between rounds must be from 0 to 60': 'রাউন্ডের মাঝে ০ থেকে ৬০ দিন রাখা যায়।',
   'Each player can have only one stat line': 'প্রতিটি খেলোয়াড়ের একটিই পরিসংখ্যান সারি থাকতে পারে।',
+  'Provide "supportPhone" as a string': 'সাপোর্ট নম্বর দিন।',
+  'Support number must be a phone number, e.g. 01712345678 or a hotline like 16XXX':
+    'সাপোর্ট নম্বর একটি ফোন নম্বর হতে হবে, যেমন 01712345678 বা 16XXX-এর মতো হটলাইন।',
+  'CSV import is not available on the Free plan. Upgrade this tournament to Pro to import players from a CSV file.':
+    'ফ্রি প্ল্যানে CSV ইমপোর্ট নেই। CSV ফাইল থেকে খেলোয়াড় ইমপোর্ট করতে এই টুর্নামেন্ট প্রো-তে আপগ্রেড করুন।',
   'Enter both scores, or pick another result type': 'দুই দলের স্কোর দিন, অথবা অন্য ধরনের ফলাফল বেছে নিন।',
   'Fixtures were being changed at the same moment. Please try again.': 'একই সময়ে ফিকশ্চার বদলানো হচ্ছিল। আবার চেষ্টা করুন।',
   'Group names must be 1–20 letters or numbers, e.g. A or B': 'গ্রুপের নাম ১–২০টি অক্ষর বা সংখ্যা হতে হবে, যেমন A বা B।',

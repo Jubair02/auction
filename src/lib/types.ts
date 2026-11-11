@@ -531,6 +531,8 @@ export interface PlanInfo {
 }
 
 export type PaymentStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+/** Payments per status (ALL = every payment), counted in the database (GET /api/admin/payments). */
+export type PaymentCounts = Record<PaymentStatus | 'ALL', number>
 
 /** A manual bKash / Nagad payment for a tournament's Pro plan. */
 export interface PaymentDTO {

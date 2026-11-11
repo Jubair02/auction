@@ -5,6 +5,7 @@
 // alone would not update it — an admin save also tells mounted readers to refetch.
 import { useEffect } from 'react'
 import { invalidateCached, useCachedGet } from '@/lib/api-cache'
+import { SUPPORT_PHONE_KEY } from '@/lib/support-phone'
 
 const SITE_SETTINGS_URL = '/api/settings'
 const CHANGED_EVENT = 'ng:site-settings-changed'
@@ -24,4 +25,13 @@ export function useSiteSettings(): Record<string, string> {
     return () => window.removeEventListener(CHANGED_EVENT, onChange)
   }, [refetch])
   return data?.settings ?? {}
+}
+
+/**
+ * The site's support number as set by an admin (Admin → Settings or Edit
+ * profile), or null when none is set. Every page that shows it reads it here,
+ * so a change appears everywhere at once.
+ */
+export function useSupportPhone(): string | null {
+  return useSiteSettings()[SUPPORT_PHONE_KEY]?.trim() || null
 }

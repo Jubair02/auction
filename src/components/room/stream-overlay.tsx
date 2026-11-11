@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock3, Crosshair, Eye, Gavel, Sparkles, Tag, Trophy, Users } from 'lucide-react'
+import { Clock3, Crosshair, Eye, Gavel, Lock, Sparkles, Tag, Trophy, Users } from 'lucide-react'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
 import { useAuctionSocket, useCountdown } from '@/lib/use-auction-socket'
@@ -55,7 +55,9 @@ const STRINGS = {
     playersSold: 'PLAYERS SOLD',
     totalSpent: 'TOTAL SPENT',
     biggestBuy: 'BIGGEST BUY',
-    poweredBy: ['Powered by', ''] as [string, string],
+    proOnlyTag: 'PRO FEATURE',
+    proOnlyTitle: 'The stream overlay is a Pro feature',
+    proOnlyDesc: 'Upgrade this tournament to Pro to show the live auction on your stream.',
   },
   bn: {
     roomNotFound: (code: string) => `রুম ${code} পাওয়া যায়নি`,
@@ -99,7 +101,9 @@ const STRINGS = {
     playersSold: 'বিক্রি হওয়া খেলোয়াড়',
     totalSpent: 'মোট খরচ',
     biggestBuy: 'সবচেয়ে বড় কেনা',
-    poweredBy: ['', 'দ্বারা চালিত'] as [string, string],
+    proOnlyTag: 'PRO ফিচার',
+    proOnlyTitle: 'স্ট্রিম ওভারলে একটি Pro ফিচার',
+    proOnlyDesc: 'আপনার স্ট্রিমে লাইভ নিলাম দেখাতে এই টুর্নামেন্ট Pro-তে আপগ্রেড করুন।',
   },
 } satisfies Strings<{
   roomNotFound: (code: string) => string
@@ -143,8 +147,10 @@ const STRINGS = {
   playersSold: string
   totalSpent: string
   biggestBuy: string
-  /** Text before / after the brand name. */
-  poweredBy: [string, string]
+  /** Shown instead of the overlay on a Free tournament. */
+  proOnlyTag: string
+  proOnlyTitle: string
+  proOnlyDesc: string
 }>
 
 type T = (typeof STRINGS)['en']
@@ -195,10 +201,12 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
     void (async () => {
       try {
         const info = await apiGet<RoomInfo & { branding?: PublicBranding }>(`/api/rooms/${roomCode}`)
-        if (!cancelled) {
-          setPlan(info.plan === 'PRO' ? 'PRO' : 'FREE')
-          setBranding(info.branding ?? null)
-        }
+        if (cancelled) return
+        setPlan(info.plan === 'PRO' ? 'PRO' : 'FREE')
+        setBranding(info.branding ?? null)
+        // The stream overlay is a Pro feature: a Free tournament's overlay shows
+        // that and never takes a seat in the room.
+        if (info.plan !== 'PRO') return
         const res = await apiPost<JoinResult>(`/api/rooms/${roomCode}/join`, { role: 'viewer', name: OVERLAY_NAME })
         if (!cancelled) setToken(res.socketToken)
       } catch (e) {
@@ -234,8 +242,23 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
       </OverlayShell>
     )
   }
-  // FREE: the "Powered by NeelamGhor" mark. PRO shows no NeelamGhor marks at all.
-  const watermark = plan === 'FREE' ? <PoweredBy /> : null
+  if (plan === 'FREE') {
+    return (
+      <OverlayShell green={green}>
+        <div className="absolute inset-x-[calc(2*var(--u,1vw))] bottom-[calc(2.5*var(--u,1vw))]">
+          <Card accent={brandPalette(null)} green={green} tab={t.proOnlyTag}>
+            <div className="flex items-center gap-[calc(1.4*var(--u,1vw))]">
+              <Lock className="h-[calc(2.6*var(--u,1vw))] w-[calc(2.6*var(--u,1vw))] shrink-0 text-amber-300" aria-hidden />
+              <div className="min-w-0">
+                <p className="text-[calc(2*var(--u,1vw))] font-black leading-tight">{t.proOnlyTitle}</p>
+                <p className="mt-[calc(0.4*var(--u,1vw))] text-[calc(1.2*var(--u,1vw))] text-white/75">{t.proOnlyDesc}</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </OverlayShell>
+    )
+  }
   const sponsors =
     plan === 'PRO' && branding && branding.sponsors.length > 0 ? (
       <SponsorStrip
@@ -248,10 +271,7 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
 
   if (!sock.state) {
     return (
-      <OverlayShell green={green}>
-        {sponsors}
-        {watermark}
-      </OverlayShell>
+      <OverlayShell green={green}>{sponsors}</OverlayShell>
     )
   }
   return (
@@ -262,22 +282,7 @@ export default function StreamOverlay({ roomCode, green }: { roomCode: string; g
       brandColor={plan === 'PRO' ? (branding?.brandColor ?? null) : null}
     >
       {sponsors}
-      {watermark}
     </OverlayContent>
-  )
-}
-
-/** Free-plan mark: small, bottom-right, below the lower third — never over the action. */
-function PoweredBy() {
-  const t = useStrings(STRINGS)
-  return (
-    <div className="pointer-events-none absolute bottom-[calc(0.6*var(--u,1vw))] right-[calc(2*var(--u,1vw))] flex items-center gap-[calc(0.4*var(--u,1vw))] rounded-full bg-[#0b0a1a]/70 px-[calc(0.8*var(--u,1vw))] py-[calc(0.2*var(--u,1vw))] text-[calc(0.75*var(--u,1vw))] font-semibold text-white/80 ring-1 ring-white/10">
-      {t.poweredBy[0] ? <span>{t.poweredBy[0]}</span> : null}
-      <span className="font-extrabold text-white">
-        Neelam<span className="text-teal-300">Ghor</span>
-      </span>
-      {t.poweredBy[1] ? <span>{t.poweredBy[1]}</span> : null}
-    </div>
   )
 }
 

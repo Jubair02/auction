@@ -5,6 +5,7 @@ import { ArrowUpRight, Gavel, MessageCircle, Phone } from 'lucide-react'
 import { AppLink } from '@/components/shared/app-link'
 import { DataSaverToggle } from '@/components/shared/data-saver'
 import { DASHBOARD_PATH } from '@/lib/access'
+import { SUPPORT_PHONE_KEY, telHref, whatsappNumber } from '@/lib/support-phone'
 import { type Strings, useStrings } from '@/lib/i18n'
 import { navigate } from '@/lib/router'
 import { useAuthState } from '@/lib/store'
@@ -101,12 +102,6 @@ function jumpTo(e: MouseEvent<HTMLAnchorElement>, path: string, id: string) {
   window.requestAnimationFrame(wait)
 }
 
-/** A Bangladeshi mobile number (01XXXXXXXXX, optionally +880) as wa.me digits, else null. */
-function whatsappNumber(phone: string): string | null {
-  const digits = phone.replace(/\D/g, '')
-  const local = digits.startsWith('880') ? digits.slice(2) : digits
-  return /^01[3-9]\d{8}$/.test(local) ? `88${local}` : null
-}
 
 const linkClass =
   'group inline-flex min-h-8 items-center gap-1.5 rounded-sm text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
@@ -133,7 +128,8 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
   const t = useStrings(STRINGS)
   const { user } = useAuthState()
   const siteName = settings.siteName?.trim() || 'NeelamGhor'
-  const phone = settings.supportPhone?.trim() || ''
+  // The admin-set support number (lib/support-phone.ts); nothing shows when it's not set.
+  const phone = settings[SUPPORT_PHONE_KEY]?.trim() || ''
   const wa = phone ? whatsappNumber(phone) : null
 
   return (
@@ -210,7 +206,7 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
               <>
                 <li>
                   {/* Admin → Settings → support phone */}
-                  <a className={linkClass} href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
+                  <a className={linkClass} href={telHref(phone)}>
                     <Phone className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
                     <span className="transition-transform duration-200 group-hover:translate-x-0.5">{t.call(phone)}</span>
                   </a>

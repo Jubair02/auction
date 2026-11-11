@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Clock, Copy, Crown, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Clock, Copy, Crown, Loader2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -26,9 +26,10 @@ const STRINGS = {
     unlocks: 'Pro unlocks',
     perks: [
       'Unlimited teams and players',
+      'Import players from a CSV file',
       'SMS updates to players and managers',
       'Sponsor logos on the room, stream overlay and share cards',
-      'No “Powered by NeelamGhor” watermark on the stream overlay',
+      'Stream overlay for Facebook / YouTube Live (OBS)',
     ],
     refundPolicy: 'Refund policy',
     step1: 'Step 1 — Send the money',
@@ -50,6 +51,8 @@ const STRINGS = {
     senderInvalid: 'Enter the mobile number you paid from, e.g. 01712345678.',
     pickMethod: 'Choose bKash or Nagad.',
     underReview: 'Payment under review',
+    lastRejected: (trx: string) => `Your last payment (TrxID ${trx}) was not approved`,
+    adminNote: 'Note from NeelamGhor:',
     underReviewDesc: (method: string, trx: string, date: string) =>
       `${method} payment ${trx}, submitted ${date}. Pro turns on as soon as an admin verifies it.`,
     notSetUp: 'Online payment isn’t set up yet. Please contact NeelamGhor support to upgrade.',
@@ -64,9 +67,10 @@ const STRINGS = {
     unlocks: 'Pro-তে যা পাবেন',
     perks: [
       'সীমাহীন দল ও খেলোয়াড়',
+      'CSV ফাইল থেকে খেলোয়াড় ইমপোর্ট',
       'খেলোয়াড় ও ম্যানেজারদের SMS আপডেট',
       'রুম, স্ট্রিম ওভারলে ও শেয়ার কার্ডে স্পনসরের লোগো',
-      'স্ট্রিম ওভারলেতে “Powered by NeelamGhor” জলছাপ থাকবে না',
+      'Facebook / YouTube Live-এর জন্য স্ট্রিম ওভারলে (OBS)',
     ],
     refundPolicy: 'রিফান্ড নীতি',
     step1: 'ধাপ ১ — টাকা পাঠান',
@@ -88,6 +92,8 @@ const STRINGS = {
     senderInvalid: 'যে মোবাইল নম্বর থেকে পাঠিয়েছেন সেটি দিন, যেমন 01712345678।',
     pickMethod: 'bKash বা Nagad বেছে নিন।',
     underReview: 'পেমেন্ট যাচাই হচ্ছে',
+    lastRejected: (trx: string) => `আপনার আগের পেমেন্ট (TrxID ${trx}) অনুমোদিত হয়নি`,
+    adminNote: 'NeelamGhor-এর নোট:',
     underReviewDesc: (method: string, trx: string, date: string) =>
       `${method} পেমেন্ট ${trx}, জমা ${date}। অ্যাডমিন যাচাই করলেই Pro চালু হবে।`,
     notSetUp: 'অনলাইন পেমেন্ট এখনো চালু হয়নি। আপগ্রেড করতে NeelamGhor সাপোর্টে যোগাযোগ করুন।',
@@ -121,6 +127,8 @@ const STRINGS = {
   senderInvalid: string
   pickMethod: string
   underReview: string
+  lastRejected: (trx: string) => string
+  adminNote: string
   underReviewDesc: (method: string, trx: string, date: string) => string
   notSetUp: string
   loadFailed: string
@@ -343,6 +351,9 @@ function UpgradeBody({
   const fieldsError = usePaymentFieldsError()
   const method = fields.method ?? (methods.length === 1 ? methods[0] : null)
   const pending = payments.data?.payments.find((p) => p.status === 'PENDING')
+  // Paying again after a rejection: show why the last one was turned down.
+  const lastPayment = payments.data?.payments[0]
+  const lastRejected = !pending && lastPayment?.status === 'REJECTED' ? lastPayment : null
 
   const price = plans.data ? formatBDT(plans.data.proPrice) : '…'
 
@@ -401,6 +412,19 @@ function UpgradeBody({
         <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">{t.notSetUp}</p>
       ) : step === 1 ? (
         <div className="space-y-4">
+          {lastRejected ? (
+            <div role="note" className="flex gap-2.5 rounded-lg border border-rose-300 bg-rose-50 p-3 text-rose-950 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-50">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden />
+              <div className="min-w-0 text-sm">
+                <p className="font-semibold">{t.lastRejected(lastRejected.trxId)}</p>
+                {lastRejected.reviewNote ? (
+                  <p className="mt-0.5 break-words">
+                    <span className="font-medium">{t.adminNote}</span> {lastRejected.reviewNote}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           <div>
             <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">{t.unlocks}</p>
             <ul className="space-y-1">

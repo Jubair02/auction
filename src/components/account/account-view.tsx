@@ -487,7 +487,7 @@ function AccountDetails() {
               <Field icon={CalendarDays} label={t.joined} value={formatDate(user.createdAt, false, lang)} />
               <Field icon={Receipt} label={t.paymentsMade} value={t.paymentsValue(data.payments, data.pendingPayments ?? 0)} mono />
             </dl>
-            <ProfileActions user={user} onSaved={() => void refetch()} />
+            <ProfileActions user={user} isAdmin={user.role === 'ADMIN'} onSaved={() => void refetch()} />
           </Panel>
 
           <Panel title={t.dataTitle} icon={Download}>

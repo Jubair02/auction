@@ -106,6 +106,15 @@ export function PlayersTab({
 
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  // CSV import is a Pro feature: on Free the buttons explain that and offer the upgrade.
+  const importLocked = plan === 'FREE'
+  const openImport = () => {
+    if (!importLocked) return setImportOpen(true)
+    toast.info(t.csvProTitle, {
+      description: canUpgrade ? t.csvProOwner : t.csvProAskOwner,
+      action: canUpgrade ? { label: t.upgrade, onClick: () => setUpgradeOpen(true) } : undefined,
+    })
+  }
   const [saving, setSaving] = useState(false)
 
   const [form, setForm] = useState<PlayerFormState>(() => emptyForm(auctionMode, basePrice))
@@ -261,7 +270,8 @@ export function PlayersTab({
         totalCount={players.length}
         freeMax={freeMax}
         canUpgrade={canUpgrade}
-        onImport={() => setImportOpen(true)}
+        onImport={openImport}
+        importLocked={importLocked}
         onAdd={() => setAddOpen(true)}
         onUpgrade={() => setUpgradeOpen(true)}
       />
@@ -273,7 +283,8 @@ export function PlayersTab({
         filtered={filtered}
         auctionMode={auctionMode}
         readOnly={readOnly}
-        onImport={() => setImportOpen(true)}
+        onImport={openImport}
+        importLocked={importLocked}
         onAdd={() => setAddOpen(true)}
         onEdit={openEdit}
         onDelete={(p) => setDeleteTarget(p)}

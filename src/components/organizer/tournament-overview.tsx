@@ -30,6 +30,7 @@ import type { PaymentDTO, PlanInfo, TournamentDetail } from '@/lib/types'
 import { type Lang, type Strings, useStrings, useLang } from '@/lib/i18n'
 import { useCachedGet } from '@/lib/api-cache'
 import { PLANS_URL, paymentsUrl, UpgradeDialog } from '@/components/organizer/upgrade-dialog'
+import { PaymentDecisionNotice, PaymentHistory } from '@/components/organizer/payment-history'
 import { tournamentTypeLabel } from '@/lib/tournament-types'
 
 type OverviewStrings = {
@@ -194,11 +195,11 @@ const STRINGS = {
     freePlan: 'Free',
     proPlan: 'Pro',
     proSince: (date) => `Pro since ${date}`,
-    proPerks: 'Unlimited teams and players, SMS updates and no watermark on the stream overlay.',
+    proPerks: 'Unlimited teams and players, SMS updates and the stream overlay for live streams.',
     usageTeams: (n, max) => `Teams ${n} / ${max}`,
     usagePlayers: (n, max) => `Players ${n} / ${max}`,
     usageAria: (what, pct) => `${what}: ${pct}% of the free limit used`,
-    freeUnlocks: 'Pro unlocks unlimited teams and players, SMS updates to players, and removes the watermark from the stream overlay.',
+    freeUnlocks: 'Pro unlocks unlimited teams and players, SMS updates to players, and the stream overlay for Facebook / YouTube Live.',
     upgradeFor: (price) => `Upgrade to Pro — ${price}`,
     paymentReview: 'Payment under review',
     paymentReviewDesc: 'Pro turns on as soon as an admin verifies your Transaction ID.',
@@ -279,11 +280,11 @@ const STRINGS = {
     freePlan: 'ফ্রি',
     proPlan: 'Pro',
     proSince: (date) => `${date} থেকে Pro`,
-    proPerks: 'সীমাহীন দল ও খেলোয়াড়, SMS আপডেট, আর স্ট্রিম ওভারলেতে কোনো জলছাপ নেই।',
+    proPerks: 'সীমাহীন দল ও খেলোয়াড়, SMS আপডেট, আর লাইভ স্ট্রিমের জন্য স্ট্রিম ওভারলে।',
     usageTeams: (n, max) => `দল ${n} / ${max}`,
     usagePlayers: (n, max) => `খেলোয়াড় ${n} / ${max}`,
     usageAria: (what, pct) => `${what}: ফ্রি সীমার ${pct}% ব্যবহার হয়েছে`,
-    freeUnlocks: 'Pro-তে পাবেন সীমাহীন দল ও খেলোয়াড়, খেলোয়াড়দের SMS আপডেট, আর স্ট্রিম ওভারলেতে জলছাপ থাকবে না।',
+    freeUnlocks: 'Pro-তে পাবেন সীমাহীন দল ও খেলোয়াড়, খেলোয়াড়দের SMS আপডেট, আর Facebook / YouTube Live-এর জন্য স্ট্রিম ওভারলে।',
     upgradeFor: (price) => `Pro-তে আপগ্রেড — ${price}`,
     paymentReview: 'পেমেন্ট যাচাই হচ্ছে',
     paymentReviewDesc: 'অ্যাডমিন আপনার ট্রানজেকশন আইডি যাচাই করলেই Pro চালু হবে।',
@@ -686,6 +687,8 @@ export function TournamentOverview({ data, setTab }: { data: TournamentDetail; s
   const totalBudget = teams.reduce((n, tm) => n + tm.budget, 0)
   const spent = teams.reduce((n, tm) => n + tm.spent, 0)
   const managed = teams.filter((tm) => tm.managerUserId).length
+  // Payments are the owner's (and admins') business — the API serves no one else.
+  const seesPayments = data.myAccess === 'OWNER' || data.myAccess === 'ADMIN'
 
   const details = [
     { k: s.rowType, v: tournamentTypeLabel(t.tournamentType, lang) ?? '—' },
@@ -699,6 +702,7 @@ export function TournamentOverview({ data, setTab }: { data: TournamentDetail; s
 
   return (
     <div className="space-y-4">
+      {seesPayments ? <PaymentDecisionNotice tournamentId={t.id} isFree={t.plan !== 'PRO'} /> : null}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label={s.players} value={players.length} hint={s.playersHint(sold, unsold)} />
         <StatCard label={s.teams} value={teams.length} hint={s.teamsHint(managed)} />
@@ -712,6 +716,7 @@ export function TournamentOverview({ data, setTab }: { data: TournamentDetail; s
         <div className="space-y-4">
           <RoomCard data={data} setTab={setTab} />
           <PlanCard data={data} />
+          {seesPayments ? <PaymentHistory tournamentId={t.id} /> : null}
           <Card className="gap-3">
             <CardHeader className="pb-0">
               <CardTitle className="flex items-center gap-2 text-base">

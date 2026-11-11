@@ -216,7 +216,6 @@ async function main() {
   await db.setting.createMany({
     data: [
       { key: 'siteName', value: 'NeelamGhor' },
-      { key: 'supportPhone', value: '01700-000000' },
       { key: 'announcement', value: 'Welcome to NeelamGhor — Bangladesh\u2019s live player auction platform.' },
     ],
   })

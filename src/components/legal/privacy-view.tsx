@@ -5,7 +5,7 @@ import { AlertTriangle, ShieldCheck } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { AppLink } from '@/components/shared/app-link'
 import { BackButton } from '@/components/shared/back-button'
-import { useCachedGet } from '@/lib/api-cache'
+import { useSupportPhone } from '@/components/shared/site-settings'
 import { type Lang, useLang } from '@/lib/i18n'
 
 // A plain-language privacy notice in English and Bangla. It describes what the
@@ -273,8 +273,7 @@ function sections(lang: Lang, supportPhone: string | null): { title: string; int
 
 export default function PrivacyView() {
   const lang = useLang()
-  const { data } = useCachedGet<{ settings: Record<string, string> }>('/api/settings')
-  const supportPhone = data?.settings?.supportPhone?.trim() || null
+  const supportPhone = useSupportPhone()
   const doc = sections(lang, supportPhone)
 
   return (

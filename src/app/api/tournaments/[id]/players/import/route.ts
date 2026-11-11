@@ -66,7 +66,7 @@ interface RowResult {
 }
 
 /**
- * POST /api/tournaments/:id/players/import — CSV bulk import (owner/ADMIN/co-organizer).
+ * POST /api/tournaments/:id/players/import — CSV bulk import (owner/ADMIN/co-organizer), Pro tournaments only (402 on Free).
  *
  * Body: `{ csv }` (CSV text) or `{ rows }` (objects keyed by lower-cased header —
  * name, phone, role, category, baseprice, previousteam — plus an optional `row`
@@ -88,6 +88,11 @@ export async function POST(req: Request, { params }: RouteParams) {
   const loaded = await loadTournamentForOwner(id, user, 'manage')
   if ('response' in loaded) return loaded.response
   const tournament = loaded.tournament
+
+  // CSV import (preview included) is a Pro feature. Free tournaments add players one by one.
+  if (tournament.plan !== 'PRO') {
+    return jsonError('CSV import is not available on the Free plan. Upgrade this tournament to Pro to import players from a CSV file.', 402)
+  }
 
   const body = await readJson(req)
   if (!body) return jsonError('Invalid request body', 400)

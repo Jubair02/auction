@@ -10,7 +10,8 @@ export function FilterChips<K extends string>({
   label: string
   value: K
   onChange: (key: K) => void
-  options: { key: K; label: string; count: number }[]
+  /** `count` left out while it isn't known yet (shown as nothing rather than a wrong 0). */
+  options: { key: K; label: string; count?: number }[]
 }) {
   return (
     <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
@@ -27,7 +28,8 @@ export function FilterChips<K extends string>({
               : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground'
           )}
         >
-          {o.label} <span className="tabular-nums opacity-75">{o.count}</span>
+          {o.label}
+          {o.count === undefined ? null : <> <span className="tabular-nums opacity-75">{o.count}</span></>}
         </button>
       ))}
     </div>

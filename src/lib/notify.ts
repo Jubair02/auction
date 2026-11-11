@@ -2,7 +2,7 @@
 // enqueue rows; the always-on auction service delivers them (see
 // mini-services/auction-service/outbox.ts). Server-only (uses the database).
 import { db } from '@/lib/db'
-import { smsSafeName } from '@/lib/sms-text'
+import { paymentDecisionSms, smsSafeName } from '@/lib/sms-text'
 import { toSmsNumber } from '@/lib/phone'
 
 export interface EnqueueSmsInput {
@@ -119,4 +119,37 @@ export async function notifyRegistrationDecision(
     tournamentId: tournament.id,
     dedupeKey: `reg-${decision.toLowerCase()}:${reg.id}`,
   })
+}
+
+/**
+ * Texts the organizer that their Pro payment was approved or rejected, with the
+ * admin's note. Platform-to-customer, so it doesn't depend on the tournament's
+ * SMS setting. Goes to the payer's account phone, or the number they paid from.
+ * Never throws (enqueueSms doesn't); once per payment and decision.
+ */
+export async function notifyPaymentDecision(
+  payment: { id: string; userId: string | null; tournamentId: string | null; tournamentName: string; senderNumber: string; trxId: string },
+  decision: 'APPROVED' | 'REJECTED',
+  note: string | null,
+): Promise<void> {
+  try {
+    const [payer, tournament] = await Promise.all([
+      payment.userId ? db.user.findUnique({ where: { id: payment.userId }, select: { phone: true, deletedAt: true } }) : null,
+      payment.tournamentId ? db.tournament.findUnique({ where: { id: payment.tournamentId }, select: { name: true, smsLang: true } }) : null,
+    ])
+    if (payer?.deletedAt) return // a deleted account is never contacted
+    const to = payer?.phone || payment.senderNumber
+    const bn = (tournament?.smsLang ?? 'bn') !== 'en'
+    const name = smsSafeName(tournament?.name ?? payment.tournamentName, bn ? 'আপনার টুর্নামেন্ট' : 'your tournament')
+    const body = paymentDecisionSms({ name, trxId: payment.trxId, decision, note, bn })
+    await enqueueSms({
+      to,
+      body,
+      kind: decision === 'APPROVED' ? 'PAYMENT_APPROVED' : 'PAYMENT_REJECTED',
+      tournamentId: payment.tournamentId,
+      dedupeKey: `payment-${decision.toLowerCase()}:${payment.id}`,
+    })
+  } catch (err) {
+    console.error('[notify] payment decision SMS failed:', (err as Error).message)
+  }
 }

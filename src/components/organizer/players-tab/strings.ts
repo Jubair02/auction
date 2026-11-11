@@ -16,6 +16,11 @@ export type SharedPlayersStrings = {
   upgradeHint: string
   upgradeAskOwner: string
   upgrade: string
+  /** CSV import is a Pro feature. */
+  csvProTitle: string
+  csvProOwner: string
+  csvProAskOwner: string
+  proBadge: string
 }
 
 export const SHARED_STRINGS = {
@@ -34,6 +39,10 @@ export const SHARED_STRINGS = {
     upgradeHint: 'Upgrade this tournament to Pro for unlimited players.',
     upgradeAskOwner: 'Ask the tournament owner to upgrade it to Pro for unlimited players.',
     upgrade: 'Upgrade to Pro',
+    csvProTitle: 'CSV import is not available on the Free plan',
+    csvProOwner: 'Upgrade this tournament to Pro to import players from a CSV file. You can still add players one by one.',
+    csvProAskOwner: 'Ask the tournament owner to upgrade it to Pro to import players from a CSV file. You can still add players one by one.',
+    proBadge: 'Pro',
   },
   bn: {
     cancel: 'বাতিল',
@@ -50,5 +59,9 @@ export const SHARED_STRINGS = {
     upgradeHint: 'সীমাহীন খেলোয়াড়ের জন্য টুর্নামেন্টটি Pro-তে আপগ্রেড করুন।',
     upgradeAskOwner: 'সীমাহীন খেলোয়াড়ের জন্য টুর্নামেন্টের মালিককে Pro-তে আপগ্রেড করতে বলুন।',
     upgrade: 'Pro-তে আপগ্রেড',
+    csvProTitle: 'ফ্রি প্ল্যানে CSV ইমপোর্ট নেই',
+    csvProOwner: 'CSV ফাইল থেকে খেলোয়াড় ইমপোর্ট করতে টুর্নামেন্টটি Pro-তে আপগ্রেড করুন। একজন একজন করে খেলোয়াড় যোগ করা এখনো যাবে।',
+    csvProAskOwner: 'CSV ফাইল থেকে খেলোয়াড় ইমপোর্ট করতে টুর্নামেন্টের মালিককে Pro-তে আপগ্রেড করতে বলুন। একজন একজন করে খেলোয়াড় যোগ করা এখনো যাবে।',
+    proBadge: 'Pro',
   },
 } satisfies Strings<SharedPlayersStrings>

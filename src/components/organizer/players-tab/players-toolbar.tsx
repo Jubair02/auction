@@ -91,6 +91,7 @@ export function PlayersToolbar({
   freeMax,
   canUpgrade,
   onImport,
+  importLocked = false,
   onAdd,
   onUpgrade,
 }: {
@@ -110,6 +111,8 @@ export function PlayersToolbar({
   freeMax: number | null
   canUpgrade: boolean
   onImport: () => void
+  /** Free plan: CSV import is Pro-only (the click explains and offers the upgrade). */
+  importLocked?: boolean
   onAdd: () => void
   onUpgrade: () => void
 }) {
@@ -176,6 +179,11 @@ export function PlayersToolbar({
           <div className="flex gap-2 lg:ml-auto">
             <Button variant="outline" className="min-h-10 flex-1 lg:flex-none" onClick={onImport}>
               <Upload className="mr-1.5 h-4 w-4" aria-hidden /> {t.importCsv}
+              {importLocked ? (
+                <span className="ml-1.5 rounded-[4px] bg-amber-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-300">
+                  {t.proBadge}
+                </span>
+              ) : null}
             </Button>
             <Button className="min-h-10 flex-1 lg:flex-none" onClick={onAdd}>
               <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {t.addPlayer}

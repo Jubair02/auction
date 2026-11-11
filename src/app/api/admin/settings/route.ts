@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { normalizeBdPhone } from '@/lib/phone'
 import { PLAN_SETTING_KEYS } from '@/lib/plans'
+import { SUPPORT_PHONE_KEY, validateSupportPhone } from '@/lib/support-phone'
 import { coercePositiveInt, readJson, requireSessionRole } from '../../_lib/helpers'
 
 export const runtime = 'nodejs'
@@ -33,6 +34,12 @@ function validatePlanSetting(key: string, raw: string): string | undefined | { e
     const phone = normalizeBdPhone(value)
     if (!phone) return { error: `${PHONE_KEYS[key]} must be a Bangladeshi mobile number, e.g. 01712345678` }
     return phone
+  }
+  // The site's support number: the same rules as the Edit profile route (lib/support-phone.ts).
+  if (key === SUPPORT_PHONE_KEY) {
+    const checked = validateSupportPhone(value)
+    if ('error' in checked) return checked
+    return checked.value === '' ? undefined : checked.value
   }
   if (key === PLAN_SETTING_KEYS.instructions) {
     if (value === '') return undefined

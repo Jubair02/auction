@@ -30,6 +30,7 @@ import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { copyText } from '@/lib/clipboard'
 import { SHARED_STRINGS, type SharedStrings } from './strings'
 import { ListSkeleton, loadError, paymentsUrl, type AdminPayment, type PaymentFilter } from './shared'
+import type { PaymentCounts } from '@/lib/types'
 
 const METHOD_LABEL: Record<string, string> = { BKASH: 'bKash', NAGAD: 'Nagad' }
 
@@ -130,10 +131,14 @@ export function PaymentsTab({ onChanged }: { onChanged: () => Promise<void> }) {
   const t = useStrings(STRINGS)
   const lang = useLang()
   const [filter, setFilter] = useState<PaymentFilter>('PENDING')
-  const { data, loading, error, refetch } = useCachedGet<{ payments: AdminPayment[]; pendingCount: number }>(
+  const { data, loading, error, refetch } = useCachedGet<{ payments: AdminPayment[]; pendingCount: number; counts?: PaymentCounts }>(
     paymentsUrl(filter),
     loadError(t.couldNotLoad(t.whatPayments)),
   )
+  // Every response carries all four counts from the database. Keep the latest
+  // ones while another tab's list loads, so the chips never blank out or jump.
+  const [counts, setCounts] = useState<PaymentCounts | null>(data?.counts ?? null)
+  if (data?.counts && data.counts !== counts) setCounts(data.counts)
   const [review, setReview] = useState<{ payment: AdminPayment; action: 'approve' | 'reject' } | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -156,8 +161,6 @@ export function PaymentsTab({ onChanged }: { onChanged: () => Promise<void> }) {
     }
   }
 
-  const pendingCount = data?.pendingCount ?? 0
-
   return (
     <div className="space-y-4">
       <FilterChips<PaymentFilter>
@@ -165,10 +168,10 @@ export function PaymentsTab({ onChanged }: { onChanged: () => Promise<void> }) {
         value={filter}
         onChange={setFilter}
         options={[
-          { key: 'PENDING', label: t.payStatus.PENDING, count: pendingCount },
-          { key: 'APPROVED', label: t.payStatus.APPROVED, count: filter === 'APPROVED' ? (data?.payments.length ?? 0) : 0 },
-          { key: 'REJECTED', label: t.payStatus.REJECTED, count: filter === 'REJECTED' ? (data?.payments.length ?? 0) : 0 },
-          { key: 'ALL', label: t.all, count: filter === 'ALL' ? (data?.payments.length ?? 0) : 0 },
+          { key: 'PENDING', label: t.payStatus.PENDING, count: counts?.PENDING },
+          { key: 'APPROVED', label: t.payStatus.APPROVED, count: counts?.APPROVED },
+          { key: 'REJECTED', label: t.payStatus.REJECTED, count: counts?.REJECTED },
+          { key: 'ALL', label: t.all, count: counts?.ALL },
         ]}
       />
 

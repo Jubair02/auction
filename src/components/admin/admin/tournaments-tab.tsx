@@ -71,7 +71,7 @@ const STRINGS = {
     planDesc: (plan): string =>
       plan === 'PRO'
         ? 'Use this to comp a tournament: it gets every Pro feature straight away.'
-        : 'The Free limits apply again to new teams and players, the watermark returns and SMS stops. Existing teams and players stay.',
+        : 'The Free limits apply again to new teams and players, the stream overlay and SMS stop. Existing teams and players stay.',
     planChanged: (name, plan) => `"${name}" is now on ${plan === 'PRO' ? 'Pro' : 'Free'}`,
     couldNotChangePlan: 'Could not change the plan',
   },
@@ -113,7 +113,7 @@ const STRINGS = {
     planDesc: (plan): string =>
       plan === 'PRO'
         ? 'কোনো টুর্নামেন্টকে বিনামূল্যে Pro দিতে এটি ব্যবহার করুন: সঙ্গে সঙ্গে সব Pro সুবিধা চালু হবে।'
-        : 'নতুন দল ও খেলোয়াড় যোগে আবার ফ্রি প্ল্যানের সীমা খাটবে, জলছাপ ফিরে আসবে এবং SMS বন্ধ হবে। আগের দল ও খেলোয়াড় থেকে যাবে।',
+        : 'নতুন দল ও খেলোয়াড় যোগে আবার ফ্রি প্ল্যানের সীমা খাটবে, স্ট্রিম ওভারলে ও SMS বন্ধ হবে। আগের দল ও খেলোয়াড় থেকে যাবে।',
     planChanged: (name, plan) => `"${name}" এখন ${plan === 'PRO' ? 'Pro' : 'ফ্রি'} প্ল্যানে`,
     couldNotChangePlan: 'প্ল্যান বদলানো যায়নি',
   },

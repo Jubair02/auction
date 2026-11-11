@@ -10,6 +10,7 @@ import {
   History,
   Info,
   Loader2,
+  Lock,
   MessageCircle,
   MessageSquare,
   MonitorPlay,
@@ -141,6 +142,9 @@ const STRINGS = {
       </>
     ) as ReactNode,
     copy: 'Copy',
+    overlayProOnly: 'The stream overlay is a Pro feature. Upgrade this tournament to Pro to show the live auction on Facebook or YouTube Live.',
+    comparePlans: 'Compare plans',
+    proBadge: 'Pro',
   },
   bn: {
     roomCreated: 'নিলামের রুম তৈরি হয়েছে — রুম কোডটি ম্যানেজারদের সাথে শেয়ার করুন!',
@@ -226,6 +230,9 @@ const STRINGS = {
       </>
     ) as ReactNode,
     copy: 'কপি',
+    overlayProOnly: 'স্ট্রিম ওভারলে একটি Pro ফিচার। Facebook বা YouTube Live-এ লাইভ নিলাম দেখাতে এই টুর্নামেন্ট Pro-তে আপগ্রেড করুন।',
+    comparePlans: 'প্ল্যান মিলিয়ে দেখুন',
+    proBadge: 'Pro',
   },
 } satisfies Strings<{
   roomCreated: string
@@ -285,6 +292,9 @@ const STRINGS = {
   overlayTitle: string
   overlayDesc: ReactNode
   copy: string
+  overlayProOnly: string
+  comparePlans: string
+  proBadge: string
 }>
 
 interface SettingsState {
@@ -519,7 +529,7 @@ export function AuctionSetupTab({
 
       <ReadinessCheck players={players} teams={teams} auctionMode={auctionMode} />
 
-      <StreamOverlayCard roomCode={auction.roomCode} />
+      <StreamOverlayCard roomCode={auction.roomCode} pro={smsSettings?.plan === 'PRO'} />
 
       {/* Settings */}
       <Card>
@@ -748,7 +758,7 @@ function SettingsForm({
 /* ------------------------------------------------------------------ */
 
 /** Links for the OBS browser-source overlay used on Facebook / YouTube Live. */
-function StreamOverlayCard({ roomCode }: { roomCode: string }) {
+function StreamOverlayCard({ roomCode, pro }: { roomCode: string; pro: boolean }) {
   const t = useStrings(STRINGS)
   const base = `${window.location.origin}/overlay/${roomCode}`
   const variants = [
@@ -764,12 +774,28 @@ function StreamOverlayCard({ roomCode }: { roomCode: string }) {
         <div>
           <h3 className="flex items-center gap-1.5 font-bold">
             <MonitorPlay className="h-4 w-4 text-primary" aria-hidden /> {t.overlayTitle}
+            {pro ? null : (
+              <span className="ml-1 rounded-[4px] bg-amber-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-300">
+                {t.proBadge}
+              </span>
+            )}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
             {t.overlayDesc}
           </p>
         </div>
-        {variants.map((v) => (
+        {/* Pro-only: a Free tournament gets the explanation instead of the links. */}
+        {pro ? null : (
+          <div className="flex flex-col gap-2 rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+            <p className="flex items-start gap-2">
+              <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {t.overlayProOnly}
+            </p>
+            <Button variant="outline" size="sm" className="min-h-9 shrink-0" onClick={() => navigate('/pricing')}>
+              {t.comparePlans}
+            </Button>
+          </div>
+        )}
+        {(pro ? variants : []).map((v) => (
           <div key={v.url} className="space-y-1">
             <p className="text-xs font-semibold text-muted-foreground">{v.label}</p>
             <div className="flex gap-2">

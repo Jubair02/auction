@@ -85,6 +85,7 @@ export function PlayersList({
   auctionMode,
   readOnly,
   onImport,
+  importLocked = false,
   onAdd,
   onEdit,
   onDelete,
@@ -95,6 +96,8 @@ export function PlayersList({
   auctionMode: AuctionMode
   readOnly: boolean
   onImport: () => void
+  /** Free plan: CSV import is Pro-only. */
+  importLocked?: boolean
   onAdd: () => void
   onEdit: (p: PlayerDTO) => void
   onDelete: (p: PlayerDTO) => void
@@ -120,6 +123,11 @@ export function PlayersList({
           <div className="mt-2 flex gap-2">
             <Button variant="outline" onClick={onImport}>
               <FileUp className="mr-1.5 h-4 w-4" aria-hidden /> {t.importCsv}
+              {importLocked ? (
+                <span className="ml-1.5 rounded-[4px] bg-amber-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-300">
+                  {t.proBadge}
+                </span>
+              ) : null}
             </Button>
             <Button onClick={onAdd}>
               <Plus className="mr-1.5 h-4 w-4" aria-hidden /> {t.addPlayer}
