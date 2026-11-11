@@ -24,6 +24,8 @@ const STRINGS = {
     joinRoom: 'Join an auction room',
     createTournament: 'Create a tournament',
     myDashboard: 'My dashboard',
+    logoDashboard: 'NeelamGhor — go to your dashboard',
+    logoHome: 'NeelamGhor — home',
     pricing: 'Pricing',
     privacy: 'Privacy notice',
     terms: 'Terms of Service',
@@ -45,6 +47,8 @@ const STRINGS = {
     joinRoom: 'নিলাম রুমে যোগ দিন',
     createTournament: 'টুর্নামেন্ট তৈরি করুন',
     myDashboard: 'আমার ড্যাশবোর্ড',
+    logoDashboard: 'NeelamGhor — আপনার ড্যাশবোর্ডে যান',
+    logoHome: 'NeelamGhor — হোম',
     pricing: 'দাম',
     privacy: 'গোপনীয়তা নীতি',
     terms: 'ব্যবহারের শর্তাবলি',
@@ -66,6 +70,8 @@ const STRINGS = {
   joinRoom: string
   createTournament: string
   myDashboard: string
+  logoDashboard: string
+  logoHome: string
   pricing: string
   privacy: string
   terms: string
@@ -144,7 +150,12 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
         <div className="grid grid-cols-2 gap-x-6 gap-y-9 sm:grid-cols-3 lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))] lg:gap-x-10">
           {/* Brand */}
           <div className="col-span-2 sm:col-span-3 lg:col-span-1">
-            <div className="flex items-center gap-2.5">
+            {/* Same as the header logo: your dashboard when signed in, the home page otherwise. */}
+            <AppLink
+              href={user ? DASHBOARD_PATH : '/'}
+              aria-label={user ? t.logoDashboard : t.logoHome}
+              className="inline-flex items-center gap-2.5 rounded-lg transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm shadow-primary/20">
                 <Gavel className="h-4.5 w-4.5" aria-hidden />
               </span>
@@ -157,7 +168,7 @@ export function SiteFooter({ hidden, settings }: { hidden?: boolean; settings: R
                   siteName
                 )}
               </span>
-            </div>
+            </AppLink>
             <p className="mt-3 text-sm font-semibold text-foreground">{t.tagline}</p>
             <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted-foreground">{t.about}</p>
             <ul className="mt-4 flex flex-wrap gap-1.5" aria-label={t.tagline}>

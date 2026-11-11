@@ -236,8 +236,15 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
     <div className="flex min-h-screen flex-col bg-background">
       <header hidden={roomFocus} className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 print:hidden">
         <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4">
-          {/* Brand mark only — deliberately not a link, so clicking it never leaves the current page. */}
-          <div className="flex min-w-0 select-none items-center gap-2 px-1 py-1" aria-label="NeelamGhor">
+          {/* The logo goes "home": signed in → /dashboard, which renders that role's own
+              dashboard (admin console / organizer / manager — see renderRoute); signed out →
+              the landing page. Access rules stay with the route, not the link. */}
+          <AppLink
+            href={user ? DASHBOARD_PATH : '/'}
+            aria-label={user ? t.logoDashboard : t.logoHome}
+            aria-current={(user ? head === 'dashboard' : head === '') ? 'page' : undefined}
+            className="flex min-w-0 select-none items-center gap-2 rounded-lg px-1 py-1 transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Gavel className="h-4.5 w-4.5" aria-hidden />
             </span>
@@ -247,7 +254,7 @@ export default function AppRoot({ initialSegs }: { initialSegs?: string[] }) {
               Neelam<span className="text-primary">Ghor</span>
             </span>
             <Badge variant="secondary" className="ml-1 hidden md:inline-flex">BD</Badge>
-          </div>
+          </AppLink>
 
           <nav className="flex items-center gap-1.5" aria-label={t.mainNav}>
             {/* Pricing: first in the nav for everyone. Icon only below 400px so the header still fits a 320px phone. */}
@@ -401,6 +408,8 @@ const SHELL_STRINGS = {
     notFoundDescription: 'The page you are looking for does not exist.',
     backHome: 'Back to home',
     mainNav: 'Main navigation',
+    logoDashboard: 'NeelamGhor — go to your dashboard',
+    logoHome: 'NeelamGhor — home',
     pricing: 'Pricing',
     accountMenu: 'Account menu',
     myAccount: 'My account',
@@ -422,12 +431,14 @@ const SHELL_STRINGS = {
     notFoundDescription: 'আপনি যে পেজটি খুঁজছেন সেটি নেই।',
     backHome: 'হোমে ফিরে যান',
     mainNav: 'প্রধান মেনু',
+    logoDashboard: 'NeelamGhor — আপনার ড্যাশবোর্ডে যান',
+    logoHome: 'NeelamGhor — হোম',
     pricing: 'দাম',
     accountMenu: 'অ্যাকাউন্ট মেনু',
     myAccount: 'আমার অ্যাকাউন্ট',
     role: { ADMIN: 'অ্যাডমিন', ORGANIZER: 'আয়োজক', MANAGER: 'টিম ম্যানেজার' },
   },
-} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'tournaments' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'pricing' | 'accountMenu' | 'myAccount', string>>
+} satisfies Strings<{ role: Record<UserRole, string> } & Record<'joinRoom' | 'myTeam' | 'myTournaments' | 'newTournament' | 'adminConsole' | 'tournaments' | 'logout' | 'login' | 'register' | 'noAccess' | 'loading' | 'notFoundTitle' | 'notFoundDescription' | 'backHome' | 'mainNav' | 'logoDashboard' | 'logoHome' | 'pricing' | 'accountMenu' | 'myAccount', string>>
 
 /** EN / বাংলা switch in the header. */
 function LangToggle() {
