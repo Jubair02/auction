@@ -510,6 +510,7 @@ export default function ManagerDashboard() {
           <EmptyState
             icon={Users}
             title={t.noTeamTitle}
+            mascot
             description={t.noTeamDesc}
             action={
               <Button asChild>

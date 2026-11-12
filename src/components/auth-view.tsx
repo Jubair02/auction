@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft, Gavel, HandCoins, Loader2, LogIn, Sparkles, UserPlus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import { apiPost, ApiError } from '@/lib/api'
 import { cameToBid, consumeReturnTo, navigate, peekReturnTo } from '@/lib/router'
 import { postLoginPath } from '@/lib/access'
 import { AppLink } from '@/components/shared/app-link'
+import { MascotPeek, type MascotHandle } from '@/components/shared/mascot'
 import { useAppStore } from '@/lib/store'
 import type { SafeUser, UserRole } from '@/lib/types'
 import { type Strings, useStrings } from '@/lib/i18n'
@@ -185,6 +186,18 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
 
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // The mascot politely looks away while a password is being typed, and is
+  // surprised when the form is refused.
+  const mascot = useRef<MascotHandle>(null)
+  const [typingPassword, setTypingPassword] = useState(false)
+  const passwordFocus = {
+    onFocus: () => setTypingPassword(true),
+    onBlur: () => setTypingPassword(false),
+  }
+  const refuse = (message: string) => {
+    setError(message)
+    mascot.current?.play('surprised', 1400)
+  }
 
   const isRegister = mode === 'register'
 
@@ -203,11 +216,11 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
     setError(null)
 
     if (isRegister) {
-      if (name.trim().length < 2) return setError(t.nameRequired)
-      if (password.length < 6) return setError(t.passwordTooShort)
-      if (password !== confirm) return setError(t.passwordsMismatch)
+      if (name.trim().length < 2) return refuse(t.nameRequired)
+      if (password.length < 6) return refuse(t.passwordTooShort)
+      if (password !== confirm) return refuse(t.passwordsMismatch)
     }
-    if (!email.trim() || !password) return setError(t.credentialsRequired)
+    if (!email.trim() || !password) return refuse(t.credentialsRequired)
 
     setSubmitting(true)
     try {
@@ -229,7 +242,7 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
       }
     } catch (ex) {
       const message = ex instanceof ApiError ? ex.message : t.genericError
-      setError(message)
+      refuse(message)
       toast.error(message)
     } finally {
       setSubmitting(false)
@@ -254,217 +267,221 @@ export default function AuthView({ mode }: { mode: 'login' | 'register' }) {
           <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {t.backHome}
         </AppLink>
       </Button>
-      <Card className="w-full shadow-sm">
-        <CardHeader className="text-center">
-          <span className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Gavel className="h-5 w-5" aria-hidden />
-          </span>
-          <CardTitle className="text-xl font-extrabold">
-            {isRegister ? t.registerTitle : t.loginTitle}
-          </CardTitle>
-          <CardDescription>
-            {isRegister
-              ? t.registerDescription
-              : t.loginDescription}
-          </CardDescription>
-        </CardHeader>
+      <MascotPeek ref={mascot} look={typingPassword ? 'up-right' : undefined}>
+        <Card className="w-full shadow-sm">
+          <CardHeader className="text-center">
+            <span className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <Gavel className="h-5 w-5" aria-hidden />
+            </span>
+            <CardTitle className="text-xl font-extrabold">
+              {isRegister ? t.registerTitle : t.loginTitle}
+            </CardTitle>
+            <CardDescription>
+              {isRegister
+                ? t.registerDescription
+                : t.loginDescription}
+            </CardDescription>
+          </CardHeader>
 
-        <CardContent>
-          {error ? (
-            <Alert variant="destructive" className="mb-4">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
+          <CardContent>
+            {error ? (
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
 
-          <form onSubmit={submit} className="space-y-4" noValidate>
-            {isRegister ? (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="name">{t.fullName}</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder={t.namePlaceholder}
-                    autoComplete="name"
-                    required
-                    className="h-11"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{t.iWantTo}</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setRole('ORGANIZER')}
-                      aria-pressed={role === 'ORGANIZER'}
-                      className={`flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                        role === 'ORGANIZER'
-                          ? 'border-primary bg-primary/5 text-primary'
-                          : 'border-border bg-background hover:bg-accent'
-                      }`}
-                    >
-                      <Gavel className="h-5 w-5" aria-hidden />
-                      <span className="text-sm font-bold">{t.organizer}</span>
-                      <span className="text-xs text-muted-foreground">{t.organizerHint}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRole('MANAGER')}
-                      aria-pressed={role === 'MANAGER'}
-                      className={`flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                        role === 'MANAGER'
-                          ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                          : 'border-border bg-background hover:bg-accent'
-                      }`}
-                    >
-                      <HandCoins className="h-5 w-5" aria-hidden />
-                      <span className="text-sm font-bold">{t.teamManager}</span>
-                      <span className="text-xs text-muted-foreground">{t.teamManagerHint}</span>
-                    </button>
+            <form onSubmit={submit} className="space-y-4" noValidate>
+              {isRegister ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="name">{t.fullName}</Label>
+                    <Input
+                      id="name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder={t.namePlaceholder}
+                      autoComplete="name"
+                      required
+                      className="h-11"
+                    />
                   </div>
-                </div>
-              </>
-            ) : null}
+                  <div className="space-y-1.5">
+                    <Label>{t.iWantTo}</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setRole('ORGANIZER')}
+                        aria-pressed={role === 'ORGANIZER'}
+                        className={`flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                          role === 'ORGANIZER'
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-border bg-background hover:bg-accent'
+                        }`}
+                      >
+                        <Gavel className="h-5 w-5" aria-hidden />
+                        <span className="text-sm font-bold">{t.organizer}</span>
+                        <span className="text-xs text-muted-foreground">{t.organizerHint}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRole('MANAGER')}
+                        aria-pressed={role === 'MANAGER'}
+                        className={`flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                          role === 'MANAGER'
+                            ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                            : 'border-border bg-background hover:bg-accent'
+                        }`}
+                      >
+                        <HandCoins className="h-5 w-5" aria-hidden />
+                        <span className="text-sm font-bold">{t.teamManager}</span>
+                        <span className="text-xs text-muted-foreground">{t.teamManagerHint}</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : null}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="email">{t.email}</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="email"
-                required
-                className="h-11"
-              />
-            </div>
-
-            {isRegister ? (
               <div className="space-y-1.5">
-                <Label htmlFor="phone">
-                  {t.phone} <span className="font-normal text-muted-foreground">{t.optional}</span>
-                </Label>
+                <Label htmlFor="email">{t.email}</Label>
                 <Input
-                  id="phone"
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="01XXXXXXXXX"
-                  autoComplete="tel"
-                  className="h-11"
-                />
-              </div>
-            ) : null}
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Label htmlFor="password">{t.password}</Label>
-                {!isRegister ? (
-                  <AppLink
-                    href="/forgot-password"
-                    className="-my-1 inline-block py-1 text-xs font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    {t.forgotPassword}
-                  </AppLink>
-                ) : null}
-              </div>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={isRegister ? t.newPasswordPlaceholder : t.passwordPlaceholder}
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
-                required
-                className="h-11"
-              />
-            </div>
-
-            {isRegister ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="confirm">{t.confirmPassword}</Label>
-                <Input
-                  id="confirm"
-                  type="password"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  placeholder={t.confirmPlaceholder}
-                  autoComplete="new-password"
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
                   required
                   className="h-11"
                 />
               </div>
-            ) : null}
 
-            <Button type="submit" className="h-11 w-full" disabled={submitting}>
-              {submitting ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
-              ) : isRegister ? (
-                <UserPlus className="mr-1.5 h-4 w-4" aria-hidden />
-              ) : (
-                <LogIn className="mr-1.5 h-4 w-4" aria-hidden />
-              )}
-              {isRegister ? t.createAccount : t.logIn}
-            </Button>
-            {isRegister ? (
-              <p className="text-center text-xs text-muted-foreground">
-                {t.agreeBefore}
-                <AppLink href="/terms" className="font-medium text-foreground underline underline-offset-2">
-                  {t.terms}
-                </AppLink>
-                {t.agreeAnd}
-                <AppLink href="/privacy" className="font-medium text-foreground underline underline-offset-2">
-                  {t.privacy}
-                </AppLink>
-                {t.agreeAfter}
-              </p>
-            ) : null}
-          </form>
+              {isRegister ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="phone">
+                    {t.phone} <span className="font-normal text-muted-foreground">{t.optional}</span>
+                  </Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="01XXXXXXXXX"
+                    autoComplete="tel"
+                    className="h-11"
+                  />
+                </div>
+              ) : null}
 
-          <Separator className="my-5" />
-
-          {SHOW_DEMO_LOGINS ? (
-            <div className="rounded-lg border border-dashed bg-muted/40 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden /> {t.demoAccounts}
-              </p>
-              <ul className="mt-2 space-y-1.5">
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <li key={acc.email} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate text-muted-foreground">
-                      <span className="font-semibold text-foreground">{t.demoLabel(acc.label)}</span> · {acc.email} / {acc.password}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      onClick={() => fillDemo(acc)}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="password">{t.password}</Label>
+                  {!isRegister ? (
+                    <AppLink
+                      href="/forgot-password"
+                      className="-my-1 inline-block py-1 text-xs font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                     >
-                      {t.fill}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+                      {t.forgotPassword}
+                    </AppLink>
+                  ) : null}
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={isRegister ? t.newPasswordPlaceholder : t.passwordPlaceholder}
+                  autoComplete={isRegister ? 'new-password' : 'current-password'}
+                  {...passwordFocus}
+                  required
+                  className="h-11"
+                />
+              </div>
 
-          <p
-            className={`${SHOW_DEMO_LOGINS ? 'mt-5 ' : ''}flex items-center justify-center gap-1.5 text-center text-sm text-muted-foreground`}
-          >
-            <Users className="h-3.5 w-3.5" aria-hidden />
-            {isRegister ? t.haveAccount : t.newHere}{' '}
-            <AppLink
-              href={isRegister ? '/login' : '/register'}
-              className="-my-1 py-1 font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              {isRegister ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirm">{t.confirmPassword}</Label>
+                  <Input
+                    id="confirm"
+                    type="password"
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    placeholder={t.confirmPlaceholder}
+                    autoComplete="new-password"
+                    {...passwordFocus}
+                    required
+                    className="h-11"
+                  />
+                </div>
+              ) : null}
+
+              <Button type="submit" className="h-11 w-full" disabled={submitting}>
+                {submitting ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
+                ) : isRegister ? (
+                  <UserPlus className="mr-1.5 h-4 w-4" aria-hidden />
+                ) : (
+                  <LogIn className="mr-1.5 h-4 w-4" aria-hidden />
+                )}
+                {isRegister ? t.createAccount : t.logIn}
+              </Button>
+              {isRegister ? (
+                <p className="text-center text-xs text-muted-foreground">
+                  {t.agreeBefore}
+                  <AppLink href="/terms" className="font-medium text-foreground underline underline-offset-2">
+                    {t.terms}
+                  </AppLink>
+                  {t.agreeAnd}
+                  <AppLink href="/privacy" className="font-medium text-foreground underline underline-offset-2">
+                    {t.privacy}
+                  </AppLink>
+                  {t.agreeAfter}
+                </p>
+              ) : null}
+            </form>
+
+            <Separator className="my-5" />
+
+            {SHOW_DEMO_LOGINS ? (
+              <div className="rounded-lg border border-dashed bg-muted/40 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden /> {t.demoAccounts}
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {DEMO_ACCOUNTS.map((acc) => (
+                    <li key={acc.email} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        <span className="font-semibold text-foreground">{t.demoLabel(acc.label)}</span> · {acc.email} / {acc.password}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={() => fillDemo(acc)}
+                      >
+                        {t.fill}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <p
+              className={`${SHOW_DEMO_LOGINS ? 'mt-5 ' : ''}flex items-center justify-center gap-1.5 text-center text-sm text-muted-foreground`}
             >
-              {isRegister ? t.logIn : t.createFree}
-            </AppLink>
-          </p>
-        </CardContent>
-      </Card>
+              <Users className="h-3.5 w-3.5" aria-hidden />
+              {isRegister ? t.haveAccount : t.newHere}{' '}
+              <AppLink
+                href={isRegister ? '/login' : '/register'}
+                className="-my-1 py-1 font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                {isRegister ? t.logIn : t.createFree}
+              </AppLink>
+            </p>
+          </CardContent>
+        </Card>
+      </MascotPeek>
     </div>
   )
 }

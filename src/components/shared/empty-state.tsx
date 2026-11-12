@@ -2,6 +2,8 @@
 
 import type { LucideIcon } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Mascot } from '@/components/shared/mascot'
+import { useLowData } from '@/lib/low-data'
 import { cn } from '@/lib/utils'
 
 export function EmptyState({
@@ -10,19 +12,29 @@ export function EmptyState({
   description,
   action,
   className,
+  mascot = false,
 }: {
   icon: LucideIcon
   title: string
   description?: string
   action?: React.ReactNode
   className?: string
+  /** Show the mascot (looking down at the action) instead of the icon. For
+   *  first-run screens only — not for "no results" lists. */
+  mascot?: boolean
 }) {
+  // Data saver: the icon, not the ~150KB of mascot sheets.
+  const lowData = useLowData()
   return (
     <Card className={cn('border-dashed', className)}>
       <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-        <div className="rounded-full bg-muted p-4">
-          <Icon className="h-8 w-8 text-muted-foreground" aria-hidden />
-        </div>
+        {mascot && !lowData ? (
+          <Mascot size={112} rest="down" decorative className="-mb-2 -mt-4" />
+        ) : (
+          <div className="rounded-full bg-muted p-4">
+            <Icon className="h-8 w-8 text-muted-foreground" aria-hidden />
+          </div>
+        )}
         <div>
           <p className="font-semibold">{title}</p>
           {description ? <p className="mt-1 text-sm text-muted-foreground max-w-md">{description}</p> : null}

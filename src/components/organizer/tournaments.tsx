@@ -423,6 +423,7 @@ export default function TournamentsList() {
           className="mt-6"
           icon={Trophy}
           title={s.emptyTitle}
+          mascot
           description={s.emptyDesc}
           action={
             <Button asChild>

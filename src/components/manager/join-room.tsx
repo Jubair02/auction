@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Gavel, Sparkles } from 'lucide-react'
 import { navigate } from '@/lib/router'
 import { DASHBOARD_PATH } from '@/lib/access'
@@ -11,6 +11,7 @@ import type { RoomInfo, UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { MascotPeek, type MascotHandle } from '@/components/shared/mascot'
 import { type Strings, useStrings } from '@/lib/i18n'
 
 const STRINGS = {
@@ -73,8 +74,21 @@ export default function JoinRoomView() {
   const t = useStrings(STRINGS)
   const role = useAuthState().user?.role
 
-  const clean = code.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9)
-  const valid = /^[A-Z]{2}\d{2}-[A-Z0-9]{4}$/.test(clean)
+  const mascot = useRef<MascotHandle>(null)
+
+  const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9)
+  const isValid = (value: string) => /^[A-Z]{2}\d{2}-[A-Z0-9]{4}$/.test(value)
+  const clean = cleanCode(code)
+  const valid = isValid(clean)
+
+  // The mascot reacts as the code is typed: delighted the moment it becomes a
+  // valid code, surprised when all 9 characters are in but it isn't one.
+  const onCodeChange = (value: string) => {
+    const next = cleanCode(value)
+    if (isValid(next) && !valid) mascot.current?.play('delighted')
+    else if (next.length === 9 && clean.length < 9 && !isValid(next)) mascot.current?.play('surprised', 1400)
+    setCode(value.toUpperCase())
+  }
 
   return (
     <div className="container mx-auto flex min-h-[70vh] max-w-md flex-col justify-center px-4 py-10">
@@ -86,45 +100,47 @@ export default function JoinRoomView() {
       >
         <ArrowLeft className="mr-1 h-4 w-4" aria-hidden /> {role ? t.backTo[role] : t.backHome}
       </Button>
-      <Card className="w-full border-2 shadow-md">
-        <CardContent className="flex flex-col items-center gap-5 p-6 sm:p-8 text-center">
-          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground" aria-hidden>
-            <Gavel className="h-7 w-7" />
-          </span>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight">{t.title}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t.subtitle}
-            </p>
-          </div>
+      <MascotPeek ref={mascot}>
+        <Card className="w-full border-2 shadow-md">
+          <CardContent className="flex flex-col items-center gap-5 p-6 sm:p-8 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground" aria-hidden>
+              <Gavel className="h-7 w-7" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight">{t.title}</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t.subtitle}
+              </p>
+            </div>
 
-          <div className="w-full space-y-3">
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="BD26-XXXX"
-              maxLength={9}
-              aria-label={t.codeLabel}
-              className="h-14 text-center font-mono text-xl font-black uppercase tracking-[0.3em]"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && valid) navigate(`/room/${clean}`)
-              }}
-            />
-            <Button size="lg" className="h-13 w-full text-base font-black" disabled={!valid} onClick={() => navigate(`/room/${clean}`)}>
-              {t.join} <ArrowRight className="ml-2 h-4.5 w-4.5" aria-hidden />
-            </Button>
-          </div>
+            <div className="w-full space-y-3">
+              <Input
+                value={code}
+                onChange={(e) => onCodeChange(e.target.value)}
+                placeholder="BD26-XXXX"
+                maxLength={9}
+                aria-label={t.codeLabel}
+                className="h-14 text-center font-mono text-xl font-black uppercase tracking-[0.3em]"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && valid) navigate(`/room/${clean}`)
+                }}
+              />
+              <Button size="lg" className="h-13 w-full text-base font-black" disabled={!valid} onClick={() => navigate(`/room/${clean}`)}>
+                {t.join} <ArrowRight className="ml-2 h-4.5 w-4.5" aria-hidden />
+              </Button>
+            </div>
 
-          <div className="space-y-2 text-xs text-muted-foreground">
-            <p>{t.askOrganizer}</p>
-            <p className="text-[11px]">
-              {t.noApp}
-            </p>
-          </div>
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <p>{t.askOrganizer}</p>
+              <p className="text-[11px]">
+                {t.noApp}
+              </p>
+            </div>
 
-          {SHOW_DEMO_ROOM ? <DemoRoomButton /> : null}
-        </CardContent>
-      </Card>
+            {SHOW_DEMO_ROOM ? <DemoRoomButton /> : null}
+          </CardContent>
+        </Card>
+      </MascotPeek>
     </div>
   )
 }
