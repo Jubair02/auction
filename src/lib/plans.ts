@@ -4,6 +4,7 @@
 //
 // Every number lives in the Setting table so the admin can change it without a
 // deploy. Server-only (uses the database).
+import { unstable_cache } from 'next/cache'
 import type { DbTx } from '@/lib/db'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
@@ -47,6 +48,22 @@ export async function getPlanSettings(): Promise<PlanSettings> {
     instructions: get(PLAN_SETTING_KEYS.instructions) ?? null,
   }
 }
+
+/** Cache tag for the plan settings; the admin settings PUT expires it. */
+export const PLAN_SETTINGS_TAG = 'plan-settings'
+
+/**
+ * getPlanSettings() for DISPLAY only — the landing and pricing pages' server
+ * render, which otherwise paid a database round trip on every visit. Cached
+ * for at most 5 minutes and expired at once when an admin saves settings
+ * (the 5 minutes only covers writes that bypass the admin API, e.g. seeding).
+ * Never use it to enforce anything: the Free-plan checks and payments read
+ * the database directly through getPlanSettings().
+ */
+export const getCachedPlanSettings = unstable_cache(getPlanSettings, ['plan-settings'], {
+  tags: [PLAN_SETTINGS_TAG],
+  revalidate: 300,
+})
 
 /**
  * Serializes every change to a tournament's roster (teams, players) for the

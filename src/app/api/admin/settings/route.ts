@@ -1,7 +1,8 @@
+import { revalidateTag } from 'next/cache'
 import { db } from '@/lib/db'
 import { jsonError } from '@/lib/auth'
 import { normalizeBdPhone } from '@/lib/phone'
-import { PLAN_SETTING_KEYS } from '@/lib/plans'
+import { PLAN_SETTING_KEYS, PLAN_SETTINGS_TAG } from '@/lib/plans'
 import { SUPPORT_PHONE_KEY, validateSupportPhone } from '@/lib/support-phone'
 import { coercePositiveInt, readJson, requireSessionRole } from '../../_lib/helpers'
 
@@ -100,6 +101,8 @@ export async function PUT(req: Request) {
       db.setting.upsert({ where: { key }, update: { value }, create: { key, value } }),
     ),
   ])
+  // The landing / pricing pages show the plan numbers from a cache.
+  revalidateTag(PLAN_SETTINGS_TAG, { expire: 0 })
 
   return Response.json({ settings: await getAllSettings() })
 }

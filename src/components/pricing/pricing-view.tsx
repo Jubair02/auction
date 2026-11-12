@@ -6,6 +6,7 @@
 // feature the server actually gates on the tournament's plan.
 import type { ComponentType, ReactNode } from 'react'
 import { motion } from 'framer-motion'
+import { MotionScope } from '@/components/shared/motion-scope'
 import {
   ArrowRight,
   BadgeCheck,
@@ -237,7 +238,7 @@ const fadeUp = {
 const CHIP_ICONS = [Sparkles, Smartphone, Trophy]
 const STEP_ICONS = [ClipboardList, Receipt, Zap]
 
-export default function PricingView() {
+function PricingViewContent() {
   const t = useStrings<PricingStrings>(STRINGS)
   const { user } = useAuthState()
   const plans = usePlanNumbers()
@@ -517,4 +518,15 @@ function CompareCell({ value, t, pro }: { value: Cell; t: PricingStrings; pro?: 
     )
   }
   return <span className={cn('text-xs font-semibold leading-snug sm:text-sm', pro && 'text-primary')}>{value}</span>
+}
+
+// Inside MotionScope so animations follow reduced-motion and data saver
+// (the provider lives here, not in the app shell, to keep framer-motion
+// out of other pages' first download).
+export default function PricingView() {
+  return (
+    <MotionScope>
+      <PricingViewContent />
+    </MotionScope>
+  )
 }

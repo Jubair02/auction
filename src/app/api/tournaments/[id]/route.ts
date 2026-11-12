@@ -41,20 +41,21 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const { user } = auth
   if (!tournament || hiddenByArchive(tournament, user)) return jsonError('Tournament not found', 404)
 
-  // Staff (owner, ADMIN, co-organizer, auctioneer) see organizer data.
-  const staffAccess = await tournamentAccess(tournament, user)
-  const canManage = staffAccess !== null
-  if (!canManage) {
+  // The permission checks run alongside the data queries (one round trip
+  // instead of up to three in a row); nothing is sent before they pass.
+  // Owner and ADMIN are known without a query, so only others pay for the
+  // "manages a team here" lookup.
+  const ownerOrAdmin = user.role === 'ADMIN' || tournament.organizerId === user.id
+  const [staffAccess, managesTeam, players, teams, auction] = await Promise.all([
+    // Staff (owner, ADMIN, co-organizer, auctioneer) see organizer data.
+    tournamentAccess(tournament, user),
     // Managers of a team inside this tournament can view the detail (squad views)
-    const managesTeam = await db.team.findFirst({
-      where: { tournamentId: id, managerUserId: user.id },
-      select: { id: true },
-    })
-    if (!managesTeam) return jsonError('You do not have permission to view this tournament', 403)
-  }
-  const myAccess: TournamentAccess = staffAccess ?? 'MANAGER'
-
-  const [players, teams, auction] = await Promise.all([
+    ownerOrAdmin
+      ? null
+      : db.team.findFirst({
+          where: { tournamentId: id, managerUserId: user.id },
+          select: { id: true },
+        }),
     db.player.findMany({
       where: { tournamentId: id },
       orderBy: { playerNumber: 'asc' },
@@ -70,6 +71,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
     }),
     db.auction.findUnique({ where: { tournamentId: id } }),
   ])
+  if (staffAccess === null && !managesTeam) return jsonError('You do not have permission to view this tournament', 403)
+  const myAccess: TournamentAccess = staffAccess ?? 'MANAGER'
 
   // Player phone numbers are organizer data — team managers and auctioneers
   // (who only run the room) get the squad, not the contacts.

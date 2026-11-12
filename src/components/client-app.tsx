@@ -1,26 +1,15 @@
 'use client'
 
-import type { ReactNode } from 'react'
-import { MotionConfig } from 'framer-motion'
 import AppRoot from '@/components/app-root'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
 import { LangProvider } from '@/lib/i18n'
 import type { Lang } from '@/lib/lang-cookie'
-import { LowDataProvider, useLowData } from '@/lib/low-data'
+import { LowDataProvider } from '@/lib/low-data'
 import { type PlanNumbers, PlanSeedProvider } from '@/lib/plan-numbers'
 import { AuthSeedContext } from '@/lib/store'
 import { ThemeProvider } from '@/lib/theme'
 import type { ThemePref } from '@/lib/theme-cookie'
 import type { SafeUser } from '@/lib/types'
-
-/**
- * Animations follow the OS "reduce motion" setting everywhere, and are off
- * entirely in low-data mode (cheap phones on slow connections).
- */
-function Motion({ children }: { children: ReactNode }) {
-  const lowData = useLowData()
-  return <MotionConfig reducedMotion={lowData ? 'always' : 'user'}>{children}</MotionConfig>
-}
 
 /**
  * The app shell, rendered for every page path. Imported directly (not
@@ -51,14 +40,14 @@ export default function ClientApp({
     <ThemeProvider theme={theme}>
     <AuthSeedContext.Provider value={initialUser}>
       <LangProvider lang={lang}>
+        {/* framer-motion's reduced-motion / data-saver settings are applied by
+            MotionScope inside each animated view, not here (bundle size). */}
         <LowDataProvider lowData={lowData}>
-          <Motion>
-            <ErrorBoundary>
-              <PlanSeedProvider plans={plans}>
-                <AppRoot initialSegs={initialSegs} />
-              </PlanSeedProvider>
-            </ErrorBoundary>
-          </Motion>
+          <ErrorBoundary>
+            <PlanSeedProvider plans={plans}>
+              <AppRoot initialSegs={initialSegs} />
+            </PlanSeedProvider>
+          </ErrorBoundary>
         </LowDataProvider>
       </LangProvider>
     </AuthSeedContext.Provider>

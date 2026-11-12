@@ -23,31 +23,25 @@ export async function GET(req: Request, { params }: RouteParams) {
   // never depends on the cookie, so the CDN may cache it for shared links (the
   // page asks for it when nobody is signed in); the signed-in view never is.
   const publicView = new URL(req.url).searchParams.get('view') === 'public'
-  const user = publicView ? null : await getSessionUser()
-
-  const tournament = await db.tournament.findUnique({ where: { id } })
-  if (!tournament || hiddenByArchive(tournament, user)) return jsonError('Tournament not found', 404)
-
-  const auction = await db.auction.findUnique({ where: { tournamentId: id } })
+  // Two round trips in all: who is asking + the tournament (with its auction),
+  // then the permission checks and every data query together. Nothing is sent
+  // before the checks pass.
+  const [user, found] = await Promise.all([
+    publicView ? null : getSessionUser(),
+    db.tournament.findUnique({ where: { id }, include: { auction: true } }),
+  ])
+  if (!found || hiddenByArchive(found, user)) return jsonError('Tournament not found', 404)
+  const { auction, ...tournament } = found
   const isPublic = resultsArePublic(tournament, auction)
 
-  const access = user ? await tournamentAccess(tournament, user) : null
-  let viewer: 'staff' | 'manager' | 'public' = 'public'
-  if (access) viewer = 'staff'
-  else if (user) {
-    const managesTeam = await db.team.findFirst({
-      where: { tournamentId: id, managerUserId: user.id },
-      select: { id: true },
-    })
-    if (managesTeam) viewer = 'manager'
-  }
-  if (viewer === 'public' && !isPublic) {
-    return user
-      ? jsonError('You do not have permission to view these results', 403)
-      : jsonError('You must be logged in', 401)
-  }
-
-  const [players, teams, branding] = await Promise.all([
+  // Owner and ADMIN are known without a query, so only others pay for the
+  // "manages a team here" lookup.
+  const ownerOrAdmin = !!user && (user.role === 'ADMIN' || tournament.organizerId === user.id)
+  const [access, managesTeam, players, teams, branding, totalBids, recentBids] = await Promise.all([
+    user ? tournamentAccess(tournament, user) : null,
+    user && !ownerOrAdmin
+      ? db.team.findFirst({ where: { tournamentId: id, managerUserId: user.id }, select: { id: true } })
+      : null,
     db.player.findMany({ where: { tournamentId: id }, orderBy: { playerNumber: 'asc' } }),
     db.team.findMany({
       where: { tournamentId: id },
@@ -55,19 +49,27 @@ export async function GET(req: Request, { params }: RouteParams) {
       include: { _count: { select: { players: { where: { status: 'SOLD' } } } } },
     }),
     getPublicBranding(tournament),
+    auction ? db.bid.count({ where: { auctionId: auction.id } }) : 0,
+    auction
+      ? db.bid.findMany({
+          where: { auctionId: auction.id },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        })
+      : [],
   ])
+
+  let viewer: 'staff' | 'manager' | 'public' = 'public'
+  if (access) viewer = 'staff'
+  else if (user && managesTeam) viewer = 'manager'
+  if (viewer === 'public' && !isPublic) {
+    return user
+      ? jsonError('You do not have permission to view these results', 403)
+      : jsonError('You must be logged in', 401)
+  }
 
   const soldPlayers = players.filter((p) => p.status === 'SOLD')
   const totalValue = soldPlayers.reduce((sum, p) => sum + (p.soldPrice ?? 0), 0)
-  const totalBids = auction ? await db.bid.count({ where: { auctionId: auction.id } }) : 0
-
-  const recentBids = auction
-    ? await db.bid.findMany({
-        where: { auctionId: auction.id },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      })
-    : []
 
   // The results report is a squad/spending view — personal contact details
   // (phone numbers, manager names and emails) stay out of it for every viewer,

@@ -3,7 +3,6 @@
 import { useEffect } from 'react'
 import { navigate } from '@/lib/router'
 import Image from 'next/image'
-import { motion } from 'framer-motion'
 import {
   ArrowRight,
   BadgeCheck,
@@ -30,6 +29,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { AppLink } from '@/components/shared/app-link'
 import { Mascot } from '@/components/shared/mascot'
+import { Reveal } from '@/components/shared/reveal'
 import { DASHBOARD_PATH } from '@/lib/access'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { useAuthState } from '@/lib/store'
@@ -277,20 +277,13 @@ const STRINGS = {
   },
 } satisfies Strings<LandingStrings>
 
-const fadeUp = {
-  initial: { opacity: 0, y: 24 },
-  whileInView: { opacity: 1, y: 0 },
-  viewport: { once: true, margin: '-60px' },
-  transition: { duration: 0.5, ease: 'easeOut' as const },
-}
-
 function SectionHeading({ eyebrow, title, sub }: { eyebrow: string; title: string; sub?: string }) {
   return (
-    <motion.div {...fadeUp} className="mx-auto max-w-2xl text-center">
+    <Reveal className="mx-auto max-w-2xl text-center">
       <p className="text-sm font-bold uppercase tracking-widest text-primary">{eyebrow}</p>
       <h2 className="mt-2 text-2xl font-extrabold tracking-tight sm:text-3xl">{title}</h2>
       {sub ? <p className="mt-3 text-muted-foreground">{sub}</p> : null}
-    </motion.div>
+    </Reveal>
   )
 }
 
@@ -417,7 +410,7 @@ export default function Landing() {
         />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-2">
-          <motion.div {...fadeUp}>
+          <Reveal>
             <Card className="h-full">
               <CardContent className="p-6">
                 <div className="flex items-center gap-3">
@@ -449,9 +442,9 @@ export default function Landing() {
                 </ol>
               </CardContent>
             </Card>
-          </motion.div>
+          </Reveal>
 
-          <motion.div {...fadeUp}>
+          <Reveal>
             <Card className="h-full border-amber-200/70 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20">
               <CardContent className="p-6">
                 <div className="flex items-center gap-3">
@@ -483,7 +476,7 @@ export default function Landing() {
                 </ol>
               </CardContent>
             </Card>
-          </motion.div>
+          </Reveal>
         </div>
       </section>
 
@@ -499,7 +492,7 @@ export default function Landing() {
             {t.features.map((f, i) => {
               const FeatureIcon = FEATURE_ICONS[i]
               return (
-              <motion.div key={i} {...fadeUp} transition={{ ...fadeUp.transition, delay: i * 0.04 }}>
+              <Reveal key={i} delay={i * 0.04}>
                 <Card className="group h-full transition-shadow hover:shadow-md">
                   <CardContent className="flex h-full flex-col gap-3 p-6">
                     <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
@@ -509,7 +502,7 @@ export default function Landing() {
                     <p className="text-sm text-muted-foreground">{f.text}</p>
                   </CardContent>
                 </Card>
-              </motion.div>
+              </Reveal>
               )
             })}
           </div>
@@ -524,7 +517,7 @@ export default function Landing() {
           sub={t.sportsSub}
         />
         <div className="mt-10 grid gap-6 md:grid-cols-2">
-          <motion.div {...fadeUp}>
+          <Reveal>
             <Card className="h-full overflow-hidden">
               <div className="flex items-center gap-3 border-b bg-emerald-50/70 px-6 py-4 dark:bg-emerald-950/20">
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
@@ -543,8 +536,8 @@ export default function Landing() {
                 ))}
               </CardContent>
             </Card>
-          </motion.div>
-          <motion.div {...fadeUp}>
+          </Reveal>
+          <Reveal>
             <Card className="h-full overflow-hidden">
               <div className="flex items-center gap-3 border-b bg-amber-50/70 px-6 py-4 dark:bg-amber-950/20">
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500 text-white">
@@ -563,10 +556,10 @@ export default function Landing() {
                 ))}
               </CardContent>
             </Card>
-          </motion.div>
+          </Reveal>
         </div>
 
-        <motion.div {...fadeUp} className="mt-8 text-center">
+        <Reveal className="mt-8 text-center">
           <p className="text-sm font-semibold text-muted-foreground">{t.popularTypes}</p>
           <div className="mt-3 flex flex-wrap justify-center gap-2">
             {TOURNAMENT_TYPES.map((type) => (
@@ -575,7 +568,7 @@ export default function Landing() {
               </Badge>
             ))}
           </div>
-        </motion.div>
+        </Reveal>
       </section>
 
       {/* ---------------- Pricing: one line here, the full page lives at /pricing ---------------- */}
@@ -595,7 +588,7 @@ export default function Landing() {
       {/* ---------------- Final CTA (sign-up pitch — not for logged-in users) ---------------- */}
       {user ? null : (
         <section className="container mx-auto max-w-7xl px-4 pb-16">
-          <motion.div {...fadeUp}>
+          <Reveal>
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 px-6 py-12 text-center text-white shadow-lg sm:px-12 sm:py-16 dark:from-teal-800 dark:via-teal-900 dark:to-emerald-950 dark:ring-1 dark:ring-white/10">
               <Zap className="pointer-events-none absolute -left-8 -top-8 h-40 w-40 text-white/5" aria-hidden />
               <Trophy className="pointer-events-none absolute -bottom-10 -right-6 h-44 w-44 text-white/5" aria-hidden />
@@ -626,7 +619,7 @@ export default function Landing() {
                 <Coins className="h-3.5 w-3.5" aria-hidden /> {t.ctaFoot(proPrice)}
               </p>
             </div>
-          </motion.div>
+          </Reveal>
         </section>
       )}
     </div>

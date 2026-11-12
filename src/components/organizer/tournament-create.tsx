@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { MotionScope } from '@/components/shared/motion-scope'
 import {
   ArrowLeft,
   ArrowRight,
@@ -317,7 +318,7 @@ function clearDraft() {
   }
 }
 
-export default function TournamentCreate() {
+function TournamentCreateContent() {
   const lang = useLang()
   const s = useStrings(STRINGS)
   const plans = usePlanNumbers()
@@ -781,5 +782,16 @@ export default function TournamentCreate() {
         {s.changeLater}
       </p>
     </div>
+  )
+}
+
+// Inside MotionScope so animations follow reduced-motion and data saver
+// (the provider lives here, not in the app shell, to keep framer-motion
+// out of other pages' first download).
+export default function TournamentCreate() {
+  return (
+    <MotionScope>
+      <TournamentCreateContent />
+    </MotionScope>
   )
 }

@@ -26,13 +26,23 @@ const tooMany = (seconds: number) =>
 // GET /api/rooms/:code — public room info (no auth required)
 export async function GET(req: Request, { params }: RouteParams) {
   const missKey = clientKey(req, 'room-miss')
-  const blocked =
-    await rateLimitBlocked(missKey, MISSES_PER_WINDOW) ?? await rateLimit(clientKey(req, 'room-lookup'), LOOKUPS_PER_MINUTE, 60 * 1000)
+  // Both budgets are checked at once (each is a database round trip); the
+  // wrong-code block still wins when both apply.
+  const [missBlocked, lookupBlocked] = await Promise.all([
+    rateLimitBlocked(missKey, MISSES_PER_WINDOW),
+    rateLimit(clientKey(req, 'room-lookup'), LOOKUPS_PER_MINUTE, 60 * 1000),
+  ])
+  const blocked = missBlocked ?? lookupBlocked
   if (blocked !== null) return tooMany(blocked)
 
   const { code } = await params
   const roomCode = code.trim().toUpperCase()
 
+  // Who is asking is independent of the room: look it up alongside.
+  const sessionUserPromise = getSessionUser()
+  // Marks it handled while the room query runs; a failure still surfaces
+  // below (through Promise.all), exactly as when it was awaited there.
+  sessionUserPromise.catch(() => undefined)
   const auction = await db.auction.findUnique({
     where: { roomCode },
     include: {
@@ -61,7 +71,7 @@ export async function GET(req: Request, { params }: RouteParams) {
     return Response.json({ error: 'Room not found. Check the code and try again.' }, { status: 404 })
   }
 
-  const [teams, branding] = await Promise.all([
+  const [teams, branding, sessionUser, access] = await Promise.all([
     db.team.findMany({
       where: { tournamentId: auction.tournamentId },
       orderBy: { name: 'asc' },
@@ -69,12 +79,11 @@ export async function GET(req: Request, { params }: RouteParams) {
     }),
     // Brand colour, logo and sponsors for the room, overlay and join card (PRO only).
     getPublicBranding(auction.tournament),
+    sessionUserPromise,
+    // Owner, ADMIN and tournament staff (co-organizer, auctioneer) run the room.
+    sessionUserPromise.then((user) => (user ? tournamentAccess(auction.tournament, user) : null)),
   ])
-
-  const sessionUser = await getSessionUser()
-  // Owner, ADMIN and tournament staff (co-organizer, auctioneer) run the room.
-  const myRole: RoomInfo['myRole'] =
-    sessionUser && (await tournamentAccess(auction.tournament, sessionUser)) !== null ? 'organizer' : null
+  const myRole: RoomInfo['myRole'] = sessionUser && access !== null ? 'organizer' : null
 
   const body: RoomInfo & { branding: PublicBranding } = {
     roomCode: auction.roomCode,

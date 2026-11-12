@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import { apiGet, apiPost } from '@/lib/api'
 import { clearCached } from '@/lib/api-cache'
 import { navigate } from '@/lib/router'
-import { clearAllRoomIdentities } from '@/lib/use-auction-socket'
+import { clearAllRoomIdentities } from '@/lib/room-identity'
 import type { SafeUser } from '@/lib/types'
 
 interface AppState {

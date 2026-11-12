@@ -85,7 +85,19 @@ export async function getSessionUserWithVersion(): Promise<{ user: SafeUser; ses
     // Cookies from before server-side sessions carry no `sid`; they are no
     // longer accepted (they could never be revoked) — the user just logs in again.
     if (!payload?.sub || !payload.sid) return null
-    const session = await db.session.findUnique({ where: { id: payload.sid }, include: { user: true } })
+    // Only the columns used below (not the password hash) — this runs on every
+    // signed-in request.
+    const session = await db.session.findUnique({
+      where: { id: payload.sid },
+      select: {
+        revokedAt: true,
+        expiresAt: true,
+        userId: true,
+        user: {
+          select: { id: true, name: true, email: true, phone: true, role: true, status: true, createdAt: true, sessionVersion: true },
+        },
+      },
+    })
     if (!session || session.revokedAt || session.expiresAt <= new Date() || session.userId !== payload.sub) return null
     const user = session.user
     if (user.status === 'BLOCKED') return null

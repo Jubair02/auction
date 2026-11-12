@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { MotionScope } from '@/components/shared/motion-scope'
 import { CircleDollarSign, Clock, Flag, Gavel, PartyPopper, Trophy, Users } from 'lucide-react'
 import { useCountdown } from '@/lib/use-auction-socket'
 import { formatBDT } from '@/lib/format'
@@ -174,7 +175,7 @@ function StageCountdown({
 /** A SOLD/UNSOLD moment older than this is not shown as a takeover (e.g. to someone joining later). */
 const RESULT_FRESH_MS = 60_000
 
-export function AuctionStage({ state, clockOffset, onViewResults }: StageProps) {
+function AuctionStageContent({ state, clockOffset, onViewResults }: StageProps) {
   const t = useStrings(STRINGS)
   const hasPlayer = !!state.currentPlayer
   const active = state.status === 'LIVE' && hasPlayer
@@ -475,5 +476,16 @@ function ReadyHero({ state }: { state: RoomState }) {
         {state.mode === 'CATEGORY' ? t.categoryMode : t.normalMode} · {t.minIncrement(formatBDT(state.minIncrement))}
       </p>
     </div>
+  )
+}
+
+// Inside MotionScope so animations follow reduced-motion and data saver
+// (the provider lives here, not in the app shell, to keep framer-motion
+// out of other pages' first download).
+export function AuctionStage(props: StageProps) {
+  return (
+    <MotionScope>
+      <AuctionStageContent {...props} />
+    </MotionScope>
   )
 }

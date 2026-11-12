@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { MotionScope } from '@/components/shared/motion-scope'
 import { brandPalette, titleSponsor } from '@/lib/brand-color'
 import type { SponsorDTO, SponsorTier } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -53,7 +54,7 @@ interface SponsorStripProps {
  * as a logo row. Sponsors without a logo show their name. Logos sit on white
  * chips so dark and light marks both stay visible in any theme.
  */
-export function SponsorStrip({ sponsors, variant, brandColor, className }: SponsorStripProps) {
+function SponsorStripContent({ sponsors, variant, brandColor, className }: SponsorStripProps) {
   if (sponsors.length === 0) return null
   if (variant === 'overlay') return <OverlayStrip sponsors={sponsors} brandColor={brandColor} className={className} />
   if (variant === 'room') return <RoomStrip sponsors={sponsors} brandColor={brandColor} className={className} />
@@ -276,4 +277,15 @@ function OverlayMark({ sponsor, big }: { sponsor: SponsorDTO; big?: boolean }) {
     )
   }
   return <span className={cn('max-w-[calc(16*var(--u,1vw))] truncate font-extrabold', big ? 'text-[calc(1.4*var(--u,1vw))]' : 'text-[calc(1.1*var(--u,1vw))]')}>{sponsor.name}</span>
+}
+
+// Inside MotionScope so animations follow reduced-motion and data saver
+// (the provider lives here, not in the app shell, to keep framer-motion
+// out of other pages' first download).
+export function SponsorStrip(props: SponsorStripProps) {
+  return (
+    <MotionScope>
+      <SponsorStripContent {...props} />
+    </MotionScope>
+  )
 }

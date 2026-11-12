@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { MotionScope } from '@/components/shared/motion-scope'
 import { Clock3, Crosshair, Eye, Gavel, Lock, Sparkles, Tag, Trophy, Users } from 'lucide-react'
 import { apiGet, apiPost, ApiError } from '@/lib/api'
 import { formatBDT } from '@/lib/format'
@@ -172,7 +173,7 @@ const ESPORTS_ACCENT = '#7C3AED'
  * through) and is used only for moments: a new player's spotlight, the SOLD
  * celebration, and a progress panel between players.
  */
-export default function StreamOverlay({ roomCode, green }: { roomCode: string; green: boolean }) {
+function StreamOverlayContent({ roomCode, green }: { roomCode: string; green: boolean }) {
   const t = useStrings(STRINGS)
   const [token, setToken] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -887,4 +888,15 @@ function Stat({ label, value, tone, big }: { label: string; value: number | stri
 
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className="rounded-[calc(0.5*var(--u,1vw))] bg-white/[0.07] px-[calc(0.7*var(--u,1vw))] py-[calc(0.25*var(--u,1vw))] text-white/85 ring-1 ring-white/10">{children}</span>
+}
+
+// Inside MotionScope so animations follow reduced-motion and data saver
+// (the provider lives here, not in the app shell, to keep framer-motion
+// out of other pages' first download).
+export default function StreamOverlay(props: { roomCode: string; green: boolean }) {
+  return (
+    <MotionScope>
+      <StreamOverlayContent {...props} />
+    </MotionScope>
+  )
 }

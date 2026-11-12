@@ -12,7 +12,7 @@ import { notFound } from 'next/navigation'
 import { isKnownRoute } from '@/lib/routes'
 import { loadPublicResultsSummary, saleIsPublic } from '@/app/api/og/_lib/public-results'
 import { ogCardPath } from '@/app/api/og/_lib/sign'
-import { getPlanSettings } from '@/lib/plans'
+import { getCachedPlanSettings } from '@/lib/plans'
 
 type PageProps = {
   params: Promise<{ slug?: string[] }>
@@ -199,15 +199,18 @@ export default async function Page({ params }: PageProps) {
   // Who is signed in, so the first render already shows the right header and
   // page (instead of a signed-out header that flips after /api/auth/me).
   // Undefined on any failure: the browser then checks the session itself.
-  const initialUser = await getSessionUser().catch(() => undefined)
   // The landing and /pricing pages show the admin's real Free limits and Pro
-  // price in their server HTML (not a default that flips after loading).
-  const plans =
-    slug.length === 0 || (slug.length === 1 && slug[0] === 'pricing')
-      ? await getPlanSettings()
+  // price in their server HTML (not a default that flips after loading); those
+  // come from a short cache, and both lookups run at the same time.
+  const showsPlans = slug.length === 0 || (slug.length === 1 && slug[0] === 'pricing')
+  const [initialUser, plans] = await Promise.all([
+    getSessionUser().catch(() => undefined),
+    showsPlans
+      ? getCachedPlanSettings()
           .then(({ proPrice, freeMaxTeams, freeMaxPlayers }) => ({ proPrice, freeMaxTeams, freeMaxPlayers }))
           .catch(() => undefined)
-      : undefined
+      : undefined,
+  ])
   return (
     <ClientApp
       initialSegs={slug}
