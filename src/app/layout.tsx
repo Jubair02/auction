@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
-import { Geist, Geist_Mono, Noto_Sans_Bengali } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { LANG_COOKIE, parseLang } from "@/lib/lang-cookie";
 import { SYSTEM_THEME_SCRIPT, THEME_COOKIE, parseTheme } from "@/lib/theme-cookie";
 import "./globals.css";
@@ -11,13 +12,25 @@ const geistSans = Geist({
 });
 
 // Bangla UI: Geist has no Bengali glyphs, so this is the fallback for them.
-const notoBengali = Noto_Sans_Bengali({
+// Self-hosted (Google's variable Noto Sans Bengali, Bengali subset, v33, OFL),
+// not next/font/google: Google sometimes answers build servers with
+// `/l/font?kit=…` URLs that next/font cannot parse, which failed the Vercel
+// build. One variable file covers every weight.
+const notoBengali = localFont({
+  src: "./fonts/noto-sans-bengali-var.woff2",
   variable: "--font-bengali",
-  subsets: ["bengali"],
-  weight: ["400", "600", "700", "800"],
-  // Four weights are a large download; without preload the browser fetches
-  // them only when Bangla text actually appears on the page.
+  weight: "100 900",
+  display: "swap",
+  // Fetched only when Bangla text (or ৳) is on the page: not preloaded, and
+  // limited to the Bengali block like Google's own subset.
   preload: false,
+  declarations: [
+    {
+      prop: "unicode-range",
+      value:
+        "U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1",
+    },
+  ],
 });
 
 const geistMono = Geist_Mono({
