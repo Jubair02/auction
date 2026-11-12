@@ -1,61 +1,452 @@
 <!doctype html>
 <html lang="bn">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f766e">
-<meta name="robots" content="noindex">
-<title>Offline — NeelamGhor</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<style>
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    padding: 24px 16px; background: #f6faf9; color: #171717;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Bengali", "Nirmala UI", sans-serif;
-    line-height: 1.5;
-  }
-  main {
-    width: 100%; max-width: 400px; background: #fff; border: 1px solid #e5e5e5; border-radius: 16px;
-    padding: 28px 24px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.06);
-  }
-  .mark { width: 48px; height: 48px; margin: 0 auto 16px; display: block; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  h2 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
-  p { margin: 0 0 4px; color: #525252; font-size: 15px; }
-  .lang + .lang { margin-top: 18px; padding-top: 18px; border-top: 1px solid #f0f0f0; }
-  a.btn {
-    display: inline-block; margin-top: 22px; min-height: 44px; padding: 11px 22px; border-radius: 10px;
-    background: #0f766e; color: #fff; font-weight: 700; text-decoration: none; font-size: 15px;
-  }
-  a.btn:focus-visible { outline: 3px solid #5eead4; outline-offset: 2px; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #0b1416; color: #f1f5f5; }
-    main { background: #111d20; border-color: rgba(255,255,255,.11); box-shadow: 0 1px 3px rgba(0,0,0,.4); }
-    p { color: #a8b5b6; }
-    .lang + .lang { border-top-color: rgba(255,255,255,.08); }
-    a.btn { background: #2dd4bf; color: #062a27; }
-  }
-</style>
-</head>
-<body>
-<main>
-  <img class="mark" src="/favicon.svg" alt="NeelamGhor" width="48" height="48">
-  <div class="lang" lang="bn">
-    <h1>ইন্টারনেট সংযোগ নেই</h1>
-    <p>সংযোগ ফিরলে পেজটি নিজে থেকেই আবার লোড হবে।</p>
-  </div>
-  <div class="lang" lang="en">
-    <h2>You're offline</h2>
-    <p>This page will reload by itself when your connection is back.</p>
-  </div>
-  <a class="btn" href="" id="retry">আবার চেষ্টা করুন · Try again</a>
-</main>
-<script>
-  // Reload the page the visitor was trying to open (this file is served in its place).
-  document.getElementById('retry').addEventListener('click', function (e) { e.preventDefault(); location.reload() })
-  window.addEventListener('online', function () { location.reload() })
-</script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="robots" content="noindex" />
+    <title>You're Offline | NeelamGhor</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <style>
+      :root {
+        color-scheme: light dark;
+        --primary: #0f766e;
+        --primary-light: #14b8a6;
+        --bg: #f3f9f8;
+        --surface: #ffffff;
+        --text: #172b2a;
+        --muted: #71817f;
+        --border: #e6efed;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        padding: 24px 18px;
+        background:
+          radial-gradient(
+            ellipse at 15% 15%,
+            rgba(20, 184, 166, 0.12),
+            transparent 40%
+          ),
+          radial-gradient(
+            ellipse at 85% 85%,
+            rgba(15, 118, 110, 0.1),
+            transparent 40%
+          ),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          Inter,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Noto Sans Bengali",
+          "Nirmala UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .ambient {
+        position: fixed;
+        border-radius: 50%;
+        pointer-events: none;
+        filter: blur(2px);
+      }
+
+      .ambient.one {
+        width: 280px;
+        height: 280px;
+        top: -130px;
+        right: -90px;
+        background: rgba(20, 184, 166, 0.09);
+      }
+
+      .ambient.two {
+        width: 220px;
+        height: 220px;
+        bottom: -100px;
+        left: -80px;
+        background: rgba(15, 118, 110, 0.08);
+      }
+
+      .wrapper {
+        width: 100%;
+        max-width: 440px;
+        position: relative;
+        z-index: 1;
+        animation: appear 0.65s ease both;
+      }
+
+      .card {
+        position: relative;
+        padding: 42px 32px 34px;
+        text-align: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 26px;
+        box-shadow:
+          0 24px 70px rgba(15, 76, 69, 0.08),
+          0 4px 14px rgba(15, 76, 69, 0.03);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 36px;
+      }
+
+      .brand img {
+        width: 36px;
+        height: 36px;
+        object-fit: contain;
+      }
+
+      .brand-name {
+        font-size: 21px;
+        font-weight: 800;
+        letter-spacing: -0.8px;
+        color: var(--primary);
+      }
+
+      .illustration {
+        width: 116px;
+        height: 116px;
+        margin: 0 auto 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 34px;
+        background: linear-gradient(145deg, #e6f7f3, #f1fbf9);
+        position: relative;
+      }
+
+      .illustration svg {
+        width: 66px;
+        height: 66px;
+      }
+
+      .status-dot {
+        position: absolute;
+        width: 15px;
+        height: 15px;
+        right: 5px;
+        bottom: 9px;
+        border: 3px solid var(--surface);
+        border-radius: 50%;
+        background: #f59e0b;
+        box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 13px;
+        margin-bottom: 18px;
+        border-radius: 30px;
+        background: #fff7e8;
+        color: #a66a0a;
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 1.1px;
+        text-transform: uppercase;
+      }
+
+      .eyebrow span {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #f59e0b;
+        animation: pulse 1.8s infinite;
+      }
+
+      h1 {
+        font-size: clamp(23px, 5vw, 28px);
+        font-weight: 800;
+        letter-spacing: -0.8px;
+        line-height: 1.35;
+        margin-bottom: 9px;
+      }
+
+      .description {
+        font-size: 14px;
+        line-height: 1.8;
+        color: var(--muted);
+        max-width: 320px;
+        margin: 0 auto;
+      }
+
+      .divider {
+        height: 1px;
+        background: var(--border);
+        margin: 27px 0 23px;
+      }
+
+      .english {
+        margin-bottom: 26px;
+      }
+
+      .english h2 {
+        font-size: 16px;
+        font-weight: 750;
+        margin-bottom: 7px;
+      }
+
+      .english p {
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+
+      .retry {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 51px;
+        padding: 13px 20px;
+        border: none;
+        border-radius: 13px;
+        background: linear-gradient(135deg, #0f766e, #11998e);
+        color: #fff;
+        font-size: 14px;
+        font-weight: 750;
+        font-family: inherit;
+        cursor: pointer;
+        box-shadow: 0 7px 18px rgba(15, 118, 110, 0.2);
+        transition:
+          transform 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      .retry:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 11px 24px rgba(15, 118, 110, 0.28);
+      }
+
+      .retry:active {
+        transform: scale(0.98);
+      }
+
+      .retry:focus-visible {
+        outline: 3px solid #5eead4;
+        outline-offset: 4px;
+      }
+
+      .retry svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 23px;
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.3px;
+      }
+
+      @keyframes appear {
+        from {
+          opacity: 0;
+          transform: translateY(18px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+          transform: scale(0.8);
+        }
+      }
+
+      @media (max-width: 480px) {
+        .card {
+          padding: 34px 23px 27px;
+          border-radius: 22px;
+        }
+
+        .brand {
+          margin-bottom: 29px;
+        }
+        .illustration {
+          width: 100px;
+          height: 100px;
+          border-radius: 29px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #091817;
+          --surface: #112522;
+          --text: #effcf9;
+          --muted: #9aafaa;
+          --border: rgba(255, 255, 255, 0.08);
+        }
+
+        .illustration {
+          background: linear-gradient(145deg, #183c35, #17332f);
+        }
+
+        .eyebrow {
+          background: rgba(245, 158, 11, 0.12);
+          color: #fbbf24;
+        }
+
+        .status-dot {
+          border-color: var(--surface);
+        }
+
+        .card {
+          box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="ambient one"></div>
+    <div class="ambient two"></div>
+
+    <main class="wrapper">
+      <section class="card">
+        <div class="brand">
+          <img src="/favicon.svg" alt="NeelamGhor logo" />
+          <span class="brand-name">NeelamGhor</span>
+        </div>
+
+        <div class="illustration">
+          <svg
+            viewBox="0 0 64 64"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M8 23C21 11 43 11 56 23"
+              stroke="#0F766E"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+            <path
+              d="M16 32C25 24 39 24 48 32"
+              stroke="#0F766E"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+            <path
+              d="M25 41C29 37 35 37 39 41"
+              stroke="#0F766E"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+            <circle cx="32" cy="50" r="3.5" fill="#0F766E" />
+            <path
+              d="M12 12L52 52"
+              stroke="#F59E0B"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span class="status-dot"></span>
+        </div>
+
+        <div class="eyebrow">
+          <span></span>
+          Connection interrupted
+        </div>
+
+        <div lang="bn">
+          <h1>ইন্টারনেট সংযোগ বিচ্ছিন্ন!</h1>
+          <p class="description">
+            আপনার ইন্টারনেট সংযোগ পাওয়া যাচ্ছে না। সংযোগ ফিরে এলে আমরা
+            স্বয়ংক্রিয়ভাবে পেজটি আবার লোড করব।
+          </p>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="english" lang="en">
+          <h2>You're currently offline</h2>
+          <p>
+            It looks like you've lost your internet connection. Don't worry,
+            we'll automatically reconnect and reload this page when you're back
+            online.
+          </p>
+        </div>
+
+        <button class="retry" id="retry" type="button">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M20 7v5h-5" />
+            <path d="M4 17v-5h5" />
+            <path d="M5.5 9a7 7 0 0 1 11.6-2L20 12" />
+            <path d="M18.5 15a7 7 0 0 1-11.6 2L4 12" />
+          </svg>
+          আবার চেষ্টা করুন · Try Again
+        </button>
+      </section>
+
+      <footer class="footer">
+        © <span id="year"></span> NeelamGhor. All rights reserved.
+      </footer>
+    </main>
+
+    <script>
+      const retryButton = document.getElementById("retry");
+
+      retryButton.addEventListener("click", () => {
+        if (navigator.onLine) {
+          location.reload();
+        } else {
+          retryButton.querySelector("svg").style.animation = "pulse .6s ease";
+        }
+      });
+
+      window.addEventListener("online", () => {
+        location.reload();
+      });
+
+      document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+  </body>
 </html>

@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { AppLink } from '@/components/shared/app-link'
+import { Mascot } from '@/components/shared/mascot'
 import { DASHBOARD_PATH } from '@/lib/access'
 import { type Strings, useLang, useStrings } from '@/lib/i18n'
 import { useAuthState } from '@/lib/store'
@@ -53,6 +54,7 @@ interface LandingStrings {
   cricketFootball: string
   freeStart: (teams: number) => string
   heroAlt: string
+  mascotLabel: string
   soldFor: (amount: string) => string
   stats: { value: string; label: string }[]
   howEyebrow: string
@@ -104,6 +106,7 @@ const STRINGS = {
     cricketFootball: 'Cricket & Football',
     freeStart: (teams) => `Free for up to ${teams} teams`,
     heroAlt: 'NeelamGhor live auction room with bids, timers and team purses',
+    mascotLabel: 'Tap the NeelamGhor mascot',
     soldFor: (amount) => `SOLD for ${amount}`,
     stats: [
       { value: '৳ BDT', label: 'Lakh-style currency, no conversions' },
@@ -196,6 +199,7 @@ const STRINGS = {
     cricketFootball: 'ক্রিকেট ও ফুটবল',
     freeStart: (teams) => `${teams}টি দল পর্যন্ত ফ্রি`,
     heroAlt: 'NeelamGhor-এর লাইভ নিলাম রুম — বিড, টাইমার আর দলের বাজেট',
+    mascotLabel: 'NeelamGhor-এর মাসকটকে ট্যাপ করুন',
     soldFor: (amount) => `${amount}-এ বিক্রি!`,
     stats: [
       { value: '৳ টাকা', label: 'লাখের হিসাবে টাকা, কোনো কনভার্সন নেই' },
@@ -349,8 +353,29 @@ export default function Landing() {
           </div>
 
           {lowData ? null : (
-            <div className="relative">
-              <div className="rounded-2xl border bg-card p-2 shadow-xl shadow-primary/10">
+            // Top margin: room for the mascot above the card (the hero clips overflow).
+            <div className="relative mt-14 sm:mt-20">
+              {/* The mascot (cap-kid) peeks over the screenshot's top-right
+                  corner. The head follows the cursor; tapping plays a reaction
+                  (4 quick taps: dizzy). Until the pointer moves — and always on
+                  touch screens — he looks down at the SOLD chip. He sits BEHIND
+                  the card, raised so his hoodie shows above its top edge: the
+                  hoodie is solid from 75% to ~80% of each frame and fades out by
+                  85%, so the card's edge sits at 82%. Frames are square with
+                  margin, so the box is ~1.44× the drawn width (76/100/120 px of
+                  character). The wrapper positions; the button rises in once
+                  (skipped with reduced motion). */}
+              <div className="absolute right-1 top-0 z-0 aspect-square w-[108px] -translate-y-[82%] sm:right-3 sm:w-[140px] lg:right-2 lg:w-[168px]">
+                <Mascot
+                  directions="/mascots/cap-kid-directions.webp"
+                  reactions="/mascots/cap-kid-reactions.webp"
+                  size="100%"
+                  rest="down-left"
+                  label={t.mascotLabel}
+                  className="rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-8 motion-safe:duration-700 motion-safe:ease-out motion-safe:[animation-delay:250ms] motion-safe:[animation-fill-mode:both]"
+                />
+              </div>
+              <div className="relative z-10 rounded-2xl border bg-card p-2 shadow-xl shadow-primary/10">
                 {/* Intrinsic size reserves the box before the image loads — no layout shift. */}
                 <Image
                   src="/images/hero.png"
@@ -362,7 +387,7 @@ export default function Landing() {
                   className="h-auto w-full rounded-xl object-cover"
                 />
               </div>
-              <div className="absolute -bottom-4 left-4 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-md sm:flex">
+              <div className="absolute -bottom-4 left-4 z-20 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-md sm:flex">
                 <Gavel className="h-4 w-4 text-primary" aria-hidden />
                 <span className="text-sm font-semibold">{t.soldFor('৳1,25,000')}</span>
               </div>
